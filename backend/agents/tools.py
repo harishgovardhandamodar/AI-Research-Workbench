@@ -173,8 +173,9 @@ async def _run_shell(ctx: ToolContext, command: str, timeout: float = 30.0) -> s
         if not ok:
             return "[denied by user]"
         ctx.permissions.record("run_shell", command, "allow")
+    # Run via a real shell so quoting, pipes and redirects work as the model expects.
     proc = await asyncio.create_subprocess_exec(
-        *command.split(),
+        "/bin/bash", "-c", command,
         cwd=str(ctx.kernels.session_dir),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

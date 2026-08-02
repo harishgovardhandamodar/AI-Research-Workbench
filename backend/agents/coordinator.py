@@ -35,6 +35,10 @@ Working style:
 
 Privacy: everything stays on the user's machine unless they explicitly approve a
 shell command that touches the network.
+
+Workspace: your working directory is the workbench repository root. Example
+experiments live in examples/experiments/ (01_... 02_... 03_...). Run them with
+run_python by exec'ing the file, e.g. exec(open("examples/experiments/01_simple_decay_fit.py").read()).
 """
 
 

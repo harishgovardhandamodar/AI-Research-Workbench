@@ -25,14 +25,9 @@ from .agents.tools import ToolContext
 from .artifacts.store import Artifact, ArtifactStore
 from .kernels.manager import KernelManager
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TOOL_BASE_URL, LLMClient, LLMError
+from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR
 from .permissions import PermissionManager
 from .store import ProjectStore
-
-ROOT = Path(__file__).resolve().parent.parent
-WORKBENCH_DIR = Path("/home/fox/WorkBook/AI-Research-Workbench/workbench")
-PROJECTS_DIR = WORKBENCH_DIR / "projects"
-CONFIG_PATH = WORKBENCH_DIR / "config.json"
-FRONTEND_DIR = ROOT / "frontend"
 
 DEFAULT_CONFIG = {
     "llm": {

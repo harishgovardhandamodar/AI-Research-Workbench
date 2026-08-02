@@ -1,9 +1,15 @@
-"""Per-session kernel manager: owns the Python and R kernel instances."""
+"""Per-session kernel manager: owns the Python and R kernel instances.
+
+Kernels execute with the workbench repository root as their working directory so
+that repo-relative paths (e.g. examples/experiments/...) resolve naturally. The
+per-project `session_dir` remains the home for artifacts and user-created files.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from ..paths import ROOT
 from .python_kernel import PythonKernel
 from .r_kernel import RKernel
 
@@ -12,8 +18,8 @@ class KernelManager:
     def __init__(self, session_dir: Path):
         self.session_dir = session_dir
         session_dir.mkdir(parents=True, exist_ok=True)
-        self.python = PythonKernel(cwd=session_dir)
-        self.r = RKernel(cwd=session_dir)
+        self.python = PythonKernel(cwd=ROOT)
+        self.r = RKernel(cwd=ROOT)
         self._env_cache: dict | None = None
 
     async def get_env(self) -> dict:
