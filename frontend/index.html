@@ -4,7 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fox — AI Science Workbench</title>
-<link rel="stylesheet" href="/styles.css">
+<script>
+  // FOX_BASE lets the app run behind a path prefix (e.g. /fox inside a Jupyter
+  // server). Detected from the URL path or an explicit ?base= override.
+  window.FOX_BASE = window.FOX_BASE || (function () {
+    var q = new URLSearchParams(location.search).get("base");
+    if (q) return q;
+    var m = location.pathname.match(/^(\/[^/]+)/);
+    return m && ["fox", "foxws"].indexOf(m[1]) >= 0 ? m[1] : "";
+  })();
+</script>
+<link rel="stylesheet" href="" id="fox-css">
 </head>
 <body>
 <div id="app">

@@ -260,6 +260,362 @@ NOTEBOOKS = {
             "ax.set_xlabel('false positive rate'); ax.set_ylabel('true positive rate')\n"
             "ax.set_title('ROC curves'); ax.legend()"),
     ],
+
+    # ------------------------------------------------------------- MORE -------
+    "06_tiny_clt_demo": [
+        (M, "# Central Limit Theorem demo\n\nDraw sample means from an exponential "
+            "population and watch them become normal; measure how the standard "
+            "error shrinks with sample size."),
+        (C, "import numpy as np\n"
+            "from scipy import stats\n"
+            "import matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(1)\n"
+            "means = [rng.exponential(1.0, 30).mean() for _ in range(5000)]\n\n"
+            "fig, ax = plt.subplots(figsize=(5.5, 3.5))\n"
+            "ax.hist(means, bins=40, density=True, alpha=0.6, label='sample means')\n"
+            "xs = np.linspace(0.3, 1.7, 200)\n"
+            "ax.plot(xs, stats.norm.pdf(xs, 1.0, 1/np.sqrt(30)), color='#e05b5b', label='N(1, 1/sqrt(30))')\n"
+            "ax.set_xlabel('mean'); ax.set_ylabel('density'); ax.legend()\n"
+            "print(f'mean of means = {np.mean(means):.3f}, sd = {np.std(means):.3f} (theory 0.183)')"),
+        (C, "sizes = np.array([2, 5, 10, 20, 50, 100])\n"
+            "stds = [np.std([rng.exponential(1.0, s).mean() for _ in range(2000)]) for s in sizes]\n\n"
+            "fig, ax = plt.subplots(figsize=(5.5, 3.5))\n"
+            "ax.plot(sizes, stds, 'o-', color='#4f8cff', label='empirical')\n"
+            "ax.plot(sizes, 1/np.sqrt(sizes), '--', color='#e05b5b', label='1/sqrt(n)')\n"
+            "ax.set_xlabel('sample size'); ax.set_ylabel('std of the mean')\n"
+            "ax.legend(); ax.set_title('Convergence of the standard error')"),
+    ],
+
+    "07_simple_heat_diffusion": [
+        (M, "# 1D heat diffusion\n\nSolve the heat equation with an explicit "
+            "finite-difference scheme: an initially hot spot spreading over time."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "alpha, L, nx = 0.01, 1.0, 50\n"
+            "dx = L / (nx - 1)\n"
+            "dt = 0.0002                    # dt <= dx^2 / (2 alpha) for stability\n"
+            "steps = 600\n"
+            "u = np.zeros(nx); u[nx//2 - 3:nx//2 + 3] = 1.0   # hot spot\n"
+            "history = [u.copy()]\n"
+            "c = alpha * dt / dx**2\n"
+            "for _ in range(steps):\n"
+            "    u = u + c * (np.roll(u, -1) + np.roll(u, 1) - 2*u)\n"
+            "    u[0] = u[-1] = 0\n"
+            "    if _ % 120 == 0: history.append(u.copy())"),
+        (C, "x = np.linspace(0, L, nx)\n"
+            "fig, ax = plt.subplots(figsize=(6, 4))\n"
+            "for i, prof in enumerate(history):\n"
+            "    ax.plot(x, prof, label=f't = {i*steps//len(history)*dt:.3f}')\n"
+            "ax.set_xlabel('x'); ax.set_ylabel('temperature'); ax.legend()\n"
+            "ax.set_title('Temperature profiles')"),
+        (C, "fig, ax = plt.subplots(figsize=(6, 4))\n"
+            "im = ax.imshow(np.array(history), aspect='auto', origin='lower',\n"
+            "               extent=[0, L, 0, steps*dt], cmap='inferno')\n"
+            "ax.set_xlabel('x'); ax.set_ylabel('time');\n"
+            "fig.colorbar(im, label='temperature')\n"
+            "ax.set_title('Spacetime heat map')"),
+    ],
+
+    "08_simple_logistic_growth": [
+        (M, "# Logistic population growth\n\nCompare growth curves for different "
+            "intrinsic rates and inspect the growth-vs-density relationship."),
+        (C, "import numpy as np\nfrom scipy.integrate import solve_ivp\n"
+            "import matplotlib.pyplot as plt\n\n"
+            "def logistic(t, N, r, K): return r * N * (1 - N / K)\n"
+            "K = 1000.0\n"
+            "sol = solve_ivp(logistic, (0, 40), [10.0], args=(0.3, K), max_step=0.1)\n"
+            "sol_fast = solve_ivp(logistic, (0, 40), [10.0], args=(0.8, K), max_step=0.1)"),
+        (C, "fig, ax = plt.subplots(figsize=(6, 4))\n"
+            "ax.plot(sol.t, sol.y[0], label='r = 0.3')\n"
+            "ax.plot(sol_fast.t, sol_fast.y[0], label='r = 0.8')\n"
+            "ax.axhline(K, color='#8b97a5', ls='--', label='K')\n"
+            "ax.set_xlabel('time'); ax.set_ylabel('N'); ax.legend()\n"
+            "ax.set_title('Logistic growth')"),
+        (C, "N = np.linspace(0, 1.2*K, 200)\n"
+            "fig, ax = plt.subplots(figsize=(6, 4))\n"
+            "ax.plot(N, 0.5 * N * (1 - N / K), color='#4f8cff')\n"
+            "ax.axhline(0, color='#8b97a5', lw=0.8)\n"
+            "ax.set_xlabel('N'); ax.set_ylabel('dN/dt')\n"
+            "ax.set_title('Per-capita growth rate'); ax.set_xlim(0, 1.2*K)"),
+    ],
+
+    "09_midscale_regression_diagnostics": [
+        (M, "# Linear regression diagnostics\n\nFit a two-predictor OLS model on "
+            "synthetic data and inspect fit quality, residuals and influence."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(5)\n"
+            "n = 120\n"
+            "x1 = rng.normal(50, 10, n)\n"
+            "x2 = rng.uniform(0, 5, n)\n"
+            "y = 2.0 + 0.4 * x1 - 3.2 * x2 + rng.normal(0, 6, n)\n"
+            "X = np.column_stack([np.ones(n), x1, x2])\n"
+            "beta, *_ = np.linalg.lstsq(X, y, rcond=None)\n"
+            "yhat = X @ beta\n"
+            "res = y - yhat\n"
+            "sigma2 = res @ res / (n - 3)\n"
+            "cov = sigma2 * np.linalg.inv(X.T @ X)\n"
+            "se = np.sqrt(np.diag(cov))\n"
+            "for i, name in enumerate(['intercept', 'x1', 'x2']):\n"
+            "    print(f'{name:9s} beta={beta[i]:+.3f} ± {se[i]:.3f}')"),
+        (C, "fig, axes = plt.subplots(1, 2, figsize=(10, 4))\n"
+            "lo, hi = y.min(), y.max()\n"
+            "axes[0].scatter(yhat, y, s=14, alpha=0.6)\n"
+            "axes[0].plot([lo, hi], [lo, hi], color='#e05b5b', ls='--')\n"
+            "axes[0].set_xlabel('fitted'); axes[0].set_ylabel('observed')\n"
+            "axes[0].set_title('Observed vs fitted')\n"
+            "axes[1].scatter(yhat, res, s=14, alpha=0.6)\n"
+            "axes[1].axhline(0, color='#e05b5b', ls='--')\n"
+            "axes[1].set_xlabel('fitted'); axes[1].set_ylabel('residual')\n"
+            "axes[1].set_title('Residuals')"),
+        (C, "H = X @ np.linalg.inv(X.T @ X) @ X.T\n"
+            "lev = np.diag(H)\n"
+            "cooks = res**2 / (3 * sigma2) * lev / (1 - lev)**2\n\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10, 4))\n"
+            "axes[0].bar(range(n), lev, color='#4f8cff')\n"
+            "axes[0].axhline(2 * 3 / n, color='#e05b5b', ls='--', label='2p/n')\n"
+            "axes[0].set_title('Leverage'); axes[0].legend()\n"
+            "axes[1].bar(range(n), cooks, color='#d9a441')\n"
+            "axes[1].set_title(\"Cook's distance\")\n"
+            "print(f'high-leverage points: {int((lev > 2*3/n).sum())}')"),
+    ],
+
+    "10_midscale_ar_forecast": [
+        (M, "# AR(2) time series & forecasting\n\nSimulate an autoregressive "
+            "series, inspect its autocorrelation structure and forecast ahead."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(9)\n"
+            "n = 300; phi1, phi2 = 0.6, -0.25\n"
+            "x = np.zeros(n)\n"
+            "for t in range(2, n):\n"
+            "    x[t] = phi1*x[t-1] + phi2*x[t-2] + rng.normal(0, 1)\n"
+            "print(f'variance = {x.var():.3f} (theory ~1.4)')"),
+        (C, "def acf(x, lag):\n"
+            "    x = x - x.mean()\n"
+            "    c0 = x @ x\n"
+            "    return np.array([(x[:-k] @ x[k:]) / c0 for k in range(1, lag+1)])\n"
+            "ac = acf(x, 20)\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))\n"
+            "axes[0].stem(range(1, 21), ac)\n"
+            "axes[0].axhline(1.96/np.sqrt(n), color='#e05b5b', ls=':'); axes[0].axhline(-1.96/np.sqrt(n), color='#e05b5b', ls=':')\n"
+            "axes[0].set_title('ACF')\n"
+            "axes[1].plot(x); axes[1].set_title('Series')\n"
+            "axes[1].set_xlabel('t')"),
+        (C, "p = 10\n"
+            "Xm = np.column_stack([x[p-1-i : n-1-i] for i in range(p)])\n"
+            "pac = np.linalg.lstsq(Xm, x[p:], rcond=None)[0]\n\n"
+            "fig, ax = plt.subplots(figsize=(6, 3.5))\n"
+            "ax.stem(range(1, p+1), pac)\n"
+            "ax.set_title('PACF (regression-based)'); ax.set_xlabel('lag')\n\n"
+            "# 1-step-ahead recursive forecast\n"
+            "steps = 30\n"
+            "f = list(x[-2:])\n"
+            "for _ in range(steps):\n"
+            "    f.append(phi1*f[-1] + phi2*f[-2])\n"
+            "fig2, ax2 = plt.subplots(figsize=(7, 3.5))\n"
+            "ax2.plot(range(n), x, color='#4f8cff', label='observed')\n"
+            "ax2.plot(range(n, n+steps), f[2:], color='#e05b5b', ls='--', label='forecast')\n"
+            "ax2.set_xlabel('t'); ax2.legend(); ax2.set_title('AR(2) forecast')"),
+    ],
+
+    "11_midscale_volcano_ma": [
+        (M, "# Differential expression: volcano & MA plots\n\nSimulate two groups "
+            "of samples across many genes, run a per-gene t-test and visualize the "
+            "log-fold-change vs significance."),
+        (C, "import numpy as np\nfrom scipy import stats\n"
+            "import matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(13)\n"
+            "n_genes, n_samples = 4000, 12\n"
+            "base = np.exp(rng.normal(0, 1.2, n_genes))[:, None]\n"
+            "ctrl = rng.gamma(shape=base*5, scale=1/5, size=(n_genes, n_samples//2))\n"
+            "treat = rng.gamma(shape=base*5, scale=1/5, size=(n_genes, n_samples//2))\n"
+            "de = rng.choice(n_genes, 300, replace=False)\n"
+            "treat[de] *= rng.uniform(2, 6, size=(len(de), 1))"),
+        (C, "logfc = np.log2((treat.mean(axis=1) + 1e-6) / (ctrl.mean(axis=1) + 1e-6))\n"
+            "pvals = [stats.ttest_ind(ctrl[g], treat[g], equal_var=False).pvalue for g in range(n_genes)]\n"
+            "pvals = np.array(pvals)\n\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))\n"
+            "sig = pvals < 0.05/n_genes\n"
+            "axes[0].scatter(logfc, -np.log10(pvals + 1e-12), s=3, alpha=0.5)\n"
+            "axes[0].scatter(logfc[sig], -np.log10(pvals[sig] + 1e-12), s=5, color='#e05b5b')\n"
+            "axes[0].axhline(-np.log10(0.05/n_genes), color='#8b97a5', ls='--')\n"
+            "axes[0].set_xlabel('log2 fold change'); axes[0].set_ylabel('-log10 p')\n"
+            "axes[0].set_title(f'Volcano — {sig.sum()} DE genes (BH)')\n"
+            "meanexpr = np.log2((treat.mean(axis=1) + ctrl.mean(axis=1)) / 2 + 1e-6)\n"
+            "axes[1].scatter(meanexpr, logfc, s=3, alpha=0.5)\n"
+            "axes[1].axhline(0, color='#8b97a5', lw=0.8)\n"
+            "axes[1].set_xlabel('mean expression (log2)'); axes[1].set_ylabel('log2 fold change')\n"
+            "axes[1].set_title('MA plot')"),
+    ],
+
+    "12_midscale_monte_carlo_pi": [
+        (M, "# Monte Carlo estimation of pi\n\nThrow random points into the unit "
+            "square and see the estimate converge as the number of samples grows."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(2)\n"
+            "n = 4000\n"
+            "pts = rng.uniform(0, 1, (n, 2))\n"
+            "inside = (pts[:, 0]**2 + pts[:, 1]**2) <= 1\n"
+            "fig, ax = plt.subplots(figsize=(5, 5))\n"
+            "ax.scatter(pts[inside, 0], pts[inside, 1], s=3, color='#4f8cff')\n"
+            "ax.scatter(pts[~inside, 0], pts[~inside, 1], s=3, color='#e05b5b')\n"
+            "ax.set_aspect('equal'); ax.set_title(f'n = {n}, pi ~ {4*inside.mean():.4f}')\n"
+            "print(f'estimate after {n} samples: {4*inside.mean():.4f}')"),
+        (C, "cum = 4 * np.cumsum(inside) / np.arange(1, n+1)\n"
+            "fig, ax = plt.subplots(figsize=(6, 3.5))\n"
+            "ax.plot(cum, color='#35c4b6', lw=1)\n"
+            "ax.axhline(np.pi, color='#e05b5b', ls='--', label='pi')\n"
+            "ax.set_xlabel('samples'); ax.set_ylabel('estimate')\n"
+            "ax.legend(); ax.set_title('Convergence of the estimate')"),
+    ],
+
+    "13_midscale_lotka_volterra": [
+        (M, "# Lotka–Volterra predator–prey\n\nIntegrate the classic coupled ODEs "
+            "and look at cycles in both time and phase space."),
+        (C, "import numpy as np\nfrom scipy.integrate import solve_ivp\n"
+            "import matplotlib.pyplot as plt\n\n"
+            "def lv(t, y, a, b, c, d):\n"
+            "    x, z = y\n"
+            "    return [a*x - b*x*z, c*x*z - d*z]\n"
+            "a, b, c, d = 1.1, 0.4, 0.1, 0.4\n"
+            "sol = solve_ivp(lv, (0, 60), [10, 5], args=(a, b, c, d), max_step=0.05)"),
+        (C, "fig, ax = plt.subplots(figsize=(6, 4))\n"
+            "ax.plot(sol.t, sol.y[0], label='prey')\n"
+            "ax.plot(sol.t, sol.y[1], label='predator')\n"
+            "ax.set_xlabel('time'); ax.legend(); ax.set_title('Populations over time')"),
+        (C, "fig, ax = plt.subplots(figsize=(5.5, 5))\n"
+            "for ic in ([10, 5], [15, 8], [6, 12]):\n"
+            "    s = solve_ivp(lv, (0, 60), ic, args=(a, b, c, d), max_step=0.05)\n"
+            "    ax.plot(s.y[0], s.y[1], label=f'start {ic}')\n"
+            "ax.set_xlabel('prey'); ax.set_ylabel('predator')\n"
+            "ax.legend(); ax.set_title('Phase plane')"),
+    ],
+
+    "14_midscale_hierarchical_clustering": [
+        (M, "# Hierarchical clustering of expression profiles\n\nBuild synthetic "
+            "samples across features, cluster them hierarchically and inspect the "
+            "resulting tree + heatmap."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "from scipy.cluster.hierarchy import linkage, dendrogram\n"
+            "from scipy.spatial.distance import pdist\n"
+            "rng = np.random.default_rng(17)\n"
+            "n_samples, n_feat = 40, 25\n"
+            "types = np.repeat([0, 1, 2], [15, 12, 13])\n"
+            "X = rng.normal(0, 1, (n_samples, n_feat))\n"
+            "for t in range(3):\n"
+            "    X[types == t] += rng.uniform(0.8, 2.0, n_feat)"),
+        (C, "Z = linkage(pdist(X), method='ward')\n"
+            "fig, ax = plt.subplots(figsize=(7, 3.5))\n"
+            "dendrogram(Z, ax=ax, color_threshold=8, no_labels=True)\n"
+            "ax.set_title('Ward dendrogram')"),
+        (C, "order = dendrogram(Z, no_plot=True)['leaves']\n"
+            "fig, ax = plt.subplots(figsize=(4.5, 6))\n"
+            "im = ax.imshow(X[order].T, aspect='auto', cmap='coolwarm', vmin=-2, vmax=3)\n"
+            "fig.colorbar(im, label='expression')\n"
+            "ax.set_xlabel('sample'); ax.set_ylabel('feature')\n"
+            "ax.set_title('Heatmap (dendrogram order)')"),
+    ],
+
+    "15_large_metabolomics_pipeline": [
+        (M, "# Metabolomics pipeline\n\nSimulate a metabolomics matrix (3 groups, "
+            "many features), run PCA, a top-variable heatmap and a fold-change / "
+            "significance volcano with multiple-testing control."),
+        (C, "import numpy as np\nfrom scipy import stats\n"
+            "from sklearn.decomposition import PCA\n"
+            "import matplotlib.pyplot as plt\n"
+            "rng = np.random.default_rng(21)\n"
+            "n_feat, n_per = 300, 15\n"
+            "groups = np.repeat([0, 1, 2], n_per)\n"
+            "base = np.exp(rng.normal(0, 1, n_feat))[:, None]\n"
+            "X = rng.gamma(shape=base*3, scale=1/3, size=(n_feat, n_per*3))\n"
+            "for g in (1, 2):\n"
+            "    idx = rng.choice(n_feat, 60, replace=False)\n"
+            "    X[np.ix_(idx, np.where(groups == g)[0])] *= rng.uniform(2, 5, size=(len(idx), 1))"),
+        (C, "logX = np.log1p(X / X.mean(axis=1, keepdims=True) * 1e3)\n"
+            "pc = PCA(n_components=3, random_state=0).fit_transform(logX.T)\n"
+            "fig, ax = plt.subplots(figsize=(6, 5))\n"
+            "for g in range(3):\n"
+            "    ax.scatter(pc[groups == g, 0], pc[groups == g, 1], label=f'group {g}', s=25)\n"
+            "ax.set_xlabel('PC1'); ax.set_ylabel('PC2'); ax.legend()\n"
+            "ax.set_title('PCA score plot')"),
+        (C, "order = np.argsort(logX.std(axis=1))[::-1][:30]\n"
+            "fig, ax = plt.subplots(figsize=(6, 7))\n"
+            "im = ax.imshow(logX[order], aspect='auto', cmap='viridis')\n"
+            "fig.colorbar(im, label='log intensity')\n"
+            "ax.set_ylabel('feature'); ax.set_xlabel('sample')\n"
+            "ax.set_title('Top-variable features')"),
+        (C, "def bh(p):\n"
+            "    p = np.asarray(p); order = np.argsort(p)\n"
+            "    adj = np.empty_like(p); adj[order] = p[order]*len(p)/np.arange(1, len(p)+1)\n"
+            "    return np.minimum.accumulate(adj[::-1])[::-1]\n"
+            "ctrl = X[:, groups == 0]; trt = X[:, groups == 1]\n"
+            "logfc = np.log2((trt.mean(axis=1)+1e-6)/(ctrl.mean(axis=1)+1e-6))\n"
+            "pv = np.array([stats.ttest_ind(ctrl[g], trt[g], equal_var=False).pvalue for g in range(n_feat)])\n"
+            "q = bh(pv)\n"
+            "sig = q < 0.05\n"
+            "fig, ax = plt.subplots(figsize=(6, 4.5))\n"
+            "ax.scatter(logfc, -np.log10(q+1e-12), s=4, alpha=0.6)\n"
+            "ax.scatter(logfc[sig], -np.log10(q[sig]+1e-12), s=8, color='#e05b5b')\n"
+            "ax.set_xlabel('log2 FC (group1 vs 0)'); ax.set_ylabel('-log10 q')\n"
+            "ax.set_title(f'Volcano — {sig.sum()} features q<0.05')"),
+    ],
+
+    "16_large_double_pendulum": [
+        (M, "# Double pendulum\n\nIntegrate the chaotic double pendulum and check "
+            "energy conservation while watching the trajectory."),
+        (C, "import numpy as np\nfrom scipy.integrate import solve_ivp\n"
+            "import matplotlib.pyplot as plt\n"
+            "g, m, L = 9.81, 1.0, 1.0\n\n"
+            "def dp(t, y):\n"
+            "    t1, w1, t2, w2 = y\n"
+            "    d = t1 - t2\n"
+            "    a = (m*L*L); b = m*L*L*np.cos(d)\n"
+            "    c = m*L*L; f = m*L*L*np.cos(d)\n"
+            "    e = -m*g*L*2*np.sin(t1) - m*g*L*np.sin(t2)\n"
+            "    g0 = m*L*L*(w1**2*np.sin(d) + w2**2*np.sin(d)) - m*g*L*np.sin(t2)\n"
+            "    return [w1, w2,\n"
+            "            (e*c - b*g0) / (a*c - b*b),\n"
+            "            (a*g0 - e*f) / (a*c - b*b)]\n"
+            "sol = solve_ivp(dp, (0, 30), [np.pi/2, 0, np.pi/2, 0], max_step=0.02)"),
+        (C, "t1, w1, t2, w2 = sol.y\n"
+            "x2 = L*np.sin(t1) + L*np.sin(t2)\n"
+            "y2 = -L*np.cos(t1) - L*np.cos(t2)\n"
+            "fig, ax = plt.subplots(figsize=(6, 6))\n"
+            "ax.plot(x2, y2, lw=0.8, color='#4f8cff')\n"
+            "ax.set_aspect('equal'); ax.set_title('Trajectory of the second bob')"),
+        (C, "energy = (0.5*(w1**2 + 2*w1*w2*np.cos(t1-t2) + w2**2)\n"
+            "         - g/L*(2*np.cos(t1) + np.cos(t2)))   # per unit m, L\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))\n"
+            "axes[0].plot(sol.t, energy, color='#35c4b6')\n"
+            "axes[0].set_xlabel('t'); axes[0].set_ylabel('E / mgL')\n"
+            "axes[0].set_title(f'Energy drift {100*abs(energy.max()-energy.min())/abs(energy.mean()):.3f}%')\n"
+            "axes[1].scatter(t1, t2, s=1, color='#d9a441')\n"
+            "axes[1].set_xlabel('theta1'); axes[1].set_ylabel('theta2')\n"
+            "axes[1].set_title('theta1 vs theta2')"),
+    ],
+
+    "17_large_image_convolution": [
+        (M, "# Image filtering: blur & edge detection\n\nBuild a synthetic image, "
+            "apply a Gaussian blur and Sobel edge detection with scipy.ndimage."),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "from scipy import ndimage\n"
+            "rng = np.random.default_rng(4)\n"
+            "img = rng.normal(0, 0.1, (128, 128))\n"
+            "img[30:50, 40:80] += 1.5      # bright rectangle\n"
+            "img[70:90, 30:60] -= 1.0      # dark block\n"
+            "yy, xx = np.ogrid[:128, :128]\n"
+            "img += 0.8 * np.exp(-((xx-100)**2 + (yy-20)**2) / 200)\n"
+            "img += rng.normal(0, 0.15, img.shape)"),
+        (C, "blur = ndimage.gaussian_filter(img, sigma=2.0)\n"
+            "fig, axes = plt.subplots(1, 3, figsize=(12, 4))\n"
+            "for ax, im, t in zip(axes, [img, blur, img - blur],\n"
+            "                      ['original', 'Gaussian blur', 'difference']):\n"
+            "    ax.imshow(im, cmap='gray'); ax.set_title(t); ax.axis('off')"),
+        (C, "gx = ndimage.sobel(blur, axis=0); gy = ndimage.sobel(blur, axis=1)\n"
+            "edges = np.hypot(gx, gy)\n"
+            "fig, axes = plt.subplots(1, 3, figsize=(12, 4))\n"
+            "for ax, im, t in zip(axes, [edges, edges > 0.4, edges > 0.8],\n"
+            "                      ['Sobel magnitude', 'threshold 0.4', 'threshold 0.8']):\n"
+            "    ax.imshow(im, cmap='gray'); ax.set_title(t); ax.axis('off')"),
+    ],
 }
 
 

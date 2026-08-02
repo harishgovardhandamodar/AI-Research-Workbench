@@ -14,20 +14,34 @@ becomes an auditable artifact with its producing code + environment snapshot.
 
 ## Notebooks (`notebooks/`)
 
-Six Jupyter notebooks (`.ipynb`) spanning six scales. Open them from the workbench
-UI (**Notebooks** tab), or ask the agent to run one — the agent executes the cells
-and the results (outputs + figures + errors) are written back *into the notebook*.
+Eighteen Jupyter notebooks (`.ipynb`) spanning many scales and scientific domains.
+Open them from the workbench UI (**Notebooks** tab), or ask the agent to run one —
+the agent executes the cells and the results (outputs + figures + errors) are
+written back *into the notebook*.
 
-| Notebook | Scale | What it does |
-|----------|-------|--------------|
-| `00_tiny_quick_stats` | tiny | Two-group comparison: summary stats, Welch t-test, Cohen's d, histogram |
-| `01_simple_decay_fit` | simple | Exponential decay fit + half-life with 95% CI |
-| `02_midscale_cell_clustering` | mid | Synthetic 500-cell single-cell clustering (PCA → KMeans → t-SNE), ARI + marker heatmap |
-| `04_midscale_epidemiology` | mid | SIR epidemic ODE model for several R₀; peak + attack rate |
-| `03_large_protein_pipeline` | large | Protein backbone from φ/ψ, PDB, Ramachandran plot, secondary structure |
-| `05_large_model_benchmark` | large | 3 classifiers with 5-fold CV + ROC comparison |
+| Notebook | Scale | Domain | Figures |
+|----------|-------|--------|---------|
+| `00_tiny_quick_stats` | tiny | statistics | 1 |
+| `06_tiny_clt_demo` | tiny | probability / CLT | 2 |
+| `01_simple_decay_fit` | simple | kinetics / physics | 1 |
+| `07_simple_heat_diffusion` | simple | PDE / physics | 2 |
+| `08_simple_logistic_growth` | simple | population dynamics | 2 |
+| `02_midscale_cell_clustering` | mid | single-cell | 2 |
+| `04_midscale_epidemiology` | mid | epidemiology (SIR) | 1 |
+| `09_midscale_regression_diagnostics` | mid | statistics / ML | 2 |
+| `10_midscale_ar_forecast` | mid | time series | 3 |
+| `11_midscale_volcano_ma` | mid | transcriptomics | 1 |
+| `12_midscale_monte_carlo_pi` | mid | simulation | 2 |
+| `13_midscale_lotka_volterra` | mid | ecology / ODEs | 2 |
+| `14_midscale_hierarchical_clustering` | mid | bioinformatics | 2 |
+| `03_large_protein_pipeline` | large | structural bio | 1 |
+| `05_large_model_benchmark` | large | machine learning | 1 |
+| `15_large_metabolomics_pipeline` | large | metabolomics | 3 |
+| `16_large_double_pendulum` | large | physics / chaos | 2 |
+| `17_large_image_convolution` | large | image processing | 2 |
 
-Regenerate them with `python examples/build_notebooks.py`.
+32 figures across 54 executable cells. Regenerate all of them with
+`python examples/build_notebooks.py`.
 
 ## Run standalone (no agent needed)
 
