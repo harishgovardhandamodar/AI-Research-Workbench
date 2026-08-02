@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fox — AI Science Workbench</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- Top bar -->
+  <header id="topbar">
+    <div class="brand">🦊 <span>Fox</span><span class="brand-sub">AI Science Workbench</span></div>
+    <div class="topbar-center">
+      <select id="project-select" title="Project"></select>
+      <button id="new-project-btn" class="btn subtle" title="New project">+</button>
+      <select id="model-select" title="Model"></select>
+    </div>
+    <div class="topbar-right">
+      <span id="conn-status" class="status-dot" title="Connection status"></span>
+      <button id="settings-btn" class="btn subtle">Settings</button>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <div id="main">
+    <section id="chat-panel">
+      <div id="messages" class="scroll"></div>
+      <div id="composer">
+        <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
+        <button id="send-btn" class="btn primary" title="Send">Send</button>
+      </div>
+    </section>
+
+    <aside id="side-panel" class="scroll">
+      <div class="tabs">
+        <button class="tab active" data-tab="artifacts">Artifacts</button>
+        <button class="tab" data-tab="kernel">Kernel</button>
+        <button class="tab" data-tab="review">Review</button>
+        <button class="tab" data-tab="grants">Permissions</button>
+      </div>
+
+      <div id="tab-artifacts" class="tabpane active">
+        <div id="artifact-list" class="vlist"></div>
+      </div>
+      <div id="tab-kernel" class="tabpane">
+        <div class="pane-toolbar">
+          <span class="pane-title">Python kernel (persistent)</span>
+          <button id="kernel-reset-btn" class="btn subtle small">Reset</button>
+        </div>
+        <div id="kernel-vars" class="vlist"></div>
+        <div class="pane-toolbar"><span class="pane-title">Environment</span></div>
+        <div id="kernel-env" class="vlist"></div>
+      </div>
+      <div id="tab-review" class="tabpane">
+        <div class="pane-toolbar">
+          <span class="pane-title">Background reviewer</span>
+          <button id="review-btn" class="btn subtle small">Run now</button>
+        </div>
+        <div id="review-findings" class="vlist"></div>
+      </div>
+      <div id="tab-grants" class="tabpane">
+        <div class="pane-toolbar"><span class="pane-title">Granted permissions</span></div>
+        <div id="grant-list" class="vlist"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Artifact modal -->
+<div id="artifact-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <h3 id="art-title">Artifact</h3>
+      <button class="btn subtle" id="art-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="art-view" class="art-view"></div>
+      <div id="art-meta" class="art-meta"></div>
+      <details class="provenance">
+        <summary>Show provenance (code + environment)</summary>
+        <div class="prow"><span class="plabel">Code that produced this</span>
+          <pre id="art-code" class="codeblock"></pre></div>
+        <div class="prow"><span class="plabel">Environment snapshot</span>
+          <pre id="art-env" class="codeblock"></pre></div>
+      </details>
+      <div class="regen">
+        <span class="plabel">Request a change &amp; regenerate</span>
+        <div class="regen-row">
+          <input id="regen-input" placeholder='e.g. "remove gridlines, use log scale on y"'>
+          <button id="regen-btn" class="btn primary small">Regenerate</button>
+        </div>
+        <div id="regen-status" class="regen-status"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Settings</h3><button class="btn subtle" id="settings-close">✕</button></div>
+    <div class="modal-body form">
+      <label>Gateway base URL (chat / model list)</label>
+      <input id="cfg-base-url">
+      <label>Direct Ollama base URL (tool calling)</label>
+      <input id="cfg-tool-url">
+      <label>Model</label>
+      <input id="cfg-model" list="model-list">
+      <datalist id="model-list"></datalist>
+      <label>Temperature</label>
+      <input id="cfg-temp" type="number" step="0.05" min="0" max="2">
+      <label class="check"><input id="cfg-reviewer" type="checkbox"> Run background reviewer after each turn</label>
+      <div class="modal-actions">
+        <button id="cfg-test" class="btn subtle">Test connection</button>
+        <span id="cfg-status"></span>
+        <span class="spacer"></span>
+        <button id="cfg-save" class="btn primary">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Approval modal -->
+<div id="approval-modal" class="modal hidden">
+  <div class="modal-box small">
+    <div class="modal-head"><h3>Permission required</h3></div>
+    <div class="modal-body">
+      <p id="approval-reason" class="muted"></p>
+      <pre id="approval-command" class="codeblock"></pre>
+      <div class="modal-actions">
+        <button id="approval-deny" class="btn subtle">Deny</button>
+        <span class="spacer"></span>
+        <button id="approval-allow" class="btn primary">Allow this once</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="hidden"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
