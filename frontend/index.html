@@ -136,6 +136,26 @@
         <span class="spacer"></span>
         <button id="cfg-save" class="btn primary">Save</button>
       </div>
+
+      <div class="form-section">
+        <span class="plabel">MCP servers (Model Context Protocol)</span>
+        <div id="mcp-server-list"></div>
+        <button id="mcp-add-btn" class="btn subtle small">+ Add server</button>
+        <div id="mcp-add-form" class="hidden form">
+          <label>Name</label><input id="mcp-name" placeholder="uniprot">
+          <label>Transport</label>
+          <select id="mcp-transport"><option value="stdio">stdio (local)</option><option value="http">streamable HTTP</option></select>
+          <label>Command (stdio)</label><input id="mcp-command" placeholder="{python} or python3">
+          <label>Args (stdio, comma-separated)</label><input id="mcp-args" placeholder="mcp_servers/science_tools.py">
+          <label>URL (HTTP)</label><input id="mcp-url" placeholder="https://example.com/mcp">
+          <label>Headers (HTTP, JSON)</label><input id="mcp-headers" placeholder='{"Authorization": "Bearer ..."}'>
+          <label class="check"><input id="mcp-trusted" type="checkbox"> Trusted (skip approval prompts)</label>
+          <div class="modal-actions">
+            <button id="mcp-add-save" class="btn primary small">Add</button>
+            <button id="mcp-add-cancel" class="btn subtle small">Cancel</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

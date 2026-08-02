@@ -25,6 +25,7 @@ from .agents.tools import ToolContext
 from .artifacts.store import Artifact, ArtifactStore
 from .kernels.manager import KernelManager
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TOOL_BASE_URL, LLMClient, LLMError
+from .mcp import DEFAULT_SERVERS, MCPRegistry
 from .notebooks import NotebookError, NotebookService, new_notebook
 from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR
 from .permissions import PermissionManager
@@ -39,6 +40,7 @@ DEFAULT_CONFIG = {
         "max_tokens": 4096,
     },
     "agent": {"max_iters": 8, "reviewer_enabled": True},
+    "mcp": {"servers": DEFAULT_SERVERS},
 }
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -70,6 +72,8 @@ def load_config() -> dict:
             cfg = json.loads(json.dumps(DEFAULT_CONFIG))
             cfg["llm"].update(saved.get("llm", {}))
             cfg["agent"].update(saved.get("agent", {}))
+            if "servers" in saved.get("mcp", {}):
+                cfg["mcp"]["servers"] = saved["mcp"]["servers"]
             return cfg
         except json.JSONDecodeError:
             pass
@@ -193,6 +197,7 @@ app.add_middleware(
 
 runtimes: dict[str, ProjectRuntime] = {}
 _llm_cache: LLMClient | None = None
+mcp_registry: MCPRegistry = MCPRegistry(CONFIG.get("mcp", {}).get("servers", []))
 
 
 def get_runtime(name: str) -> ProjectRuntime:
@@ -228,6 +233,9 @@ async def set_config(body: dict):
         CONFIG["llm"].update(cfg["llm"])
     if "agent" in cfg:
         CONFIG["agent"].update(cfg["agent"])
+    if "mcp" in cfg and "servers" in cfg["mcp"]:
+        CONFIG["mcp"]["servers"] = cfg["mcp"]["servers"]
+        await rebuild_mcp()
     save_config(CONFIG)
     _llm_cache = None
     for rt in runtimes.values():
@@ -235,6 +243,21 @@ async def set_config(body: dict):
         rt.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         rt.max_iters = CONFIG["agent"].get("max_iters", 8)
     return {"config": CONFIG}
+
+
+# ---------------------------------------------------------------- MCP --------
+
+async def rebuild_mcp():
+    global mcp_registry
+    if mcp_registry is not None:
+        await mcp_registry.close()
+    mcp_registry = MCPRegistry(CONFIG.get("mcp", {}).get("servers", []))
+
+
+@app.get("/api/mcp")
+async def mcp_status():
+    statuses = await mcp_registry.statuses()
+    return {"servers": statuses, "installed": mcp_registry._available}
 
 
 @app.get("/api/models")
@@ -492,7 +515,7 @@ async def ws_chat(ws: WebSocket, name: str):
     broker = ApprovalBroker(emit)
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
-                              max_iters=rt.max_iters)
+                              max_iters=rt.max_iters, mcp=mcp_registry)
 
     async def handle_turn(text: str):
         async with rt.lock:

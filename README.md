@@ -58,6 +58,31 @@ python3 -m venv .venv
 Open http://127.0.0.1:8765, pick a model (Settings → Test connection), and chat.
 Everything is stored under `workbench/projects/<name>/` (SQLite + artifacts).
 
+## Model Context Protocol (MCP) support
+
+The workbench is an **MCP Host**: it discovers tools from local (`stdio`) and remote
+(`streamable HTTP`) MCP servers and merges them into the agent's tool set, so the
+local LLM can call database connectors, domain tools, etc. — the same servers that
+Claude, Cursor or VS Code could use.
+
+- Tool names are namespaced `<server>__<tool>` (e.g. `science__uniprot_lookup`).
+- A built-in **`mcp_servers/science_tools.py`** server ships tools for sequence
+  GC content, peptide mass, Kyte–Doolittle hydrophobicity, an offline UniProt
+  mock connector, and Welch's t-test. Run it standalone or use it from the workbench.
+- Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
+  headers), then re-save; status and tool counts are shown.
+- **Human-in-the-loop**: tools annotated read-only run freely; anything that may
+  write data or launch compute asks the user before running (one-time grant).
+
+```bash
+.venv/bin/pip install mcp        # optional; enables MCP support
+```
+
+Demo prompt:
+
+> "Use the MCP science tools to compute the GC content of ATGCCGTAATG and look up
+> UniProt P04637."
+
 ## Jupyter integration (run as an addon inside Jupyter)
 
 Run the whole workbench as a `jupyter_server` extension, so the AI Science

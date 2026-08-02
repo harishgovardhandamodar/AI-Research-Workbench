@@ -1,0 +1,226 @@
+"""Model Context Protocol (MCP) integration: the workbench acts as an MCP Host.
+
+Discovers tools from local (stdio) and remote (streamable HTTP) MCP servers and
+merges them into the agent's tool set. Tool names are namespaced as
+``<server>__<tool>`` so collisions are impossible and provenance is clear.
+
+Approval policy (human-in-the-loop):
+  - tools annotated ``readOnlyHint=True`` (or on a ``trusted`` server) run freely;
+  - anything else (writable / compute / unknown) asks the user the first time and
+    remembers the grant, matching the workbench's permission model.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from typing import Awaitable, Callable
+
+from .paths import ROOT
+
+ToolFn = Callable[..., Awaitable[str]]
+
+DEFAULT_SERVERS = [
+    {
+        "name": "science",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/science_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+]
+
+
+def _resolve(command: str) -> str:
+    return command.replace("{python}", sys.executable)
+
+
+class MCPConnection:
+    def __init__(self, config: dict):
+        self.config = config
+        self.name = config.get("name", "mcp")
+        self._streams = None
+        self._session = None
+        self._tools: list | None = None
+        self.error: str | None = None
+
+    async def _connect(self):
+        if self._session is not None:
+            return
+        try:
+            from mcp import ClientSession, StdioServerParameters
+            from mcp.client.stdio import stdio_client
+            from mcp.client.streamable_http import streamable_http_client
+
+            transport = self.config.get("transport", "stdio")
+            if transport == "stdio":
+                params = StdioServerParameters(
+                    command=_resolve(self.config.get("command", "python3")),
+                    args=self.config.get("args") or [],
+                    env=self.config.get("env"),
+                    cwd=str(ROOT),
+                )
+                self._streams = stdio_client(params)
+            else:
+                url = self.config.get("url", "")
+                headers = self.config.get("headers") or {}
+                self._streams = streamable_http_client(url, headers=headers)
+            self._read, self._write = await self._streams.__aenter__()
+            self._session = ClientSession(self._read, self._write)
+            await self._session.__aenter__()
+            await self._session.initialize()
+        except Exception as e:  # noqa: BLE001
+            self.error = f"{type(e).__name__}: {e}"
+            await self.close()
+            raise
+
+    async def list_tools(self) -> list:
+        await self._connect()
+        if self._tools is None:
+            res = await self._session.list_tools()
+            self._tools = list(res.tools)
+        return self._tools
+
+    async def call_tool(self, name: str, arguments: dict) -> tuple[str, bool]:
+        await self._connect()
+        res = await self._session.call_tool(name, arguments=arguments or {})
+        parts = []
+        for block in getattr(res, "content", []) or []:
+            btype = getattr(block, "type", "text")
+            if btype == "text":
+                parts.append(getattr(block, "text", ""))
+            elif btype == "image":
+                parts.append(f"[image {getattr(block, 'mimeType', '')}]")
+            elif btype == "resource":
+                parts.append(f"[resource {getattr(block, 'uri', '')}]")
+        return "\n".join(p for p in parts if p), bool(getattr(res, "isError", False))
+
+    async def close(self):
+        if self._session is not None:
+            try:
+                await self._session.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._session = None
+        if self._streams is not None:
+            try:
+                await self._streams.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._streams = None
+        self._tools = None
+
+
+def _mcp_installed() -> bool:
+    try:
+        import mcp  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+class MCPRegistry:
+    def __init__(self, servers: list[dict] | None = None):
+        self._servers: dict[str, dict] = {}
+        for s in servers or []:
+            name = (s.get("name") or "").strip()
+            if name:
+                self._servers[name] = dict(s)
+        self._conns: dict[str, MCPConnection] = {}
+        self._available = _mcp_installed()
+
+    # -- lifecycle ----------------------------------------------------------
+    def connection(self, name: str) -> MCPConnection:
+        if name not in self._conns:
+            self._conns[name] = MCPConnection(self._servers.get(name, {"name": name}))
+        return self._conns[name]
+
+    def server_names(self) -> list[str]:
+        return list(self._servers.keys())
+
+    async def statuses(self) -> list[dict]:
+        out = []
+        for name in self._servers:
+            item = {"name": name, "transport": self._servers[name].get("transport", "stdio"),
+                    "ok": False, "error": None, "tools": []}
+            if not self._available:
+                item["error"] = "mcp package not installed"
+                out.append(item)
+                continue
+            conn = self.connection(name)
+            try:
+                tools = await conn.list_tools()
+                item["ok"] = True
+                item["tools"] = [t.name for t in tools]
+            except Exception as e:  # noqa: BLE001
+                item["error"] = f"{type(e).__name__}: {e}"
+            out.append(item)
+        return out
+
+    # -- agent integration --------------------------------------------------
+    async def build_tools(self, ctx) -> tuple[list[dict], dict[str, ToolFn]]:
+        """Return (llm_tool_schemas, {namespaced_name: async callable}) for all MCP tools."""
+        schemas: list[dict] = []
+        fns: dict[str, ToolFn] = {}
+        if not self._available:
+            return schemas, fns
+        for sname in self._servers:
+            conn = self.connection(sname)
+            try:
+                tools = await conn.list_tools()
+            except Exception:  # noqa: BLE001
+                continue
+            for t in tools:
+                tname = t.name
+                full = f"{sname}__{tname}"
+                desc = getattr(t, "description", "") or ""
+                input_schema = getattr(t, "input_schema", None) or {
+                    "type": "object", "properties": {}}
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": full,
+                        "description": (f"[MCP {sname}] {desc}" if desc
+                                        else f"[MCP {sname}] Call tool {tname}"),
+                        "parameters": input_schema,
+                    },
+                })
+                fns[full] = self._make_caller(ctx, conn, sname, t)
+        return schemas, fns
+
+    def _make_caller(self, ctx, conn: MCPConnection, sname: str, tool) -> ToolFn:
+        trusted = bool(self._servers.get(sname, {}).get("trusted", False))
+        annotations = getattr(tool, "annotations", None)
+        read_only = bool(getattr(annotations, "read_only_hint", None)) if annotations else False
+
+        async def caller(**args) -> str:
+            permissions = getattr(ctx, "permissions", None)
+            approval = getattr(ctx, "approval", None)
+            if not read_only and not trusted and permissions is not None:
+                key = f"{sname}__{tool.name}"
+                grant = permissions.check("mcp_tool", key)
+                if grant == "ask":
+                    if approval is None:
+                        return "[denied] MCP tool requires approval but no approval channel is available."
+                    ok = await approval.request(
+                        "mcp_tool", key,
+                        f"MCP tool '{tool.name}' on server '{sname}' may modify data "
+                        f"or launch compute. Approve?")
+                    if not ok:
+                        return "[denied by user]"
+                    permissions.record("mcp_tool", key, "allow")
+            try:
+                text, is_err = await conn.call_tool(tool.name, args)
+            except Exception as e:  # noqa: BLE001
+                return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
+            return f"[MCP:{sname}] {text}" if text else f"[MCP:{sname}] (no output)"
+
+        caller.__name__ = f"{sname}__{tool.name}"
+        return caller
+
+    async def close(self):
+        for conn in self._conns.values():
+            await conn.close()
+        self._conns.clear()

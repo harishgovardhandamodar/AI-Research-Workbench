@@ -204,6 +204,10 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 .muted { color: var(--text-dim); }
 
+.form-section { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; }
+.form-section .plabel { margin-top: 0; }
+#mcp-server-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+
 /* ---------- notebooks ---------- */
 .modal-box.nb { width: min(860px, 96vw); height: 88vh; }
 .modal-head-actions { display: flex; gap: 6px; align-items: center; }

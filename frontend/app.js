@@ -405,7 +405,7 @@ async function sendChat() {
 /* ============================ settings =================================== */
 
 function openSettings() {
-  const c = state.config || { llm: {}, agent: {} };
+  const c = state.config || { llm: {}, agent: {}, mcp: {} };
   $("cfg-base-url").value = c.llm.base_url || "";
   $("cfg-tool-url").value = c.llm.tool_base_url || "";
   $("cfg-model").value = c.llm.model || "";
@@ -413,7 +413,47 @@ function openSettings() {
   $("cfg-reviewer").checked = c.agent?.reviewer_enabled !== false;
   const dl = $("model-list");
   dl.innerHTML = (state.models || []).map((m) => `<option value="${esc(m.id)}">`).join("");
+  state.mcpServers = (c.mcp?.servers || []).map((s) => ({ ...s }));
+  renderMcpList();
   $("settings-modal").classList.remove("hidden");
+  refreshMcpStatus();
+}
+
+function renderMcpList() {
+  const list = $("mcp-server-list");
+  list.innerHTML = "";
+  if (!(state.mcpServers || []).length) {
+    list.innerHTML = '<div class="empty">No MCP servers configured. The built-in "science" server is the default.</div>';
+    return;
+  }
+  for (const s of state.mcpServers) {
+    const el = document.createElement("div");
+    el.className = "nb-item";
+    el.innerHTML = `<span class="nb-icon">🔌</span>
+      <div class="nbinfo">
+        <div class="nbname">${esc(s.name)} <span class="akind">${esc(s.transport || "stdio")}</span></div>
+        <div class="nbmeta" data-mcp-status="${esc(s.name)}">${esc(s.command || s.url || "")}</div>
+      </div>
+      <span class="nb-badge" data-mcp-count="${esc(s.name)}"></span>
+      <span class="adel" data-mcp-del="${esc(s.name)}" title="Remove">🗑</span>`;
+    el.querySelector(`[data-mcp-del="${esc(s.name)}"]`).addEventListener("click", () => {
+      state.mcpServers = state.mcpServers.filter((x) => x.name !== s.name);
+      renderMcpList();
+    });
+    list.appendChild(el);
+  }
+}
+
+async function refreshMcpStatus() {
+  try {
+    const r = await api("/api/mcp");
+    for (const s of r.servers || []) {
+      const meta = document.querySelector(`[data-mcp-status="${esc(s.name)}"]`);
+      const badge = document.querySelector(`[data-mcp-count="${esc(s.name)}"]`);
+      if (meta) meta.textContent = s.ok ? "connected" : (s.error || "offline");
+      if (badge) badge.textContent = s.ok ? s.tools.length + " tools" : "✗";
+    }
+  } catch (e) { /* silent */ }
 }
 
 async function saveSettings() {
@@ -425,6 +465,7 @@ async function saveSettings() {
       temperature: parseFloat($("cfg-temp").value) || 0.2,
     },
     agent: { reviewer_enabled: $("cfg-reviewer").checked },
+    mcp: { servers: state.mcpServers || [] },
   };
   try {
     const r = await api("/api/config", { method: "POST", body: JSON.stringify({ config: cfg }) });
@@ -571,6 +612,33 @@ $("settings-btn").addEventListener("click", openSettings);
 $("settings-close").addEventListener("click", () => $("settings-modal").classList.add("hidden"));
 $("cfg-save").addEventListener("click", saveSettings);
 $("cfg-test").addEventListener("click", testConnection);
+
+$("mcp-add-btn").addEventListener("click", () => $("mcp-add-form").classList.remove("hidden"));
+$("mcp-add-cancel").addEventListener("click", () => $("mcp-add-form").classList.add("hidden"));
+$("mcp-add-save").addEventListener("click", () => {
+  const name = $("mcp-name").value.trim();
+  if (!name) { toast("Name required"); return; }
+  const server = {
+    name,
+    transport: $("mcp-transport").value,
+    trusted: $("mcp-trusted").checked,
+  };
+  if (server.transport === "stdio") {
+    server.command = $("mcp-command").value.trim() || "{python}";
+    server.args = $("mcp-args").value.split(",").map((s) => s.trim()).filter(Boolean);
+    server.env = { PYTHONPATH: "." };
+  } else {
+    server.url = $("mcp-url").value.trim();
+    try { server.headers = JSON.parse($("mcp-headers").value || "{}"); }
+    catch { server.headers = {}; }
+  }
+  state.mcpServers = state.mcpServers || [];
+  state.mcpServers.push(server);
+  $("mcp-add-form").classList.add("hidden");
+  $("mcp-name").value = ""; $("mcp-command").value = ""; $("mcp-args").value = "";
+  $("mcp-url").value = ""; $("mcp-headers").value = ""; $("mcp-trusted").checked = false;
+  renderMcpList();
+});
 $("art-close").addEventListener("click", () => $("artifact-modal").classList.add("hidden"));
 $("artifact-modal").addEventListener("click", (e) => { if (e.target === $("artifact-modal")) $("artifact-modal").classList.add("hidden"); });
 

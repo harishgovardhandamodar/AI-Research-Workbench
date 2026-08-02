@@ -28,6 +28,10 @@ Working style:
   to persist important tables/summaries/data.
 - Use run_shell only when necessary; prefer the Python kernel. Shell commands that
   touch the network or are destructive will ask the user for permission.
+- Tools that come from external MCP servers are named like <server>__<tool> (e.g.
+  science__uniprot_lookup). Use them for domain lookups (databases, sequence
+  analysis, etc.). MCP tools that may modify data or launch compute will ask the
+  user for permission.
 - Every figure records its exact code and environment so it can be reproduced.
   Prefer to reference artifacts by their id.
 - Be rigorous: cite numbers you actually computed. If you don't know, say so.
@@ -78,13 +82,27 @@ class Coordinator:
     def __init__(self, llm: LLMClient, ctx: ToolContext,
                  emit: Callable[[str, dict], Awaitable[None]] | None = None,
                  persist: Callable[[str, str, dict], None] | None = None,
-                 max_iters: int = 8):
+                 max_iters: int = 8, mcp=None):
         self.llm = llm
         self.ctx = ctx
         self.emit = emit or (lambda t, p: None)
         self.persist = persist or (lambda r, c, m: None)
         self.max_iters = max_iters
+        self.mcp = mcp
         self.tools = build_tools(ctx)
+        self._mcp_loaded = False
+
+    async def _ensure_mcp(self):
+        """Merge MCP server tools into the tool set (lazy, once)."""
+        if self.mcp is None or self._mcp_loaded:
+            return
+        self._mcp_loaded = True
+        try:
+            schemas, fns = await self.mcp.build_tools(self.ctx)
+        except Exception:  # noqa: BLE001
+            return
+        self._mcp_schemas = schemas
+        self.tools.update(fns)
 
     async def _on_delta(self, text: str):
         await self.emit("stream_delta", {"text": text})
@@ -94,7 +112,8 @@ class Coordinator:
 
         Intermediate assistant/tool messages are persisted via `persist`.
         Returns {"text": final assistant text}."""
-        tools = get_tool_schemas()
+        await self._ensure_mcp()
+        tools = get_tool_schemas() + list(getattr(self, "_mcp_schemas", []) or [])
         for _ in range(self.max_iters):
             full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
             tcs = full.get("tool_calls")
