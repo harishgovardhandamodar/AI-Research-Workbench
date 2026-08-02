@@ -660,7 +660,7 @@ function renderNotebooks() {
     el.innerHTML = `<span class="nb-icon">📓</span>
       <div class="nbinfo">
         <div class="nbname">${esc(nb.name)}</div>
-        <div class="nbmeta">${nb.cells} cells · ${nb.code_cells} code · ${new Date(nb.updated * 1000).toLocaleString()}</div>
+        <div class="nbmeta">${nb.cells} cells · ${nb.code_cells} code · ${esc(nb.source || "project")}${nb.source === "examples" ? " · demo" : ""}</div>
       </div>
       <span class="nb-badge ${nb.executions ? "run" : ""}">${nb.executions ? nb.executions + " runs" : "idle"}</span>`;
     el.addEventListener("click", () => openNotebook(nb.name));

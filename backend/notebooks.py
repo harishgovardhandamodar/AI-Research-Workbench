@@ -101,18 +101,27 @@ class NotebookService:
     # -- CRUD ---------------------------------------------------------------
     def list(self) -> list[dict]:
         out = []
-        for f in sorted(self.notebooks_dir.glob("*.ipynb")):
-            try:
-                nb = self.load(f.stem)
-            except NotebookError:
+        seen = set()
+        for base, external in ((self.notebooks_dir, False),
+                               (EXAMPLES_NOTEBOOKS_DIR, True)):
+            if not base.exists():
                 continue
-            out.append({
-                "name": f.stem,
-                "cells": len(nb["cells"]),
-                "code_cells": sum(1 for c in nb["cells"] if c.get("cell_type") == "code"),
-                "executions": nb.get("metadata", {}).get("fox", {}).get("execution_count", 0),
-                "updated": f.stat().st_mtime,
-            })
+            for f in sorted(base.glob("*.ipynb")):
+                if f.stem in seen:
+                    continue
+                seen.add(f.stem)
+                try:
+                    nb = self.load(f.stem)
+                except NotebookError:
+                    continue
+                out.append({
+                    "name": f.stem,
+                    "cells": len(nb["cells"]),
+                    "code_cells": sum(1 for c in nb["cells"] if c.get("cell_type") == "code"),
+                    "executions": nb.get("metadata", {}).get("fox", {}).get("execution_count", 0),
+                    "updated": f.stat().st_mtime,
+                    "source": "examples" if external else "project",
+                })
         return out
 
     def load(self, name: str) -> dict:
