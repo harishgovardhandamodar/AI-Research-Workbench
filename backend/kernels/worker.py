@@ -84,6 +84,7 @@ try:
     import matplotlib.pyplot as plt
 
     _orig_show = plt.show
+    _saved_figs: list[str] = []
 
     def _silent_show(*args, **kwargs):
         for f in plt.get_fignums():
@@ -92,15 +93,45 @@ try:
 
     plt.show = _silent_show
 
-    def _flush_figures() -> list[str]:
-        figs = []
+    def _capture_open_figs() -> list[str]:
+        out = []
         for n in plt.get_fignums():
             fig = plt.figure(n)
             fig.canvas.draw()
             buf = io.BytesIO()
             try:
                 fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
-                figs.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+                out.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+            finally:
+                buf.close()
+        return out
+
+    def _savefig_wrapper(fname=None, *args, **kwargs):
+        # If the model calls plt.savefig(...) we still record the rendered figure
+        # as an artifact (it may then plt.close() the figure).
+        try:
+            _saved_figs.extend(_capture_open_figs())
+        except Exception:  # noqa: BLE001
+            pass
+        if fname:
+            return _orig_savefig(fname, *args, **kwargs)
+        return None
+
+    _orig_savefig = plt.savefig
+    plt.savefig = _savefig_wrapper
+
+    def _flush_figures() -> list[str]:
+        figs = list(_saved_figs)
+        _saved_figs.clear()
+        for n in plt.get_fignums():
+            fig = plt.figure(n)
+            fig.canvas.draw()
+            buf = io.BytesIO()
+            try:
+                fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+                b = base64.b64encode(buf.getvalue()).decode("ascii")
+                if b not in figs:
+                    figs.append(b)
             finally:
                 buf.close()
                 plt.close(fig)
@@ -114,6 +145,19 @@ except ImportError:
 
 
 # ----------------------------------------------------------------- kernel -----
+
+def _save_artifact_hint(**kwargs):
+    raise RuntimeError(
+        "save_artifact is an agent TOOL, not a Python function. Do not call it inside "
+        "the kernel. To create an artifact, issue a separate save_artifact tool call, "
+        "or just print/return the data. Figures are automatically saved as artifacts."
+    )
+
+
+def _base_ns() -> dict:
+    return {"__name__": "__main__", "__builtins__": __builtins__,
+            "save_artifact": _save_artifact_hint}
+
 
 def _compile(code: str):
     tree = ast.parse(code, mode="exec")
@@ -171,7 +215,7 @@ def run_code(ns: dict, code: str, timeout: float) -> dict:
 
 
 def main() -> None:
-    ns = {"__name__": "__main__", "__builtins__": __builtins__}
+    ns = _base_ns()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -191,7 +235,7 @@ def main() -> None:
                 resp = {"ok": True, "variables": _list_variables(ns)}
             elif op == "reset":
                 ns.clear()
-                ns.update({"__name__": "__main__", "__builtins__": __builtins__})
+                ns.update(_base_ns())
                 if plt is not None:
                     plt.close("all")
                 resp = {"ok": True, "variables": {}}

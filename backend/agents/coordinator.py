@@ -22,12 +22,14 @@ Working style:
   kernel (numpy, pandas, scipy, matplotlib available). Variables persist across calls.
 - Use run_python for computation, data analysis and figures. Use matplotlib to make
   clear, well-labelled publication-style figures.
-- Save important results (tables, summaries, data) with save_artifact so they become
-  auditable artifacts.
+- Figures are AUTOMATICALLY saved as artifacts — do NOT call plt.savefig() or any
+  save function for that.
+- Use the save_artifact TOOL (a separate tool call, never inside the Python kernel)
+  to persist important tables/summaries/data.
 - Use run_shell only when necessary; prefer the Python kernel. Shell commands that
   touch the network or are destructive will ask the user for permission.
-- When a figure is produced, the kernel records its exact code and environment so it
-  can be reproduced. Prefer to reference artifacts by their id.
+- Every figure records its exact code and environment so it can be reproduced.
+  Prefer to reference artifacts by their id.
 - Be rigorous: cite numbers you actually computed. If you don't know, say so.
 - Keep the user informed of what you're doing at each step. Be concise in prose.
 
@@ -145,4 +147,9 @@ class Coordinator:
                 })
                 self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
 
-        return {"text": ""}
+        return {"text": self._fallback()}
+
+    @staticmethod
+    def _fallback() -> str:
+        return ("I hit the maximum number of tool steps for this turn and couldn't "
+                "finish. Let me know if you'd like me to continue or adjust the approach.")
