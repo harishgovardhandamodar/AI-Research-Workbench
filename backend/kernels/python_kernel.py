@@ -30,6 +30,7 @@ class PythonKernel:
         self._reader_task: asyncio.Task | None = None
         self._pending: dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
+        self._stderr_tail: str = ""
 
     # -- lifecycle ----------------------------------------------------------
     async def _start(self):
@@ -42,12 +43,17 @@ class PythonKernel:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Default StreamReader limit is 64 KiB; base64 figure responses in
+            # run_code results routinely exceed that, so allow large lines.
+            limit=64 * 1024 * 1024,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
 
     async def _read_loop(self):
         assert self._proc is not None
         assert self._proc.stdout is not None
+        assert self._proc.stderr is not None
+        stderr_task = asyncio.create_task(self._read_stderr())
         try:
             while True:
                 line = await self._proc.stdout.readline()
@@ -66,10 +72,33 @@ class PythonKernel:
         except asyncio.CancelledError:
             pass
         finally:
+            stderr_task.cancel()
             for fut in self._pending.values():
                 if not fut.done():
-                    fut.set_exception(KernelError("kernel process exited"))
+                    fut.set_exception(KernelError(f"kernel process exited"
+                                                  f"{self._err_suffix()}"))
             self._pending.clear()
+
+    async def _read_stderr(self):
+        assert self._proc is not None and self._proc.stderr is not None
+        buf = []
+        try:
+            while True:
+                line = await self._proc.stderr.readline()
+                if not line:
+                    break
+                buf.append(line.decode(errors="replace").rstrip())
+                if len(buf) > 40:
+                    buf.pop(0)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._stderr_tail = "\n".join(buf[-25:])
+
+    def _err_suffix(self) -> str:
+        if self._stderr_tail:
+            return f":\n{self._stderr_tail[:1500]}"
+        return ""
 
     async def _send(self, req: dict, timeout: float = 60.0) -> dict:
         await self._lock.acquire()

@@ -176,7 +176,7 @@ async def _run_shell(ctx: ToolContext, command: str, timeout: float = 30.0) -> s
     # Run via a real shell so quoting, pipes and redirects work as the model expects.
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash", "-c", command,
-        cwd=str(ctx.kernels.session_dir),
+        cwd=str(ctx.kernels.workspace_dir),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

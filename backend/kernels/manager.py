@@ -17,9 +17,10 @@ from .r_kernel import RKernel
 class KernelManager:
     def __init__(self, session_dir: Path):
         self.session_dir = session_dir
+        self.workspace_dir = ROOT
         session_dir.mkdir(parents=True, exist_ok=True)
-        self.python = PythonKernel(cwd=ROOT)
-        self.r = RKernel(cwd=ROOT)
+        self.python = PythonKernel(cwd=self.workspace_dir)
+        self.r = RKernel(cwd=self.workspace_dir)
         self._env_cache: dict | None = None
 
     async def get_env(self) -> dict:
