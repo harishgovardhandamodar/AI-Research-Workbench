@@ -25,6 +25,7 @@ from .agents.tools import ToolContext
 from .artifacts.store import Artifact, ArtifactStore
 from .kernels.manager import KernelManager
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TOOL_BASE_URL, LLMClient, LLMError
+from .notebooks import NotebookError, NotebookService, new_notebook
 from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR
 from .permissions import PermissionManager
 from .store import ProjectStore
@@ -103,6 +104,7 @@ class ProjectRuntime:
         self.store = ProjectStore(self.dir)
         self.artifacts = ArtifactStore(self.dir)
         self.kernels = KernelManager(self.dir)
+        self.notebooks = NotebookService(self.dir, self.kernels.python)
         self.permissions = PermissionManager(self.store)
         self.lock = asyncio.Lock()
         self.llm = make_llm()
@@ -112,7 +114,7 @@ class ProjectRuntime:
     def ctx(self, emit, approval) -> ToolContext:
         return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
                            store=self.store, permissions=self.permissions,
-                           approval=approval, emit=emit)
+                           approval=approval, emit=emit, notebooks=self.notebooks)
 
     def build_llm_messages(self) -> list[dict]:
         rows = self.store.list_messages()
@@ -324,6 +326,76 @@ async def reset_kernel(name: str):
     rt = get_runtime(name)
     await rt.kernels.reset()
     return {"ok": True}
+
+
+# ---------------------------------------------------------- notebooks --------
+
+@app.get("/api/projects/{name}/notebooks")
+async def list_notebooks(name: str):
+    return {"notebooks": get_runtime(name).notebooks.list()}
+
+
+@app.post("/api/projects/{name}/notebooks")
+async def create_notebook(name: str, body: dict):
+    rt = get_runtime(name)
+    nbname = (body.get("name") or "").strip()
+    if not nbname:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    cells = body.get("cells")
+    nb = new_notebook(cells, nbname)
+    safe = rt.notebooks._safe(nbname)
+    rt.notebooks.save(safe, nb)
+    return {"name": safe, "notebook": nb}
+
+
+@app.get("/api/projects/{name}/notebooks/{nbname}")
+async def get_notebook(name: str, nbname: str):
+    try:
+        nb = get_runtime(name).notebooks.load(nbname)
+    except NotebookError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return {"notebook": nb}
+
+
+@app.put("/api/projects/{name}/notebooks/{nbname}")
+async def save_notebook(name: str, nbname: str, body: dict):
+    rt = get_runtime(name)
+    cells = body.get("cells")
+    if not isinstance(cells, list):
+        return JSONResponse({"error": "cells required"}, status_code=400)
+    nb = rt.notebooks.load(nbname)
+    nb["cells"] = cells
+    rt.notebooks.save(nbname, nb)
+    return {"notebook": nb}
+
+
+@app.post("/api/projects/{name}/notebooks/{nbname}/execute")
+async def execute_notebook(name: str, nbname: str, body: dict):
+    import base64
+
+    rt = get_runtime(name)
+    cells = body.get("cells", "all")
+    indices = None
+    if cells != "all":
+        try:
+            indices = [int(x) for x in str(cells).split(",") if x.strip()]
+        except ValueError:
+            return JSONResponse({"error": "cells must be 'all' or comma-separated indices"},
+                                status_code=400)
+
+    async def on_artifact(fig_b64: str, source: str):
+        env = await rt.kernels.get_env()
+        art = Artifact(kind="figure", name="notebook-figure",
+                       description="Figure produced by a notebook cell",
+                       code=source, env=env, message_id="")
+        rt.artifacts.add_artifact(art, data=base64.b64decode(fig_b64), data_type="png")
+        return art
+
+    try:
+        res = await rt.notebooks.execute(nbname, indices, on_artifact=on_artifact)
+    except NotebookError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return res
 
 
 @app.get("/api/projects/{name}/grants")

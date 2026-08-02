@@ -623,6 +623,245 @@ document.querySelectorAll(".tab").forEach((t) => {
   });
 });
 
+/* ============================ notebooks =================================== */
+
+let currentNotebook = null; // {name, nb}
+
+function setNbStatus(msg, isErr) {
+  const el = $("nb-status");
+  el.textContent = msg || "";
+  el.className = "nb-status" + (isErr ? " err" : "");
+}
+
+function _toSourceLines(str) {
+  return str.split("\n").map((l, i, a) => (i < a.length - 1 ? l + "\n" : l));
+}
+
+async function refreshNotebooks() {
+  try {
+    const r = await api(`/api/projects/${state.project}/notebooks`);
+    state.notebooks = r.notebooks || [];
+    renderNotebooks();
+  } catch (e) { /* silent */ }
+}
+
+function renderNotebooks() {
+  const list = $("notebook-list");
+  list.innerHTML = "";
+  if (!(state.notebooks || []).length) {
+    list.innerHTML = '<div class="empty">No notebooks yet. Create one to run experiments as .ipynb — results are held in the notebook.</div>';
+    return;
+  }
+  for (const nb of state.notebooks) {
+    const el = document.createElement("div");
+    el.className = "nb-item";
+    el.innerHTML = `<span class="nb-icon">📓</span>
+      <div class="nbinfo">
+        <div class="nbname">${esc(nb.name)}</div>
+        <div class="nbmeta">${nb.cells} cells · ${nb.code_cells} code · ${new Date(nb.updated * 1000).toLocaleString()}</div>
+      </div>
+      <span class="nb-badge ${nb.executions ? "run" : ""}">${nb.executions ? nb.executions + " runs" : "idle"}</span>`;
+    el.addEventListener("click", () => openNotebook(nb.name));
+    list.appendChild(el);
+  }
+}
+
+async function openNotebook(name) {
+  try {
+    const r = await api(`/api/projects/${state.project}/notebooks/${encodeURIComponent(name)}`);
+    currentNotebook = { name, nb: r.notebook };
+    $("nb-title").textContent = name + ".ipynb";
+    renderNotebookCells();
+    $("notebook-modal").classList.remove("hidden");
+    setNbStatus("");
+  } catch (e) { toast(e.message, 4000); }
+}
+
+function renderNotebookCells() {
+  const wrap = $("nb-cells");
+  wrap.innerHTML = "";
+  (currentNotebook.nb.cells || []).forEach((cell, idx) => wrap.appendChild(buildNbCell(cell, idx)));
+}
+
+function buildNbCell(cell, idx) {
+  const div = document.createElement("div");
+  div.className = "nb-cell";
+  const head = document.createElement("div");
+  head.className = "nb-cell-head";
+  const meta = cell.metadata?.fox || {};
+  const numClass = meta.ok ? "done" : (meta.ok === false ? "fail" : "");
+  const numText = cell.execution_count ? "[" + cell.execution_count + "]" : "";
+  const actions = cell.cell_type === "code"
+    ? '<button class="nb-run">Run</button><button class="nb-del">del</button>'
+    : '<button class="nb-del">del</button>';
+  head.innerHTML = `<span class="nb-cell-tag">${esc(cell.cell_type)}</span>
+    <div class="nb-cell-actions">${actions}</div>
+    <span class="nb-cellnum ${numClass}">${numText}</span>`;
+  div.appendChild(head);
+
+  if (cell.cell_type === "markdown") {
+    const md = document.createElement("div");
+    md.className = "nb-markdown";
+    md.innerHTML = renderMarkdown((cell.source || []).join(""));
+    div.appendChild(md);
+  } else {
+    const ta = document.createElement("textarea");
+    ta.className = "nb-source";
+    ta.value = (cell.source || []).join("");
+    div.appendChild(ta);
+    const outputs = document.createElement("div");
+    outputs.className = "nb-outputs";
+    renderNbOutputs(outputs, cell.outputs || []);
+    div.appendChild(outputs);
+    head.querySelector(".nb-run").addEventListener("click", () => runNbCell(idx));
+  }
+  head.querySelector(".nb-del").addEventListener("click", () => {
+    currentNotebook.nb.cells.splice(idx, 1);
+    renderNotebookCells();
+  });
+  return div;
+}
+
+function renderNbOutputs(container, outputs) {
+  container.innerHTML = "";
+  for (const o of outputs || []) {
+    if (o.output_type === "stream") {
+      const el = document.createElement("div");
+      el.className = "nb-out stream";
+      el.textContent = (o.text || []).join("");
+      container.appendChild(el);
+    } else if (o.output_type === "display_data") {
+      if (o.data && o.data["image/png"]) {
+        const im = document.createElement("img");
+        im.src = "data:image/png;base64," + o.data["image/png"];
+        container.appendChild(im);
+      } else {
+        const el = document.createElement("div");
+        el.className = "nb-out stream";
+        const t = o.data && o.data["text/plain"];
+        el.textContent = Array.isArray(t) ? t.join("") : (t || "");
+        container.appendChild(el);
+      }
+    } else if (o.output_type === "error") {
+      const el = document.createElement("div");
+      el.className = "nb-out error";
+      el.textContent = (o.traceback || []).join("\n") || (o.ename + ": " + o.evalue);
+      container.appendChild(el);
+    }
+  }
+}
+
+function syncNbSources() {
+  document.querySelectorAll("#nb-cells .nb-cell").forEach((el, idx) => {
+    const ta = el.querySelector(".nb-source");
+    if (ta && currentNotebook.nb.cells[idx]) {
+      currentNotebook.nb.cells[idx].source = _toSourceLines(ta.value);
+    }
+  });
+}
+
+async function runNbCell(idx) {
+  syncNbSources();
+  setNbStatus("Running cell " + idx + "…");
+  try {
+    const res = await api(
+      `/api/projects/${state.project}/notebooks/${encodeURIComponent(currentNotebook.name)}/execute`,
+      { method: "POST", body: JSON.stringify({ cells: String(idx) }) });
+    currentNotebook.nb = res.notebook;
+    renderNotebookCells();
+    const r0 = res.report[0];
+    setNbStatus("Cell " + idx + (r0 && r0.ok ? " ran ok" : " failed"), !(r0 && r0.ok));
+    afterNbRun();
+  } catch (e) { setNbStatus("Error: " + e.message, true); }
+}
+
+async function runAllNb() {
+  syncNbSources();
+  setNbStatus("Running all cells…");
+  try {
+    const res = await api(
+      `/api/projects/${state.project}/notebooks/${encodeURIComponent(currentNotebook.name)}/execute`,
+      { method: "POST", body: JSON.stringify({ cells: "all" }) });
+    currentNotebook.nb = res.notebook;
+    renderNotebookCells();
+    const fails = res.report.filter((r) => !r.ok).length;
+    setNbStatus("Ran " + res.report.length + " code cell(s)" + (fails ? " — " + fails + " failed" : ""));
+    afterNbRun();
+  } catch (e) { setNbStatus("Error: " + e.message, true); }
+}
+
+async function saveNb() {
+  syncNbSources();
+  try {
+    const r = await api(
+      `/api/projects/${state.project}/notebooks/${encodeURIComponent(currentNotebook.name)}`,
+      { method: "PUT", body: JSON.stringify({ cells: currentNotebook.nb.cells }) });
+    currentNotebook.nb = r.notebook;
+    renderNotebookCells();
+    setNbStatus("Saved");
+  } catch (e) { setNbStatus("Error: " + e.message, true); }
+}
+
+function addNbCell() {
+  syncNbSources();
+  currentNotebook.nb.cells.push({
+    cell_type: "code", id: Math.random().toString(36).slice(2, 8),
+    metadata: {}, source: [""], execution_count: null, outputs: [],
+  });
+  renderNotebookCells();
+  const last = $("nb-cells").lastElementChild;
+  if (last) last.querySelector(".nb-source")?.focus();
+}
+
+function afterNbRun() {
+  refreshNotebooks();
+  refreshArtifacts();
+  refreshKernelPanel();
+}
+
+async function refreshArtifacts() {
+  try {
+    const r = await api(`/api/projects/${state.project}/artifacts`);
+    state.artifacts = r.artifacts || [];
+    renderArtifacts();
+  } catch (e) { /* silent */ }
+}
+
+async function refreshKernelPanel() {
+  try {
+    const r = await api(`/api/projects/${state.project}/state`);
+    renderKernel(r.variables, r.env);
+  } catch (e) { /* silent */ }
+}
+
+$("nb-new-btn").addEventListener("click", () => {
+  $("nb-new-name").value = "my_experiment";
+  $("nb-new-code").value = "";
+  $("nb-new-modal").classList.remove("hidden");
+});
+$("nb-new-close").addEventListener("click", () => $("nb-new-modal").classList.add("hidden"));
+$("nb-new-create").addEventListener("click", async () => {
+  const name = $("nb-new-name").value.trim() || "untitled";
+  const code = $("nb-new-code").value;
+  const cells = [{ cell_type: "markdown", source: "# " + name + "\n" }];
+  if (code.trim()) cells.push({ cell_type: "code", source: code });
+  try {
+    const r = await api(`/api/projects/${state.project}/notebooks`, {
+      method: "POST", body: JSON.stringify({ name, cells }),
+    });
+    $("nb-new-modal").classList.add("hidden");
+    await refreshNotebooks();
+    openNotebook(r.name);
+  } catch (e) { toast(e.message, 4000); }
+});
+$("nb-add-cell").addEventListener("click", addNbCell);
+$("nb-save").addEventListener("click", saveNb);
+$("nb-run-all").addEventListener("click", runAllNb);
+$("nb-close").addEventListener("click", () => $("notebook-modal").classList.add("hidden"));
+$("notebook-modal").addEventListener("click", (e) => {
+  if (e.target === $("notebook-modal")) $("notebook-modal").classList.add("hidden");
+});
+
 /* ============================ init ======================================= */
 
 (async function init() {

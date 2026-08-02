@@ -36,6 +36,7 @@
     <aside id="side-panel" class="scroll">
       <div class="tabs">
         <button class="tab active" data-tab="artifacts">Artifacts</button>
+        <button class="tab" data-tab="notebooks">Notebooks</button>
         <button class="tab" data-tab="kernel">Kernel</button>
         <button class="tab" data-tab="review">Review</button>
         <button class="tab" data-tab="grants">Permissions</button>
@@ -43,6 +44,13 @@
 
       <div id="tab-artifacts" class="tabpane active">
         <div id="artifact-list" class="vlist"></div>
+      </div>
+      <div id="tab-notebooks" class="tabpane">
+        <div class="pane-toolbar">
+          <span class="pane-title">Jupyter notebooks</span>
+          <button id="nb-new-btn" class="btn subtle small">+ New</button>
+        </div>
+        <div id="notebook-list" class="vlist"></div>
       </div>
       <div id="tab-kernel" class="tabpane">
         <div class="pane-toolbar">
@@ -117,6 +125,40 @@
         <span id="cfg-status"></span>
         <span class="spacer"></span>
         <button id="cfg-save" class="btn primary">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Notebook editor modal -->
+<div id="notebook-modal" class="modal hidden">
+  <div class="modal-box nb">
+    <div class="modal-head">
+      <h3 id="nb-title">Notebook</h3>
+      <div class="modal-head-actions">
+        <button id="nb-add-cell" class="btn subtle small" title="Add code cell">+ cell</button>
+        <button id="nb-save" class="btn subtle small">Save</button>
+        <button id="nb-run-all" class="btn primary small">Run all</button>
+        <button class="btn subtle" id="nb-close">✕</button>
+      </div>
+    </div>
+    <div id="nb-cells" class="nb-cells"></div>
+    <div id="nb-status" class="nb-status"></div>
+  </div>
+</div>
+
+<!-- New notebook modal -->
+<div id="nb-new-modal" class="modal hidden">
+  <div class="modal-box small">
+    <div class="modal-head"><h3>New notebook</h3><button class="btn subtle" id="nb-new-close">✕</button></div>
+    <div class="modal-body form">
+      <label>Name</label>
+      <input id="nb-new-name" placeholder="my_experiment">
+      <label>Optional initial code</label>
+      <textarea id="nb-new-code" rows="6" placeholder="import numpy as np&#10;print('hello')"></textarea>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button id="nb-new-create" class="btn primary">Create</button>
       </div>
     </div>
   </div>
