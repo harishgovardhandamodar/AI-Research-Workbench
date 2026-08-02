@@ -1,6 +1,8 @@
 /* Fox — AI Science Workbench frontend */
 
 const $ = (id) => document.getElementById(id);
+const FOX_BASE = window.FOX_BASE || "";
+const B = (path) => (FOX_BASE ? FOX_BASE + path : path);
 const state = {
   projects: [],
   project: "",
@@ -15,7 +17,7 @@ const state = {
 /* ============================== helpers ================================= */
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(B(path), {
     headers: { "Content-Type": "application/json" },
     ...opts,
   });
@@ -104,7 +106,7 @@ function renderMarkdown(src) {
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${proto}://${location.host}/ws/projects/${encodeURIComponent(state.project)}`;
+  const url = `${proto}://${location.host}${B(`/ws/projects/${encodeURIComponent(state.project)}`)}`;
   const ws = new WebSocket(url);
   state.ws = ws;
 
@@ -247,7 +249,7 @@ async function renderArtifacts() {
     const el = document.createElement("div");
     el.className = "artitem";
     el.innerHTML = `
-      ${a.data_type === "png" ? `<img class="thumb" src="/artifacts/${a.id}" alt="">` : ""}
+      ${a.data_type === "png" ? `<img class="thumb" src="${B(`/artifacts/${a.id}`)}" alt="">` : ""}
       <div class="ainfo">
         <div class="aname">${esc(a.name)}</div>
         <div class="adesc">${esc(a.description || "")}</div>
@@ -270,7 +272,7 @@ function openArtifact(a) {
   $("art-title").textContent = `${a.name} — ${a.kind}`;
   const view = $("art-view");
   view.innerHTML = a.data_type === "png"
-    ? `<img src="/artifacts/${a.id}" alt="">`
+    ? `<img src="${B(`/artifacts/${a.id}`)}" alt="">`
     : `<pre>${esc(a.description)}\n\n${esc(a.data_type === "html" ? "(html artifact)" : "")}</pre>`;
   $("art-meta").textContent = `${a.kind} · created ${new Date(a.created_at * 1000).toLocaleString()} · ${a.size} bytes`;
   $("art-code").textContent = a.code || "(no code recorded)";
@@ -285,7 +287,7 @@ function renderArtifactInline(art) {
   if (art.data_type !== "png") return;
   const fig = document.createElement("div");
   fig.className = "inline-fig";
-  fig.innerHTML = `<img src="/artifacts/${art.id}" alt="${esc(art.name)}" title="${esc(art.description)}">`;
+  fig.innerHTML = `<img src="${B(`/artifacts/${art.id}`)}" alt="${esc(art.name)}" title="${esc(art.description)}">`;
   fig.querySelector("img").addEventListener("click", () => openArtifact(art));
   curAssistantEl.div.insertBefore(fig, null);
   curAssistantEl.div.appendChild(fig);

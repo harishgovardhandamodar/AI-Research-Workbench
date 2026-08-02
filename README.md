@@ -58,11 +58,35 @@ python3 -m venv .venv
 Open http://127.0.0.1:8765, pick a model (Settings → Test connection), and chat.
 Everything is stored under `workbench/projects/<name>/` (SQLite + artifacts).
 
+## Jupyter integration (run as an addon inside Jupyter)
+
+Run the whole workbench as a `jupyter_server` extension, so the AI Science
+Workbench becomes a panel at `/fox` inside your Jupyter server (single origin,
+shared port):
+
+```bash
+.venv/bin/pip install jupyter_server        # optional dependency
+./run-jupyter.sh                            # starts jupyter on :8888
+# open  http://localhost:8888/fox/
+```
+
+How it works: the extension (`jupyter_fox/`) spawns the workbench FastAPI app as a
+sidecar subprocess on an ephemeral localhost port, then proxies HTTP and WebSocket
+traffic to it under the `/fox` prefix — chat, persistent kernel, artifacts,
+reviewer and notebook execution all work inside Jupyter. The frontend auto-detects
+the `/fox` base path (see `FOX_BASE` in `frontend/`). Enable/disable with
+`jupyter server extension enable/disable jupyter_fox`.
+
+Notebook experiments stored in a project's `notebooks/` folder are plain
+`.ipynb` — you can also open them in JupyterLab's normal notebook view.
+
 ## Try the demo experiments
 
-See `examples/README.md`. Three runnable experiments of increasing scale
-(exponential decay fit, synthetic single-cell clustering, protein-structure
-pipeline) that produce artifacts + reports.
+See `examples/README.md`. 3 script experiments plus **18 Jupyter notebooks**
+(`examples/notebooks/`, built by `examples/build_notebooks.py`) spanning tiny →
+large across statistics, kinetics, PDEs, single-cell, epidemiology, time series,
+omics, physics, ML and image processing — 54 executable cells producing 32
+figures, all runnable inside the workbench or as addon in Jupyter.
 
 ## Security model
 

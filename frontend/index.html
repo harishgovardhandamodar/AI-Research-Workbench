@@ -193,6 +193,12 @@
 <!-- Toast -->
 <div id="toast" class="hidden"></div>
 
-<script src="/app.js"></script>
+<script>
+  document.getElementById("fox-css").href = (window.FOX_BASE || "") + "/styles.css";
+</script>
+<script src="" id="fox-js"></script>
+<script>
+  document.getElementById("fox-js").src = (window.FOX_BASE || "") + "/app.js";
+</script>
 </body>
 </html>

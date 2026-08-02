@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fox-science-workbench"
+version = "0.1.0"
+description = "Fox — local AI science workbench (chat + agent + persistent kernels + notebooks)"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "openai>=1.30",
+    "websockets>=12.0",
+    "python-multipart>=0.0.9",
+    "numpy", "pandas", "scipy", "matplotlib", "scikit-learn",
+]
+
+[project.optional-dependencies]
+jupyter = ["jupyter_server>=2.0"]
+
+[project.entry-points."jupyter_server.extension"]
+fox = "jupyter_fox"
+
+[tool.setuptools]
+packages = ["jupyter_fox"]
