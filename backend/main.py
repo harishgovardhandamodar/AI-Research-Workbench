@@ -133,7 +133,7 @@ class ProjectRuntime:
                 d = {"role": "assistant", "content": r["content"]}
                 tcs = meta.get("tool_calls")
                 if tcs:
-                    d["tool_calls"] = tcs
+                    d["tool_calls"] = wire_tool_calls(tcs)
                 msgs.append(d)
             elif role == "tool":
                 msgs.append({"role": "tool", "tool_call_id": meta.get("tool_call_id", ""),
@@ -142,6 +142,25 @@ class ProjectRuntime:
 
     async def stop(self):
         await self.kernels.stop()
+
+
+def wire_tool_calls(tcs: list) -> list:
+    """Normalize stored tool_calls to the OpenAI wire format (arguments as JSON string)."""
+    out = []
+    for tc in tcs or []:
+        fn = tc.get("function") or {}
+        args = fn.get("arguments", {})
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        out.append({
+            "id": tc.get("id", ""),
+            "type": "function",
+            "function": {"name": fn.get("name", ""), "arguments": json.dumps(args)},
+        })
+    return out
 
 
 def sanitize_messages(msgs: list[dict]) -> list[dict]:
@@ -406,44 +425,54 @@ async def ws_chat(ws: WebSocket, name: str):
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
                               max_iters=rt.max_iters)
 
+    async def handle_turn(text: str):
+        async with rt.lock:
+            try:
+                mid = rt.store.add_message("user", text)
+                await emit("user_message", {"id": mid, "content": text})
+                llm_msgs = rt.build_llm_messages()
+                result = await coordinator.run_turn(llm_msgs)
+                amid = rt.store.add_message("assistant", result.get("text", ""))
+                await emit("assistant_message", {"id": amid, "content": result.get("text", "")})
+                if rt.reviewer_enabled:
+                    await emit("review_start", {})
+                    try:
+                        findings = await Reviewer(rt.llm, rt.store).review()
+                        await emit("review", {"findings": findings})
+                    except Exception:  # noqa: BLE001
+                        await emit("review", {"findings": []})
+                await emit("done", {})
+            except LLMError as e:
+                await emit("error", {"message": str(e)})
+            except Exception as e:  # noqa: BLE001
+                await emit("error", {"message": f"{type(e).__name__}: {e}"})
+
+    incoming: asyncio.Queue = asyncio.Queue()
+
     async def receive_loop():
-        while True:
-            msg = await ws.receive_json()
-            mtype = msg.get("type")
-            if mtype == "approval":
-                broker.resolve(msg.get("request_id", ""), bool(msg.get("decision")))
-            elif mtype == "ping":
-                await emit("pong", {})
+        # Single reader on the socket: approvals resolve the broker directly (so
+        # the coordinator can block on them mid-turn), chat goes to the queue.
+        try:
+            while True:
+                msg = await ws.receive_json()
+                mtype = msg.get("type")
+                if mtype == "approval":
+                    broker.resolve(msg.get("request_id", ""), bool(msg.get("decision")))
+                elif mtype == "ping":
+                    await emit("pong", {})
+                else:
+                    await incoming.put(msg)
+        except WebSocketDisconnect:
+            pass
 
     recv_task = asyncio.create_task(receive_loop())
     try:
         while True:
-            msg = await ws.receive_json()
-            if msg.get("type") != "chat":
-                continue
-            text = (msg.get("content") or "").strip()
-            if not text:
-                continue
-            async with rt.lock:
-                try:
-                    mid = rt.store.add_message("user", text)
-                    await emit("user_message", {"id": mid, "content": text})
-                    llm_msgs = rt.build_llm_messages()
-                    result = await coordinator.run_turn(llm_msgs)
-                    amid = rt.store.add_message("assistant", result.get("text", ""))
-                    await emit("assistant_message", {"id": amid, "content": result.get("text", "")})
-                    if rt.reviewer_enabled:
-                        await emit("review_start", {})
-                        try:
-                            findings = await Reviewer(rt.llm, rt.store).review()
-                            await emit("review", {"findings": findings})
-                        except Exception:  # noqa: BLE001
-                            await emit("review", {"findings": []})
-                    await emit("done", {})
-                except LLMError as e:
-                    await emit("error", {"message": str(e)})
-                except Exception as e:  # noqa: BLE001
-                    await emit("error", {"message": f"{type(e).__name__}: {e}"})
+            msg = await incoming.get()
+            if msg.get("type") == "chat":
+                text = (msg.get("content") or "").strip()
+                if text:
+                    await handle_turn(text)
     except WebSocketDisconnect:
         pass
     finally:
