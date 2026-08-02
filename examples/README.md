@@ -1,14 +1,33 @@
 # Demo Experiments
 
-Three runnable, reproducible science experiments of increasing scale. All are
+Runnable, reproducible science experiments of increasing scale. All are
 deterministic (fixed seeds) so results are identical every run, and every figure
 becomes an auditable artifact with its producing code + environment snapshot.
+
+## Scripts (`experiments/`)
 
 | File | Scale | What it does |
 |------|-------|--------------|
 | `01_simple_decay_fit.py` | simple | Simulate an exponential-decay time course, fit `A0·e^(−kt)`, estimate half-life with 95% CI, plot data + fit + residuals |
 | `02_midscale_cell_clustering.py` | mid-scale | Simulate a 500-cell single-cell RNA-seq dataset, normalize → PCA → KMeans → t-SNE, plot embeddings + marker heatmap, report Adjusted Rand Index |
 | `03_large_protein_pipeline.py` | large | Build a mini protein's backbone from φ/ψ angles (internal-coordinate geometry), write a PDB file, compute a Ramachandran plot, composition, Kyte-Doolittle hydrophobicity, secondary structure, and a full markdown report |
+
+## Notebooks (`notebooks/`)
+
+Six Jupyter notebooks (`.ipynb`) spanning six scales. Open them from the workbench
+UI (**Notebooks** tab), or ask the agent to run one — the agent executes the cells
+and the results (outputs + figures + errors) are written back *into the notebook*.
+
+| Notebook | Scale | What it does |
+|----------|-------|--------------|
+| `00_tiny_quick_stats` | tiny | Two-group comparison: summary stats, Welch t-test, Cohen's d, histogram |
+| `01_simple_decay_fit` | simple | Exponential decay fit + half-life with 95% CI |
+| `02_midscale_cell_clustering` | mid | Synthetic 500-cell single-cell clustering (PCA → KMeans → t-SNE), ARI + marker heatmap |
+| `04_midscale_epidemiology` | mid | SIR epidemic ODE model for several R₀; peak + attack rate |
+| `03_large_protein_pipeline` | large | Protein backbone from φ/ψ, PDB, Ramachandran plot, secondary structure |
+| `05_large_model_benchmark` | large | 3 classifiers with 5-fold CV + ROC comparison |
+
+Regenerate them with `python examples/build_notebooks.py`.
 
 ## Run standalone (no agent needed)
 
@@ -31,13 +50,13 @@ summarize the fitted half-life.
 ```
 
 ```
-Load and run examples/experiments/02_midscale_cell_clustering.py. Report the
-Adjusted Rand Index and show the embedding figure.
+Run the notebook examples/notebooks/02_midscale_cell_clustering.ipynb and
+report the Adjusted Rand Index. Keep the results in the notebook.
 ```
 
 ```
-Run examples/experiments/03_large_protein_pipeline.py, then save the markdown
-report as an artifact and show the Ramachandran plot.
+Create a notebook for a differential-expression experiment, run it, and
+summarize the top hits.
 ```
 
 Because the kernel is persistent, you can then ask for follow-ups directly:
