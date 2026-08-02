@@ -134,29 +134,33 @@ def _alarm_handler(signum, frame):
 def run_code(ns: dict, code: str, timeout: float) -> dict:
     out = io.StringIO()
     err = io.StringIO()
-    sys.stdout, _real_stdout = out, sys.stdout
-    sys.stderr, _real_stderr = err, sys.stderr
-    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-    old_timer = signal.setitimer(signal.ITIMER_REAL, timeout if timeout else 30.0)
-    ok, error, value = True, "", None
+    real_out, real_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    old_handler = None
     try:
-        mode, compiled = _compile(code)
-        if mode == "eval":
-            value = eval(compiled, ns)  # noqa: S307 - intentional local eval
-            if value is not None:
-                print(repr(value))
-        else:
-            exec(compiled, ns)  # noqa: S102 - intentional local exec
-    except BaseException as e:  # noqa: BLE001
-        ok, error = False, f"{type(e).__name__}: {e}"
-        if isinstance(e, _Timeout):
-            error = "Execution timed out"
-        else:
-            error += "\n" + traceback.format_exc()
+        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.setitimer(signal.ITIMER_REAL, timeout if timeout else 30.0)
+        ok, error, value = True, "", None
+        try:
+            mode, compiled = _compile(code)
+            if mode == "eval":
+                value = eval(compiled, ns)  # noqa: S307 - intentional local eval
+                if value is not None:
+                    print(repr(value))
+            else:
+                exec(compiled, ns)  # noqa: S102 - intentional local exec
+        except BaseException as e:  # noqa: BLE001
+            ok, error = False, f"{type(e).__name__}: {e}"
+            if isinstance(e, _Timeout):
+                error = "Execution timed out"
+            else:
+                error += "\n" + traceback.format_exc()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if old_handler is not None:
+                signal.signal(signal.SIGALRM, old_handler)
     finally:
-        signal.setitimer(signal.ITIMER_REAL, old_timer)
-        signal.signal(signal.SIGALRM, old_handler)
-        sys.stdout, sys.stderr = _real_stdout, _real_stderr
+        sys.stdout, sys.stderr = real_out, real_err
     output = out.getvalue()
     if err.getvalue():
         output += err.getvalue()
