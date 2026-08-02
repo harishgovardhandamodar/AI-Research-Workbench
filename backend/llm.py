@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 
 DEFAULT_BASE_URL = "http://localhost:8081/v1"
 DEFAULT_TOOL_BASE_URL = "http://127.0.0.1:11434/v1"
-DEFAULT_MODEL = "llama3.2:3b"
+DEFAULT_MODEL = "qwen3.6:latest"
 DEFAULT_MAX_ITERS = 12
 
 

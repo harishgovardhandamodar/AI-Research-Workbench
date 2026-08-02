@@ -36,6 +36,36 @@ shell command that touches the network.
 """
 
 
+def parse_tool_call_json(content: str, tools: dict) -> tuple | None:
+    """Try to interpret assistant text as a JSON tool call.
+
+    Accepts `{"name": "...", "parameters": {...}}` or `{"name": "...", "arguments": {...}}`,
+    bare or wrapped in a fenced code block. Only matches known tool names.
+    """
+    import re
+
+    text = (content or "").strip()
+    if not text:
+        return None
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    candidate = m.group(1).strip() if m else text
+    if not (candidate.startswith("{") and "}" in candidate):
+        return None
+    try:
+        obj = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name")
+    args = obj.get("parameters") or obj.get("arguments") or obj.get("args") or {}
+    if not isinstance(name, str) or not isinstance(args, dict):
+        return None
+    if name not in tools:
+        return None
+    return name, args
+
+
 class Coordinator:
     def __init__(self, llm: LLMClient, ctx: ToolContext,
                  emit: Callable[[str, dict], Awaitable[None]] | None = None,
@@ -59,7 +89,17 @@ class Coordinator:
         tools = get_tool_schemas()
         for _ in range(self.max_iters):
             full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
-            if not full.get("tool_calls"):
+            tcs = full.get("tool_calls")
+            if not tcs:
+                # Rescue: some local models emit a tool call as JSON text instead of
+                # a structured tool_calls chunk. Parse it if it clearly matches.
+                rescued = parse_tool_call_json(full.get("content", ""), self.tools)
+                if rescued is not None:
+                    name, args = rescued
+                    tcs = [{"id": "rescue", "type": "function",
+                            "function": {"name": name, "arguments": args}}]
+                    full = {"role": "assistant", "content": "", "tool_calls": tcs}
+            if not tcs:
                 return {"text": full.get("content", "")}
 
             assistant_msg = {
