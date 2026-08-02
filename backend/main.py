@@ -369,7 +369,9 @@ async def regenerate(name: str, body: dict):
     code = art.code
     try:
         resp = await rt.llm.complete(
-            [{"role": "system", "content": REGEN_PROMPT.format(code=code, instruction=instruction)}],
+            [{"role": "system",
+              "content": REGEN_PROMPT.format(code=code, instruction=instruction)},
+             {"role": "user", "content": "Output the complete modified code now."}],
             temperature=0.1,
         )
     except LLMError as e:
