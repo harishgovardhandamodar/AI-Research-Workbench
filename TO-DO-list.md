@@ -70,7 +70,7 @@ Branch: `agentic-experimentation` (base `8344264`).
     saved as a `text` artifact; visible in chat.
   - Verify: endpoint returns a markdown report; artifact appears.
 
-- [ ] **T7 · Persist reviewer findings**
+- [x] **T7 · Persist reviewer findings**
   - Store review output (per turn) in DB; attach to run rows; surface in UI.
   - Verify: restart server → findings still visible.
 

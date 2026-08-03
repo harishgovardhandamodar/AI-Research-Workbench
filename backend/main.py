@@ -1355,6 +1355,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("review_start", {})
                     try:
                         review = await Reviewer(rt.llm, rt.store).review()
+                        if runs_now:
+                            rt.store.update_run_review(runs_now[-1]["id"], review)
                         await emit("review", review)
                     except Exception:  # noqa: BLE001
                         await emit("review", {"findings": [], "suggestions": []})

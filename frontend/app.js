@@ -885,6 +885,15 @@ async function loadExperiments() {
     const rr = await api(`/api/projects/${state.project}/runs`);
     state.agentRuns = rr.runs || [];
   } catch (e) { state.agentRuns = state.agentRuns || []; }
+  for (const r of state.agentRuns.slice().reverse()) {
+    const rev = r.review || {};
+    if ((rev.findings || []).length || (rev.suggestions || []).length) {
+      state._lastFindings = rev.findings || [];
+      state._lastSuggestions = rev.suggestions || [];
+      renderReview(state._lastFindings, state._lastSuggestions);
+      break;
+    }
+  }
   populateExpCompare();
   renderRuns();
   loadGoals();
@@ -901,10 +910,17 @@ function renderRuns() {
   el.innerHTML = "";
   for (const r of runs.slice().reverse()) {
     const d = document.createElement("div");
+    const rev = r.review || {};
+    const nf = (rev.findings || []).length;
+    const ns = (rev.suggestions || []).length;
+    const meta = [r.status];
+    if (r.metrics && Object.keys(r.metrics).length) meta.push(Object.keys(r.metrics).length + " metric(s)");
+    if (nf) meta.push(nf + " finding(s)");
+    if (ns) meta.push(ns + " suggestion(s)");
     d.className = "run-row";
     d.innerHTML = `<span class="run-id">#${r.id}</span>
       <span class="run-prompt">${esc((r.prompt || "").slice(0, 80))}</span>
-      <span class="run-meta muted">${esc(r.status)}${r.metrics && Object.keys(r.metrics).length ? " · " + Object.keys(r.metrics).length + " metric(s)" : ""}</span>
+      <span class="run-meta muted">${esc(meta.join(" · "))}</span>
       <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
     el.appendChild(d);
   }
