@@ -149,9 +149,13 @@ class ProjectRuntime:
         from .agents.coordinator import SYSTEM_PROMPT
         from .skills import skills_context
 
+        cutoff = int(self.store.get_setting("context_cutoff", "0") or 0)
+        summary = self.store.get_setting("context_summary", "")
         rows = self.store.list_messages()
         msgs: list[dict] = []
         for r in rows:
+            if r["id"] <= cutoff:
+                continue
             role = r["role"]
             meta = r.get("meta") or {}
             if role == "system":
@@ -169,8 +173,38 @@ class ProjectRuntime:
                              "content": r["content"]})
         sk = skills_context()
         system = SYSTEM_PROMPT + ("\n\n" + sk if sk else "")
+        if summary:
+            system += ("\n\n## Summary of earlier conversation (compacted)\n"
+                       "The following is a persistent summary of turns that were "
+                       "compacted out of the live context:\n" + summary)
         msgs.insert(0, {"role": "system", "content": system})
         return sanitize_messages(msgs)
+
+    # Number of fresh messages kept before older turns get compacted away.
+    COMPACTION_LIMIT = 60
+    # Always keep this many of the most recent messages fresh in the context.
+    COMPACTION_KEEP = 24
+
+    async def maybe_compact(self):
+        """Summarize older turns into a persistent summary once the conversation
+        grows past COMPACTION_LIMIT fresh messages.
+
+        The summary + the message-id cutoff are stored in settings, so the
+        compaction survives restarts and is only performed once per block.
+        """
+        rows = self.store.list_messages()
+        cutoff = int(self.store.get_setting("context_cutoff", "0") or 0)
+        fresh = [r for r in rows if r["id"] > cutoff]
+        if len(fresh) <= self.COMPACTION_LIMIT:
+            return
+        block = fresh[:-self.COMPACTION_KEEP]
+        if not block:
+            return
+        prev = self.store.get_setting("context_summary", "")
+        summary = await _summarize_conversation(self.llm, prev, block)
+        new_cutoff = block[-1]["id"]
+        self.store.set_setting("context_summary", summary)
+        self.store.set_setting("context_cutoff", str(new_cutoff))
 
     async def stop(self):
         await self.kernels.stop()
@@ -598,6 +632,49 @@ async def _summarize_run(rt: ProjectRuntime, run: dict, report: str) -> str:
                                  temperature=0.2, tools=None)
     text = (resp.get("content") or "").strip()
     return text[:2000] if text else ""
+
+
+def _conversation_digest(rows: list[dict], limit: int = 120) -> str:
+    """Deterministic fallback summary: one compacted line per message."""
+    out: list[str] = []
+    for r in rows:
+        role = r["role"]
+        content = " ".join((r["content"] or "").split())
+        if role == "user":
+            out.append(f"user: {content[:limit]}")
+        elif role == "assistant":
+            out.append(f"assistant: {content[:limit]}")
+        elif role == "tool":
+            meta = r.get("meta") or {}
+            out.append(f"tool({meta.get('name', 'tool')}): {content[:100]}")
+    return "\n".join(out[:300])
+
+
+async def _summarize_conversation(llm, prev: str, rows: list[dict]) -> str:
+    """Produce (or extend) a persistent summary of compacted conversation turns.
+
+    Best-effort: an LLM summary when available, otherwise a deterministic
+    digest of the message contents.
+    """
+    transcript = _conversation_digest(rows)
+    if prev:
+        transcript = f"Existing summary:\n{prev}\n\nNew turns to fold in:\n{transcript}"
+    prompt = (
+        "You maintain a persistent summary of an agentic research conversation. "
+        "Read the turns below and produce a compact summary capturing: the user's "
+        "research goal and constraints, what experiments/analyses were run, key "
+        "results and metric values, and any open questions or next steps. Plain "
+        "sentences or short bullets, no markdown headings, keep it under 400 words.\n\n"
+        + transcript[:8000])
+    try:
+        resp = await llm.complete([{"role": "user", "content": prompt}],
+                                  temperature=0.2, tools=None)
+        text = (resp.get("content") or "").strip()
+        if text:
+            return text[:4000]
+    except Exception:  # noqa: BLE001
+        pass
+    return _conversation_digest(rows, limit=160)
 
 
 @app.post("/api/projects/{name}/runs/{rid}/report")
@@ -1460,6 +1537,7 @@ async def ws_chat(ws: WebSocket, name: str):
                         await emit("done", {})
                         return
                 await emit("status", {"message": "Agent is thinking…"})
+                await rt.maybe_compact()
                 llm_msgs = rt.build_llm_messages()
                 result = await coordinator.run_turn(llm_msgs)
                 amid = rt.store.add_message(

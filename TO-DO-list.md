@@ -85,7 +85,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T10 · Approval resilience + audit** — reject pending approvals on WS
   disconnect; persist approval decisions (allow/deny/temporary); timeout message.
 
-- [ ] **T11 · Context compaction** — summarize old turns into a persistent
+- [x] **T11 · Context compaction** — summarize old turns into a persistent
   system summary once messages exceed a limit.
 
 - [ ] **T12 · Consistent experiment recording** — `run_notebook` tool records
