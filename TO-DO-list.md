@@ -91,7 +91,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T12 · Consistent experiment recording** — `run_notebook` tool records
   experiments the same way as the chat rerun path.
 
-- [ ] **T13 · Test suite** — kernel protocol round-trip, coordinator tool loop
+- [x] **T13 · Test suite** — kernel protocol round-trip, coordinator tool loop
   (fake LLM), store round-trips, `build_graph`, approval timeout.
 
 ## Phase 4 — Stretch
@@ -113,3 +113,6 @@ Branch: `agentic-experimentation` (base `8344264`).
 - Deploy fast-loop: `docker compose cp <file> fox:/app/<file>` then
   `docker compose restart fox`; full image rebuild via `docker compose up -d --build`.
 - Bump `FOX_VER` on each frontend change.
+- Run the test suite with `.venv/bin/python -m unittest discover -s tests -v`
+  (stdlib `unittest`, no extra dependency; includes kernel protocol round-trip,
+  coordinator fake-LLM loop, store/approval/graph round-trips).
