@@ -735,7 +735,9 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".tabpane").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
-    if (t.dataset.tab === "experiments") loadExperiments();
+    // The Experiments tab opens the full-width main view (the side pane is
+    // too narrow for the timeline/graph).
+    if (t.dataset.tab === "experiments") switchMainView("experiments");
   });
 });
 
