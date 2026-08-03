@@ -76,7 +76,7 @@
     </section>
 
     <section id="chat-panel">
-      <div id="workflow-panel" class="workflow-panel hidden">
+      <div id="workflow-panel" class="workflow-panel">
         <div class="workflow-head">
           <span id="workflow-title" class="workflow-title">Workflow</span>
           <span id="workflow-state" class="wf-state">idle</span>
@@ -271,7 +271,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v12";
+  window.FOX_VER = "v13";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

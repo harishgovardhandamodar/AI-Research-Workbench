@@ -127,7 +127,16 @@ class ProjectRuntime:
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         self.max_iters = CONFIG["agent"].get("max_iters", 8)
-        self.workflow = WorkflowTracker()
+        self.workflow = WorkflowTracker(
+            persist=lambda snap: self.store.set_setting(
+                "workflow_latest", json.dumps(snap)),
+            record=self.store.add_workflow_run,
+        )
+        try:
+            latest = self.store.get_setting("workflow_latest", "")
+            self.workflow.restore(json.loads(latest) if latest else None)
+        except Exception:  # noqa: BLE001
+            pass
 
     def ctx(self, emit, approval) -> ToolContext:
         return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
@@ -487,6 +496,12 @@ async def project_workflow(name: str):
     section load fetch the current state on demand (event-driven self-heal).
     """
     return {"workflow": get_runtime(name).workflow.snapshot()}
+
+
+@app.get("/api/projects/{name}/workflow/history")
+async def project_workflow_history(name: str):
+    """Archived workflow runs (persisted in SQLite across restarts)."""
+    return {"workflow_runs": get_runtime(name).store.list_workflow_runs()}
 
 
 @app.get("/api/projects/{name}/artifacts")

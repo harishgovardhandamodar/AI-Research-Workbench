@@ -37,6 +37,12 @@ class ProjectStore:
             """CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY, value TEXT)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS workflow_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at REAL, finished_at REAL,
+                title TEXT, status TEXT, pct REAL, stages TEXT)"""
+        )
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -99,3 +105,30 @@ class ProjectStore:
         self._conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
         self._conn.commit()
+
+    # -- workflow runs (traceability of pipelines) -------------------------
+    def add_workflow_run(self, snapshot: dict):
+        """Record a finished/current workflow run for history + traceability."""
+        now = time.time()
+        stages = snapshot.get("stages") or []
+        self._conn.execute(
+            "INSERT INTO workflow_runs (started_at, finished_at, title, status, pct, stages)"
+            " VALUES (?,?,?,?,?,?)",
+            (snapshot.get("started_at", now), now, snapshot.get("title", ""),
+             snapshot.get("status", "idle"), snapshot.get("pct", 0),
+             json.dumps(stages)))
+        self._conn.commit()
+
+    def list_workflow_runs(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM workflow_runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in reversed(rows):
+            try:
+                stages = json.loads(r["stages"] or "[]")
+            except json.JSONDecodeError:
+                stages = []
+            out.append({"id": r["id"], "started_at": r["started_at"],
+                        "finished_at": r["finished_at"], "title": r["title"],
+                        "status": r["status"], "pct": r["pct"], "stages": stages})
+        return out

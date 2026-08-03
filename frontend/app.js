@@ -240,11 +240,26 @@ function renderWorkflow(snap) {
   state.workflow = snap;
   const panel = $("workflow-panel");
   const stages = snap.stages || [];
+  panel.classList.remove("hidden");
   if (!stages.length || snap.status === "idle") {
-    panel.classList.add("hidden");
+    $("workflow-title").textContent = "Workflow";
+    $("workflow-state").textContent = "idle";
+    $("workflow-state").className = "wf-state idle";
+    $("workflow-status").textContent = "No pipeline is running — start one by asking the agent (e.g. ingest & replicate an arXiv paper, or run the privacy workflow).";
+    $("workflow-fill").style.width = "0%";
+    const wrap = $("workflow-stages");
+    wrap.innerHTML = "";
+    const row = document.createElement("div");
+    row.className = "wf-stage pending";
+    row.innerHTML = `<span class="wf-ico">○</span>
+      <div class="wf-stage-body">
+        <div class="wf-label">No active workflow</div>
+        <div class="wf-detail">Progress will appear here live as the agent works.</div>
+        <div class="wf-mini"><div class="wf-mini-fill" style="width:0%"></div></div>
+      </div>`;
+    wrap.appendChild(row);
     return;
   }
-  panel.classList.remove("hidden");
   $("workflow-title").textContent = snap.title || "Workflow";
   $("workflow-state").textContent = snap.status === "running" ? "running"
     : snap.status === "waiting_approval" ? "waiting" : snap.status;

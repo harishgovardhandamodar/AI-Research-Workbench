@@ -56,7 +56,8 @@ RUN_TOOLS = {"run_python", "run_notebook", "run_shell"}
 class WorkflowTracker:
     """Tracks one pipeline run per project, broadcasting every change."""
 
-    def __init__(self) -> None:
+    def __init__(self, persist: Callable[[dict], None] | None = None,
+                 record: Callable[[dict], None] | None = None) -> None:
         self._lock = asyncio.Lock()
         self._subs: list[Emit] = []
         self._title = ""
@@ -64,7 +65,25 @@ class WorkflowTracker:
         self._message = ""
         self._stages: list[dict] = []  # {id,label,state,detail,pct}
         self._pct = 0.0
-        self._updated = 0.0
+        self._updated = time.time()
+        self._started = 0.0
+        # `persist` saves every snapshot (e.g. latest state to the project DB so
+        # page/section loads see it after a restart); `record` archives finished
+        # runs to history (traceability).
+        self._persist = persist
+        self._record = record
+
+    # ------------------------------------------------------------- restore --
+    def restore(self, snap: dict | None) -> None:
+        """Load a previously persisted snapshot (startup self-heal)."""
+        snap = snap or {}
+        self._title = snap.get("title", "")
+        self._status = snap.get("status", "idle")
+        self._message = snap.get("message", "")
+        self._stages = snap.get("stages", [])
+        self._pct = snap.get("pct", 0.0) or 0.0
+        self._updated = snap.get("updated_at", time.time())
+        self._started = snap.get("started_at", 0.0)
 
     # ------------------------------------------------------------- subscribe --
     def subscribe(self, emit: Emit):
@@ -83,6 +102,7 @@ class WorkflowTracker:
             "message": self._message,
             "pct": round(self._pct),
             "stages": [dict(s) for s in self._stages],
+            "started_at": self._started,
             "updated_at": self._updated,
         }
 
@@ -96,6 +116,11 @@ class WorkflowTracker:
 
     async def _broadcast(self) -> None:
         snap = self.snapshot()
+        if self._persist is not None:
+            try:
+                self._persist(snap)
+            except Exception:  # noqa: BLE001
+                pass
         for emit in list(self._subs):
             try:
                 await emit("workflow", snap)
@@ -113,6 +138,7 @@ class WorkflowTracker:
             self._title = title
             self._status = "running"
             self._message = "Starting…"
+            self._started = time.time()
             self._stages = [
                 {"id": s["id"], "label": s["label"],
                  "state": "pending", "detail": "", "pct": 0}
@@ -174,6 +200,16 @@ class WorkflowTracker:
             self._recompute()
             self._updated = time.time()
         await self._broadcast()
+        self._archive()
+
+    def _archive(self) -> None:
+        """Record the finished run into the project's history (traceability)."""
+        if self._record is None:
+            return
+        try:
+            self._record(self.snapshot())
+        except Exception:  # noqa: BLE001
+            pass
 
     async def clear(self) -> None:
         async with self._lock:
