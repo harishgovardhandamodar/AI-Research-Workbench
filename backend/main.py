@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import re
+import sqlite3
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -728,7 +729,57 @@ async def artifact_file(artifact_id: str):
                 art.data_type if art else "text", "application/octet-stream")
             return FileResponse(rt.artifacts.artifacts_dir / Path(art.data_path).name,
                                 media_type=media)
+    # Runtime not loaded (e.g. after restart): fall back to scanning the
+    # projects' artifacts directories so existing files keep working.
+    path = _find_artifact_file_on_disk(artifact_id)
+    if path is not None:
+        media = {"png": "image/png", "svg": "image/svg+xml",
+                 "html": "text/html", "text": "text/plain"}.get(
+            path.suffix.lstrip("."), "application/octet-stream")
+        return FileResponse(path, media_type=media)
     return JSONResponse({"error": "not found"}, status_code=404)
+
+
+def _find_artifact_file_on_disk(artifact_id: str) -> Path | None:
+    if not PROJECTS_DIR.exists():
+        return None
+    for proj in PROJECTS_DIR.iterdir():
+        art_dir = proj / "artifacts"
+        if not art_dir.is_dir():
+            continue
+        for ext in (".png", ".svg", ".html", ".txt", ".bin"):
+            p = art_dir / f"{artifact_id}{ext}"
+            if p.exists():
+                return p
+    return None
+
+
+def _find_artifact_meta_on_disk(artifact_id: str) -> dict | None:
+    """Read an artifact row from the project DB without loading the runtime."""
+    if not PROJECTS_DIR.exists():
+        return None
+    for proj in PROJECTS_DIR.iterdir():
+        db = proj / "workbench.db"
+        if not db.is_file():
+            continue
+        try:
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
+            conn.close()
+        except sqlite3.Error:
+            continue
+        if row is None:
+            continue
+        return Artifact(
+            id=row["id"], kind=row["kind"], name=row["name"],
+            description=row["description"], code=row["code"],
+            env=json.loads(row["env"] or "{}"), message_id=row["message_id"],
+            run_id=row["run_id"], created_at=row["created_at"],
+            data_path=row["data_path"], data_type=row["data_type"],
+            size=row["size"]).to_dict()
+    return None
 
 
 @app.get("/api/artifacts/{artifact_id}/meta")
@@ -737,6 +788,9 @@ async def artifact_meta(artifact_id: str):
         art = rt.artifacts.get(artifact_id)
         if art is not None:
             return {"artifact": art.to_dict()}
+    meta = _find_artifact_meta_on_disk(artifact_id)
+    if meta is not None:
+        return {"artifact": meta}
     return JSONResponse({"error": "not found"}, status_code=404)
 
 

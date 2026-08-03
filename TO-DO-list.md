@@ -76,7 +76,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 
 ## Phase 3 — UX & robustness
 
-- [ ] **T8 · Artifact serving across restarts** — `/artifacts/{id}` falls back to
+- [x] **T8 · Artifact serving across restarts** — `/artifacts/{id}` falls back to
   scanning project dirs instead of 404 when runtime not loaded.
 
 - [ ] **T9 · File upload endpoint** — `POST /api/projects/{name}/files`
