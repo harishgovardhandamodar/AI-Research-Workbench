@@ -58,7 +58,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 
 ## Phase 2 — Agentic experimentation features
 
-- [ ] **T5 · Goal tracking + improvement suggestions**
+- [x] **T5 · Goal tracking + improvement suggestions**
   - `goals` table + `POST/GET /api/projects/{name}/goals`; on each new run,
     compute delta vs. best-known metric and emit "improvement vs run #N (+x%)".
   - Reviewer emits **next-step suggestions** (not only issues).

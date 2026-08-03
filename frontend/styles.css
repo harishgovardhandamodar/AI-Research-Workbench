@@ -269,6 +269,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .finding.critical { border-color: var(--danger); color: #ffb4b4; }
 .finding.warning { border-color: var(--warn); color: #ffd9a0; }
 .finding.info { border-color: var(--info); color: #b8ccff; }
+.finding.suggestion { border-color: var(--ok); color: #b5e6c8; }
 .finding .sev { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; margin-right: 6px; }
 
 .empty { color: var(--text-dim); font-size: 12.5px; padding: 14px 4px; font-style: italic; }
@@ -407,6 +408,20 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .exp-detail .ed-find { font-size: 12px; margin: 3px 0; }
 .exp-detail .ed-art { font-size: 11.5px; color: var(--accent); cursor: pointer; margin: 2px 0; display: block; }
 .exp-detail .ed-art:hover { text-decoration: underline; }
+
+/* ---------- goals ---------- */
+.exp-goals { margin-bottom: 12px; }
+.exp-goals-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.exp-goals-title { font-weight: 700; font-size: 13px; }
+.goal-input { font-size: 12px; width: 140px; }
+.goal-hb { font-size: 11.5px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+#goal-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.goal-chip {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+}
+.goal-chip .muted { font-size: 11px; }
+.goal-del { background: none; border: none; color: var(--text-dim); cursor: pointer; margin-left: auto; }
 
 /* ---------- run comparison ---------- */
 .exp-compare { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }

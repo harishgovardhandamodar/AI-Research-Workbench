@@ -23,12 +23,18 @@ the recent assistant/user conversation and the code execution transcript for:
 4. Missing provenance: important results that were never saved as artifacts.
 5. Code issues: bugs, silent failures, or non-reproducible snippets.
 
-Reply with JSON only, an array of findings:
-[{"severity": "critical"|"warning"|"info", "message": "short description"}]
-If everything checks out, reply with an empty array.
+Then give up to 3 concrete, actionable next-step suggestions to improve the experiment:
+better hyperparameters, more data, a different method, a follow-up comparison, etc.
+Suggestions must be specific to what was actually run.
+
+Reply with JSON only, an object:
+{"findings": [{"severity": "critical"|"warning"|"info", "message": "short description"}],
+ "suggestions": ["suggestion 1", "suggestion 2", ...]}
+If everything checks out, findings is an empty array. If you cannot suggest anything
+useful, suggestions is an empty array.
 """
 
-FINDINGS_RE = re.compile(r"\[.*\]", re.DOTALL)
+FINDINGS_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class Reviewer:
@@ -37,10 +43,11 @@ class Reviewer:
         self.store = store
         self.window = window
 
-    async def review(self) -> list[dict]:
+    async def review(self) -> dict:
+        """Return {"findings": [...], "suggestions": [...]} for the last turn."""
         msgs = self.store.list_messages(limit=self.window)
         if not msgs:
-            return []
+            return {"findings": [], "suggestions": []}
         transcript = []
         for m in msgs:
             role = m["role"]
@@ -59,22 +66,35 @@ class Reviewer:
                 [{"role": "system", "content": prompt}],
                 temperature=0.1, tools=None)
         except Exception:  # noqa: BLE001
-            return []
+            return {"findings": [], "suggestions": []}
         text = resp.get("content", "")
-        m = FINDINGS_RE.search(text)
+        return _parse_review(text)
+
+
+def _parse_review(text: str) -> dict:
+    # Try a JSON object first, then fall back to a bare array of findings.
+    for pattern in (r"\{.*\}", r"\[.*\]"):
+        m = re.search(pattern, text, re.DOTALL)
         if not m:
-            return []
+            continue
         try:
-            findings = json.loads(m.group(0))
+            parsed = json.loads(m.group(0))
         except json.JSONDecodeError:
-            return []
-        if not isinstance(findings, list):
-            return []
-        clean = []
-        for f in findings[:12]:
+            continue
+        if isinstance(parsed, list):
+            parsed = {"findings": parsed, "suggestions": []}
+        if not isinstance(parsed, dict):
+            continue
+        findings = []
+        for f in (parsed.get("findings") or [])[:12]:
             if isinstance(f, dict):
-                clean.append({
+                findings.append({
                     "severity": f.get("severity", "info"),
                     "message": str(f.get("message", "")),
                 })
-        return clean
+        suggestions = []
+        for s in (parsed.get("suggestions") or [])[:3]:
+            if isinstance(s, str) and s.strip():
+                suggestions.append(s.strip())
+        return {"findings": findings, "suggestions": suggestions}
+    return {"findings": [], "suggestions": []}

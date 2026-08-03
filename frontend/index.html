@@ -65,6 +65,17 @@
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
       <div id="expmain-detail" class="exp-main-detail"></div>
 
+      <div class="exp-goals">
+        <div class="exp-goals-head">
+          <span class="exp-goals-title">Goals</span>
+          <input id="goal-metric" placeholder="metric (e.g. accuracy)" class="goal-input" />
+          <input id="goal-target" placeholder="target (e.g. 0.95)" class="goal-input" type="number" step="any" />
+          <label class="goal-hb"><input id="goal-hb" type="checkbox" checked /> higher is better</label>
+          <button id="goal-add" class="btn subtle small">Add</button>
+        </div>
+        <div id="goal-list"></div>
+      </div>
+
       <div class="exp-compare">
         <div class="exp-compare-head">
           <span class="exp-compare-title">Run comparison</span>
@@ -284,7 +295,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v14";
+  window.FOX_VER = "v15";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

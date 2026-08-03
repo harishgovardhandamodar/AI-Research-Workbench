@@ -149,7 +149,12 @@ function handleEvent(type, p) {
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
     case "approval_request": showApproval(p); break;
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
-    case "review": renderReview(p.findings || []); break;
+    case "review":
+      state._lastFindings = p.findings || [];
+      state._lastSuggestions = p.suggestions || [];
+      renderReview(state._lastFindings, state._lastSuggestions);
+      break;
+    case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p.message); break;
     case "workflow": renderWorkflow(p); break;
     case "done": onTurnDone(); loadExperiments(); break;
@@ -417,18 +422,32 @@ function kv(k, val) {
 
 /* ============================ review / grants ============================ */
 
-function renderReview(findings) {
+function renderReview(findings, suggestions) {
   const c = $("review-findings");
   c.innerHTML = "";
-  if (!findings.length) {
+  const fs = findings || [];
+  const ss = suggestions || [];
+  if (!fs.length && !ss.length) {
     c.innerHTML = '<div class="empty">No issues flagged. Reviewer runs after each turn.</div>';
     return;
   }
-  for (const f of findings) {
+  for (const f of fs) {
     const d = document.createElement("div");
     d.className = `finding ${esc(f.severity || "info")}`;
     d.innerHTML = `<span class="sev">${esc(f.severity)}</span>${esc(f.message)}`;
     c.appendChild(d);
+  }
+  if (ss.length) {
+    const h = document.createElement("div");
+    h.className = "finding suggestion";
+    h.innerHTML = '<span class="sev">next steps</span>';
+    c.appendChild(h);
+    for (const s of ss) {
+      const d = document.createElement("div");
+      d.className = "finding suggestion";
+      d.innerHTML = `<span class="sev">→</span>${esc(s)}`;
+      c.appendChild(d);
+    }
   }
 }
 
@@ -659,7 +678,7 @@ async function refreshState() {
     renderMessages(r.messages || []);
     renderArtifacts();
     renderKernel(r.variables, r.env);
-    renderReview(state._lastFindings || []);
+    renderReview(state._lastFindings || [], state._lastSuggestions || []);
     renderGrants(r.grants || []);
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
   refreshNotebooks();
@@ -867,6 +886,50 @@ async function loadExperiments() {
     state.agentRuns = rr.runs || [];
   } catch (e) { state.agentRuns = state.agentRuns || []; }
   populateExpCompare();
+  loadGoals();
+}
+
+async function loadGoals() {
+  try {
+    state.goals = (await api(`/api/projects/${state.project}/goals`)).goals || [];
+  } catch (e) { state.goals = state.goals || []; }
+  const el = $("goal-list");
+  if (!el) return;
+  el.innerHTML = "";
+  if (!state.goals.length) {
+    el.innerHTML = '<div class="empty">No goals yet — add a target metric and the workbench will flag new bests and progress on each run.</div>';
+    return;
+  }
+  for (const g of state.goals) {
+    const d = document.createElement("div");
+    d.className = "goal-chip";
+    d.innerHTML = `<b>${esc(g.label || g.metric)}</b>
+      <span class="muted">${esc(g.metric)} ${g.higher_better ? "↑" : "↓"} target ${g.target}</span>
+      <button class="goal-del" data-metric="${esc(g.metric)}" title="remove">✕</button>`;
+    el.appendChild(d);
+  }
+  el.querySelectorAll(".goal-del").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        await api(`/api/projects/${state.project}/goals/${encodeURIComponent(b.dataset.metric)}`, { method: "DELETE" });
+        loadGoals();
+      } catch (e) { toast("Failed to remove goal: " + e.message); }
+    }));
+}
+
+async function addGoal() {
+  const metric = $("goal-metric").value.trim();
+  const target = parseFloat($("goal-target").value);
+  if (!metric || Number.isNaN(target)) { toast("Metric and numeric target are required"); return; }
+  try {
+    await api(`/api/projects/${state.project}/goals`, {
+      method: "POST",
+      body: JSON.stringify({ metric, target, higher_better: $("goal-hb").checked }),
+    });
+    $("goal-metric").value = $("goal-target").value = "";
+    loadGoals();
+    toast("Goal saved — progress is checked after every run.");
+  } catch (e) { toast("Failed to add goal: " + e.message); }
 }
 
 function expMetric() { return state.expMetric || "linkage50"; }
@@ -1504,6 +1567,9 @@ $("exp-refresh-main").addEventListener("click", loadExperiments);
 $("exp-cmp-go").addEventListener("click", renderExpCompare);
 $("exp-cmp-a").addEventListener("change", renderExpCompare);
 $("exp-cmp-b").addEventListener("change", renderExpCompare);
+$("goal-add").addEventListener("click", addGoal);
+$("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
+$("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 
 function setExpMetric(v) {
   state.expMetric = v;

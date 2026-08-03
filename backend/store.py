@@ -50,6 +50,11 @@ class ProjectStore:
                 started_at REAL, finished_at REAL,
                 tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS goals (
+                metric TEXT PRIMARY KEY, target REAL, higher_better INTEGER,
+                label TEXT, created_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -189,6 +194,27 @@ class ProjectStore:
                 "artifact_ids": _jload(r["artifact_ids"], []),
                 "metrics": _jload(r["metrics"], {}),
                 "review": _jload(r["review"], {})}
+
+    # -- goals (target metric + direction, for improvement tracking) --------
+    def add_goal(self, metric: str, target: float, higher_better: bool,
+                 label: str = "") -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO goals (metric, target, higher_better, label, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (metric, target, 1 if higher_better else 0, label, time.time()))
+        self._conn.commit()
+
+    def list_goals(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM goals ORDER BY created_at").fetchall()
+        return [{"metric": r["metric"], "target": r["target"],
+                 "higher_better": bool(r["higher_better"]), "label": r["label"],
+                 "created_at": r["created_at"]} for r in rows]
+
+    def delete_goal(self, metric: str) -> bool:
+        cur = self._conn.execute("DELETE FROM goals WHERE metric=?", (metric,))
+        self._conn.commit()
+        return cur.rowcount > 0
 
 
 def _jload(raw: str | None, default):

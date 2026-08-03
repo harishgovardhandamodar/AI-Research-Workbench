@@ -518,6 +518,70 @@ async def project_run(name: str, rid: int):
     return {"run": run}
 
 
+@app.get("/api/projects/{name}/goals")
+async def project_goals(name: str):
+    return {"goals": get_runtime(name).store.list_goals()}
+
+
+@app.post("/api/projects/{name}/goals")
+async def project_goals_add(name: str, body: dict):
+    metric = str(body.get("metric", "")).strip()
+    if not metric:
+        raise HTTPException(status_code=400, detail="metric is required")
+    try:
+        target = float(body.get("target", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="target must be numeric")
+    rt = get_runtime(name)
+    rt.store.add_goal(metric, target, bool(body.get("higher_better", True)),
+                      str(body.get("label", "")))
+    return {"goals": rt.store.list_goals()}
+
+
+@app.delete("/api/projects/{name}/goals/{metric}")
+async def project_goals_delete(name: str, metric: str):
+    rt = get_runtime(name)
+    deleted = rt.store.delete_goal(metric)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="goal not found")
+    return {"goals": rt.store.list_goals()}
+
+
+def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
+    """Human-readable goal-progress / new-best notices for a freshly recorded run."""
+    goals = rt.store.list_goals()
+    if not goals:
+        return []
+    metrics = run.get("metrics") or {}
+    if not metrics:
+        return []
+    runs = rt.store.list_runs()
+    notices = []
+    for g in goals:
+        m = g["metric"]
+        if m not in metrics:
+            continue
+        cur = metrics[m]
+        higher = bool(g["higher_better"])
+        better = (lambda a, b: a > b) if higher else (lambda a, b: a < b)
+        prior = [(r["id"], r["metrics"][m]) for r in runs
+                 if r["id"] != run["id"] and m in (r.get("metrics") or {})]
+        best = min(prior, key=lambda p: (p[1] if higher else -p[1]),
+                   default=None)
+        label = g.get("label") or m
+        parts = [f"Goal {label}: current {cur:.4g}", f"target {g['target']:.4g}"]
+        if better(cur, g["target"]):
+            parts.append("target reached ✓")
+        elif best is not None:
+            parts.append(f"{(cur - g['target']):+.3g} to go")
+        if best is not None and better(cur, best[1]):
+            pct = ((cur - best[1]) / best[1] * 100) if best[1] else 0.0
+            parts.append(f"new best (was {best[1]:.4g} in run #{best[0]}"
+                         f", {pct:+.1f}%)")
+        notices.append(" · ".join(parts))
+    return notices
+
+
 @app.get("/api/projects/{name}/compare")
 async def project_compare(name: str, run_a: str = "", run_b: str = ""):
     """Metric delta between two runs (agent runs or experiment-history records)."""
@@ -1177,14 +1241,19 @@ async def ws_chat(ws: WebSocket, name: str):
                                                  "content": result.get("text", ""),
                                                  "tags": message_tags("assistant",
                                                                       result.get("text", ""))})
+                # Goal progress vs. the best-known run (improvement tracking).
+                runs_now = rt.store.list_runs()
+                if runs_now:
+                    for notice in goal_notices(rt, runs_now[-1]):
+                        await emit("notice", {"message": notice})
                 if rt.reviewer_enabled:
                     await emit("status", {"message": "Reviewing the turn…"})
                     await emit("review_start", {})
                     try:
-                        findings = await Reviewer(rt.llm, rt.store).review()
-                        await emit("review", {"findings": findings})
+                        review = await Reviewer(rt.llm, rt.store).review()
+                        await emit("review", review)
                     except Exception:  # noqa: BLE001
-                        await emit("review", {"findings": []})
+                        await emit("review", {"findings": [], "suggestions": []})
                 await emit("status", {"message": ""})
                 await emit("done", {})
             except LLMError as e:
