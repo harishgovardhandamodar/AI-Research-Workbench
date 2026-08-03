@@ -152,6 +152,18 @@ Attacker prediction RMSE inflates as ε shrinks (protection index up to ~85% at
 **Figures:** `fig_peer_coverage.png`, `fig_corner_cases.png`,
 `fig_dp_robustness.png`.
 
+**Fresh rerun flag.** The workflow is deterministic (fixed seed) so re-running
+it yields the same reproducible results. To force a genuinely new run, include a
+fresh/rerun marker in the prompt — e.g. *"… rerun with fresh results"* or
+*"… force rerun, new seed, different results"*. The backend then runs the
+workflow with a new random seed and serves back new numbers, figures and
+reports (a "Fresh rerun" note is added to the chat message). Standalone:
+
+```bash
+.venv/bin/python examples/privacy/run_peer_exploitation.py --fresh   # new seed each run
+.venv/bin/python examples/privacy/run_peer_exploitation.py --seed 7  # specific seed
+```
+
 ## 5. Workbench integration guidance
 
 | Capability | How the workbench uses it |

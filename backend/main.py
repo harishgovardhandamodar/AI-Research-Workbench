@@ -471,11 +471,26 @@ def match_workflow(text: str) -> str | None:
     return PRIVACY_WORKFLOW["name"] if hits >= 3 else None
 
 
-async def run_privacy_workflow(rt: ProjectRuntime, emit) -> str:
+# Words that make the workflow re-run with a NEW random seed (fresh results).
+FRESH_WORKFLOW_WORDS = [
+    "rerun", "re-run", "fresh", "new result", "new results", "new seed",
+    "random seed", "randomize", "run again", "different result",
+    "different results", "force rerun", "force re-run", "fresh results",
+]
+
+
+def fresh_requested(text: str) -> bool:
+    """True when the prompt asks to force a fresh rerun with new results."""
+    low = (text or "").lower()
+    return any(w in low for w in FRESH_WORKFLOW_WORDS)
+
+
+async def run_privacy_workflow(rt: ProjectRuntime, emit, fresh: bool = False) -> str:
     """Run the privacy workflow script and register its reports/figures as artifacts."""
     script = PRIVACY_WORKFLOW["script"]
+    args = [script, "--fresh"] if fresh else [script]
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, script, cwd=str(ROOT),
+        sys.executable, *args, cwd=str(ROOT),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
@@ -537,6 +552,14 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit) -> str:
         "The workflow ran **3 stages** on synthetic SWIFT data "
         "(obfuscation-study generator) and produced the reports below, which are "
         "also saved as artifacts.",
+    ]
+    if fresh:
+        lines += [
+            "",
+            "> **Fresh rerun** — this run used a new random seed, so the numbers, "
+            "figures and reports below are **new** and differ from previous runs.",
+        ]
+    lines += [
         "",
         "### Run summary",
         "",
@@ -643,7 +666,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 mid = rt.store.add_message("user", text)
                 await emit("user_message", {"id": mid, "content": text})
                 if match_workflow(text):
-                    result = await run_privacy_workflow(rt, emit)
+                    result = await run_privacy_workflow(rt, emit,
+                                                        fresh=fresh_requested(text))
                     amid = rt.store.add_message("assistant", result)
                     await emit("assistant_message", {"id": amid, "content": result})
                     await emit("done", {})
