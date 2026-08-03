@@ -17,6 +17,9 @@
 
 * { box-sizing: border-box; }
 
+/* generic utility: hidden elements take no layout space */
+.hidden { display: none !important; }
+
 html, body {
   margin: 0; height: 100%;
   background: var(--bg); color: var(--text);
