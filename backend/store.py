@@ -4,19 +4,38 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 ROLES = {"user", "assistant", "tool", "system"}
 
+# A single connection per project database, shared by ProjectStore and
+# ArtifactStore. SQLite is opened in WAL mode so reads don't block the writer
+# and the connection survives both store instances for the process lifetime.
+_PROJECT_DB_CACHE: dict[str, sqlite3.Connection] = {}
+_DB_CACHE_LOCK = threading.Lock()
+
+
+def connect_project_db(project_dir: Path) -> sqlite3.Connection:
+    """Open (or return the cached) connection for a project's workbench.db."""
+    key = str(Path(project_dir).resolve())
+    with _DB_CACHE_LOCK:
+        conn = _PROJECT_DB_CACHE.get(key)
+        if conn is None:
+            project_dir.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(project_dir / "workbench.db")
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            _PROJECT_DB_CACHE[key] = conn
+        return conn
+
 
 class ProjectStore:
     def __init__(self, project_dir: Path):
         self.project_dir = project_dir
-        project_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = project_dir / "workbench.db"
-        self._conn = sqlite3.connect(self.db_path)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect_project_db(project_dir)
         self._init_db()
 
     def _init_db(self):

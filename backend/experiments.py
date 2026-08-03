@@ -15,11 +15,16 @@ A run record looks like:
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from .paths import WORKBENCH_DIR
 
 RUNS_FILE = WORKBENCH_DIR / "privacy_runs.json"
+
+# Serialize read-modify-write cycles so concurrent agent turns can't corrupt
+# the experiments history file.
+_RUNS_LOCK = threading.Lock()
 
 
 def runs_path() -> Path:
@@ -38,10 +43,11 @@ def load_experiments() -> list[dict]:
 
 def record_experiment(record: dict) -> None:
     """Append any experiment run (notebook rerun, workflow run, ...) to history."""
-    runs = load_experiments()
-    runs.append(record)
-    RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    RUNS_FILE.write_text(json.dumps(runs, indent=2))
+    with _RUNS_LOCK:
+        runs = load_experiments()
+        runs.append(record)
+        RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RUNS_FILE.write_text(json.dumps(runs, indent=2))
 
 
 # ---------------------------------------------------------------- metrics ----

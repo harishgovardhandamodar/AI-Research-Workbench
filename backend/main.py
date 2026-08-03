@@ -879,7 +879,8 @@ async def delete_artifact(name: str, artifact_id: str):
 
 # ------------------------------------------------------------ project files --
 
-_IGNORED_FILES = {"workbench.db", "config.json"}
+_IGNORED_FILES = {"workbench.db", "workbench.db-wal", "workbench.db-shm",
+                  "config.json"}
 
 
 def _safe_filename(name: str) -> str:

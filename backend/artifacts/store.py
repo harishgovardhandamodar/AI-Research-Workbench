@@ -12,6 +12,8 @@ import time
 import uuid
 from pathlib import Path
 
+from ..store import connect_project_db
+
 ARTIFACT_KINDS = {"figure", "table", "structure", "text", "notebook", "data"}
 
 
@@ -53,8 +55,7 @@ class ArtifactStore:
         self.artifacts_dir = project_dir / "artifacts"
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = project_dir / "workbench.db"
-        self._conn = sqlite3.connect(self.db_path)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect_project_db(project_dir)
         self._init_db()
 
     def _init_db(self):

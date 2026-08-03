@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.store import ProjectStore
+from backend.store import ProjectStore, connect_project_db
+from backend.artifacts.store import ArtifactStore
 
 
 class TestStore(unittest.TestCase):
@@ -69,6 +70,15 @@ class TestStore(unittest.TestCase):
         self.assertEqual(len(log), 2)
         self.assertEqual(log[0]["decision"], "deny")
         self.assertEqual(log[1]["temporary"], 1)
+
+    def test_single_connection_shared_and_wal(self):
+        # ProjectStore and ArtifactStore must share one connection per db.
+        arts = ArtifactStore(self.tmp)
+        self.assertIs(arts._conn, self.store._conn)
+        self.assertIs(connect_project_db(self.tmp), self.store._conn)
+        # WAL journal mode is active.
+        mode = self.store._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        self.assertEqual(mode.lower(), "wal")
 
 
 if __name__ == "__main__":

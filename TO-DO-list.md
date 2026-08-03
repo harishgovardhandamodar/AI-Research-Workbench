@@ -96,7 +96,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 
 ## Phase 4 — Stretch
 
-- [ ] **T14 · WAL + single SQLite connection**; serialize `privacy_runs.json`.
+- [x] **T14 · WAL + single SQLite connection**; serialize `privacy_runs.json`.
 - [ ] **T15 · Project lifecycle** — `DELETE /api/projects/{name}`,
   `POST …/fork` (session forking).
 - [ ] **T16 · Persistent knowledge graph** — auto-export arXiv graph per paper.
