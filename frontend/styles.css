@@ -282,6 +282,57 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 .empty { color: var(--text-dim); font-size: 12.5px; padding: 14px 4px; font-style: italic; }
 
+/* ---------- knowledge graph viewer ---------- */
+.modal-box.nb.graph { display: flex; }
+.graph-body { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding: 10px 14px; gap: 8px; }
+.graph-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 0 0 auto; }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.graph-chip {
+  --tcolor: var(--accent);
+  background: rgba(255,255,255,.04); color: var(--text);
+  border: 1px solid var(--border); border-left: 3px solid var(--tcolor);
+  border-radius: 12px; padding: 2px 10px; font-size: 11px; cursor: pointer;
+}
+.graph-chip:hover { border-color: var(--accent); }
+.graph-chip.off { opacity: .35; text-decoration: line-through; }
+.graph-stats { font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+.graph-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+.graph-svg-wrap {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  background: #0a0e13; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; position: relative; cursor: grab;
+}
+.graph-svg-wrap svg { width: 100%; height: 100%; display: block; }
+#graph-detail {
+  flex: 0 0 260px; width: 260px; min-height: 0; overflow-y: auto;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+}
+.gx-detail-empty { color: var(--text-dim); font-size: 12px; font-style: italic; }
+.gx-detail-title { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; }
+.gx-detail-name { font-size: 14px; font-weight: 700; margin: 2px 0; overflow-wrap: anywhere; }
+.gx-detail-id { font-family: var(--mono); font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; margin-bottom: 6px; }
+.gx-props { border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 4px; }
+.gx-conn-head { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); margin: 8px 0 4px; }
+.gx-conn {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  background: rgba(255,255,255,.03); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; margin-bottom: 4px; cursor: pointer; font: inherit;
+}
+.gx-conn:hover { border-color: var(--accent); }
+.gx-conn-rel { font-size: 10px; color: var(--text-dim); font-family: var(--mono); }
+.gx-conn-node { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.gx-edge { stroke: #2a3440; stroke-width: 1; }
+.gx-edge.sel { stroke: var(--accent); stroke-width: 1.6; }
+.gx-node { cursor: pointer; }
+.gx-node circle { transition: r .1s ease, filter .1s ease; }
+.gx-node:hover circle { filter: brightness(1.3); stroke: #fff; }
+.gx-node.sel circle { stroke: #fff; stroke-width: 2; }
+.gx-node.near circle { filter: brightness(1.15); }
+.gx-label { fill: var(--text-dim); font-size: 10px; pointer-events: none; paint-order: stroke; stroke: #0a0e13; stroke-width: 2px; }
+.gx-hint { fill: var(--text-dim); font-size: 11px; font-style: italic; }
+
+
 /* ---------- modals ---------- */
 .modal {
   position: fixed; inset: 0; background: rgba(4,6,9,.72); z-index: 50;

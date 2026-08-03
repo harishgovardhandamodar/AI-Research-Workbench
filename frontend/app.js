@@ -813,7 +813,9 @@ function renderGraphs(graphs) {
     const s = g.stats || {};
     const detail = `${s.node_count || 0} nodes · ${s.edge_count || 0} edges`;
     d.innerHTML = `<a class="file-name" href="${esc(g.url)}" target="_blank" rel="noopener" title="Open graph JSON">${esc(g.name)}</a>
-      <span class="muted file-size">${esc(detail)}</span>`;
+      <span class="muted file-size">${esc(detail)}</span>
+      <button class="btn subtle small graph-view" title="Visualise this knowledge graph">View</button>`;
+    d.querySelector(".graph-view").addEventListener("click", () => openGraphViewer(g.name, g.url));
     c.appendChild(d);
   }
 }
@@ -824,6 +826,275 @@ async function loadGraphs() {
     renderGraphs(r.graphs || []);
   } catch (e) { /* best-effort */ }
 }
+
+/* ===================== knowledge graph viewer ===================== */
+
+const GRAPH_TYPE_COLORS = {
+  Paper: "#35c4b6",
+  Author: "#4f8cff",
+  Method: "#d9a441",
+  Dataset: "#3fbf6f",
+  Metric: "#c26bd6",
+  Experiment: "#e05b5b",
+  Claim: "#e0855b",
+};
+
+const GRAPH_STATE = {
+  gName: "", url: "", nodes: [], edges: [], byId: {}, typeOn: {},
+  sel: null, zoom: 1, panX: 0, panY: 0,
+};
+
+function graphNodeLabel(n) {
+  if (n && (n.name || n.title)) return String(n.name || n.title);
+  if (n && n.id) {
+    const base = String(n.id);
+    const idx = base.indexOf(":");
+    return idx >= 0 ? base.slice(idx + 1) : base;
+  }
+  return "node";
+}
+
+function graphNodeColor(type) {
+  return GRAPH_TYPE_COLORS[type] || "#8b97a5";
+}
+
+function graphNormalize(g) {
+  const nodes = (g.nodes || []).map((n) => ({ ...n, degree: 0 }));
+  const edges = (g.edges || [])
+    .filter((e) => e && e.source != null && e.target != null)
+    .map((e) => ({ source: e.source, target: e.target, relation: e.relation || "" }));
+  const byId = {};
+  for (const n of nodes) byId[n.id] = n;
+  for (const e of edges) {
+    if (byId[e.source]) byId[e.source].degree += 1;
+    if (byId[e.target]) byId[e.target].degree += 1;
+  }
+  return { nodes, edges, byId };
+}
+
+// Deterministic layout so a graph renders identically on every open.
+function graphLayout(nodes, edges, w, h, byId, iters = 400) {
+  const n = nodes.length;
+  if (!n) return;
+  let seed = 7;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const k = Math.sqrt((w * h) / Math.max(1, n)) * 1.4;
+  nodes.forEach((nd, i) => {
+    const a = (i / Math.max(1, n)) * Math.PI * 2;
+    const rad = Math.min(w, h) * 0.32;
+    nd.x = w / 2 + rad * Math.cos(a) + (rnd() - 0.5) * 20;
+    nd.y = h / 2 + rad * Math.sin(a) + (rnd() - 0.5) * 20;
+    nd.vx = 0; nd.vy = 0;
+  });
+  for (let it = 0; it < iters; it++) {
+    const temp = Math.max(0.04, 0.8 * (1 - it / iters));
+    // repulsion between every pair
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = rnd() - 0.5; dy = rnd() - 0.5; d2 = 0.01; }
+        const f = (k * k) / d2;
+        const fx = dx / Math.sqrt(d2) * f;
+        const fy = dy / Math.sqrt(d2) * f;
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      }
+    }
+    // spring attraction along edges
+    for (const e of edges) {
+      const a = byId[e.source], b = byId[e.target];
+      if (!a || !b || a === b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const f = (d * d) / k;
+      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+    }
+    // gravity to keep the layout centred
+    for (const nd of nodes) {
+      nd.vx += (w / 2 - nd.x) * 0.008;
+      nd.vy += (h / 2 - nd.y) * 0.008;
+    }
+    // integrate + clamp velocity
+    for (const nd of nodes) {
+      const vmax = temp * 2.2;
+      const sp = Math.sqrt(nd.vx * nd.vx + nd.vy * nd.vy) || 1;
+      const s = sp > vmax ? vmax / sp : 1;
+      nd.x += nd.vx * s; nd.y += nd.vy * s;
+      nd.vx = 0; nd.vy = 0;
+    }
+  }
+}
+
+function graphRerender() {
+  const svg = $("graph-svg");
+  if (!svg || !GRAPH_STATE.nodes.length) return;
+  const wrap = $("graph-svg-wrap");
+  const W = 960, H = 520;
+  const visible = GRAPH_STATE.nodes.filter((n) => GRAPH_STATE.typeOn[n.type] !== false);
+  const vset = new Set(visible.map((n) => n.id));
+  const edges = GRAPH_STATE.edges.filter((e) => vset.has(e.source) && vset.has(e.target));
+  graphLayout(visible, edges, W, H, GRAPH_STATE.byId);
+
+  const showLabels = visible.length <= 90;
+  const radius = (d) => Math.min(22, 7 + Math.sqrt(d.degree || 0) * 4);
+  const sel = GRAPH_STATE.sel;
+  const selId = sel ? sel.id : null;
+
+  let s = `<defs><marker id="gx-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#39424e"/></marker></defs>`;
+  for (const e of edges) {
+    const a = GRAPH_STATE.byId[e.source], b = GRAPH_STATE.byId[e.target];
+    if (!a || !b) continue;
+    const isSel = selId === e.source || selId === e.target;
+    const cls = isSel ? "gx-edge sel" : "gx-edge";
+    s += `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" marker-end="url(#gx-arrow)"><title>${esc(a.id)} —${esc(e.relation)}→ ${esc(b.id)}</title></line>`;
+  }
+  const byId = GRAPH_STATE.byId;
+  for (const n of visible) {
+    const r = radius(n);
+    const isSel = selId === n.id;
+    const near = isSel || (sel && (sel.in.some((x) => x.id === n.id) || sel.out.some((x) => x.id === n.id)));
+    const cls = "gx-node" + (isSel ? " sel" : near ? " near" : "");
+    s += `<g class="${cls}" data-node="${esc(n.id)}" transform="translate(${n.x.toFixed(1)},${n.y.toFixed(1)})">
+      <circle r="${r}" fill="${graphNodeColor(n.type)}" stroke="rgba(255,255,255,.14)" stroke-width="1">
+        <title>${esc(n.type)}: ${esc(graphNodeLabel(n))}</title>
+      </circle>
+      ${showLabels ? `<text class="gx-label" y="${(r + 12).toFixed(1)}" text-anchor="middle">${esc(graphNodeLabel(n))}</text>` : ""}
+    </g>`;
+  }
+  if (!showLabels) {
+    s += `<text class="gx-hint" x="8" y="16">Hover a node to see its label.</text>`;
+  }
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = s;
+}
+
+function graphSelect(id) {
+  if (!id || !GRAPH_STATE.byId[id]) { GRAPH_STATE.sel = null; }
+  else {
+    const node = GRAPH_STATE.byId[id];
+    GRAPH_STATE.sel = {
+      id: node.id, node,
+      out: GRAPH_STATE.edges.filter((e) => e.source === node.id)
+        .map((e) => ({ id: e.target, relation: e.relation })),
+      in: GRAPH_STATE.edges.filter((e) => e.target === node.id)
+        .map((e) => ({ id: e.source, relation: e.relation })),
+    };
+  }
+  graphRerender();
+  graphRenderDetail();
+}
+
+function graphRenderDetail() {
+  const pane = $("graph-detail");
+  if (!pane) return;
+  const sel = GRAPH_STATE.sel;
+  if (!sel) {
+    pane.innerHTML = '<div class="gx-detail-empty">Select a node to inspect it and its connections.</div>';
+    return;
+  }
+  const n = sel.node;
+  let props = "";
+  for (const [k, v] of Object.entries(n)) {
+    if (k === "id" || k === "type" || k === "degree" || v == null || v === "") continue;
+    props += `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`;
+  }
+  const conn = (list, dir) => list.map((c) => {
+    const other = GRAPH_STATE.byId[c.id];
+    return `<button class="gx-conn" data-node="${esc(c.id)}">
+      <span class="gx-conn-rel">${esc(dir)} ${esc(c.relation)}</span>
+      <span class="gx-conn-node" style="color:${graphNodeColor(other ? other.type : "Other")}">${esc(graphNodeLabel(other))}</span>
+    </button>`;
+  }).join("");
+  pane.innerHTML = `
+    <div class="gx-detail-title" style="color:${graphNodeColor(n.type)}">${esc(n.type)}</div>
+    <div class="gx-detail-name">${esc(graphNodeLabel(n))}</div>
+    <div class="gx-detail-id">${esc(n.id)}</div>
+    ${props ? `<div class="gx-props">${props}</div>` : ""}
+    ${sel.out.length ? `<div class="gx-conn-head">Outgoing (${sel.out.length})</div>${conn(sel.out, "→")}` : ""}
+    ${sel.in.length ? `<div class="gx-conn-head">Incoming (${sel.in.length})</div>${conn(sel.in, "←")}` : ""}`;
+  pane.querySelectorAll("[data-node]").forEach((el) => {
+    el.addEventListener("click", () => graphSelect(el.dataset.node));
+  });
+}
+
+function renderGraphLegend() {
+  const legend = $("graph-legend");
+  if (!legend) return;
+  const types = [...new Set(GRAPH_STATE.nodes.map((n) => n.type))].sort();
+  legend.innerHTML = "";
+  const chip = (t) => {
+    const b = document.createElement("button");
+    b.className = "graph-chip" + (GRAPH_STATE.typeOn[t] === false ? " off" : "");
+    b.style.setProperty("--tcolor", graphNodeColor(t));
+    b.textContent = t;
+    b.addEventListener("click", () => {
+      GRAPH_STATE.typeOn[t] = GRAPH_STATE.typeOn[t] === false ? true : false;
+      renderGraphLegend();
+      graphRerender();
+    });
+    return b;
+  };
+  types.forEach((t) => legend.appendChild(chip(t)));
+  const stats = $("graph-stats");
+  if (stats) {
+    const vis = GRAPH_STATE.nodes.filter((n) => GRAPH_STATE.typeOn[n.type] !== false).length;
+    stats.textContent = `${GRAPH_STATE.nodes.length} nodes · ${GRAPH_STATE.edges.length} edges · showing ${vis}`;
+  }
+}
+
+function renderGraphViewer(g) {
+  const norm = graphNormalize(g);
+  GRAPH_STATE.nodes = norm.nodes;
+  GRAPH_STATE.edges = norm.edges;
+  GRAPH_STATE.byId = norm.byId;
+  GRAPH_STATE.sel = null;
+  GRAPH_STATE.zoom = 1; GRAPH_STATE.panX = 0; GRAPH_STATE.panY = 0;
+  GRAPH_STATE.typeOn = {};
+  for (const n of GRAPH_STATE.nodes) GRAPH_STATE.typeOn[n.type] = true;
+  renderGraphLegend();
+  graphRerender();
+}
+
+function openGraphViewer(name, url) {
+  $("graph-modal").classList.remove("hidden");
+  $("graph-title").textContent = "Knowledge graph — " + String(name).replace(/\.json$/, "");
+  GRAPH_STATE.gName = name;
+  GRAPH_STATE.url = url;
+  $("graph-detail").innerHTML = '<div class="empty">Loading graph…</div>';
+  $("graph-svg").innerHTML = "";
+  api(url).then((r) => {
+    renderGraphViewer(r.graph || r);
+  }).catch((e) => {
+    $("graph-detail").innerHTML = '<div class="empty">Failed to load graph: ' + esc(e.message) + "</div>";
+  });
+}
+
+$("graph-close").addEventListener("click", () => $("graph-modal").classList.add("hidden"));
+$("graph-modal").addEventListener("click", (e) => { if (e.target === $("graph-modal")) $("graph-modal").classList.add("hidden"); });
+$("graph-export").addEventListener("click", () => {
+  if (GRAPH_STATE.url) window.open(B(GRAPH_STATE.url), "_blank", "noopener");
+});
+$("graph-relayout").addEventListener("click", () => graphRerender());
+$("graph-svg").addEventListener("click", (e) => {
+  const el = e.target.closest ? e.target.closest("[data-node]") : null;
+  if (el) graphSelect(el.dataset.node);
+  else graphSelect(null);
+});
+$("graph-svg-wrap").addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const svg = $("graph-svg");
+  if (!svg || !GRAPH_STATE.nodes.length) return;
+  const cur = svg.viewBox.baseVal;
+  const f = e.deltaY < 0 ? 1.1 : 0.9;
+  const w = Math.max(200, Math.min(4000, cur.width * f));
+  const h = Math.max(120, Math.min(3000, cur.height * f));
+  svg.setAttribute("viewBox", `${cur.x} ${cur.y} ${w} ${h}`);
+});
 
 function renderMessages(msgs) {
   const wrap = $("messages");
