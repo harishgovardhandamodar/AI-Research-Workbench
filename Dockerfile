@@ -22,7 +22,8 @@ COPY requirements.txt pyproject.toml ./
 # Core + kernel stack + optional MCP + jupyter_server (matching the local setup).
 RUN pip install -r requirements.txt \
         numpy pandas scipy matplotlib scikit-learn \
-        jupyter_server
+        jupyter_server \
+        pymupdf
 
 COPY . .
 
