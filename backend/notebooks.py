@@ -23,6 +23,66 @@ EXAMPLES_NOTEBOOKS_DIR = ROOT / "examples" / "notebooks"
 
 ArtifactFn = Callable[[str, str], Awaitable[object]]  # (b64_png, source) -> artifact
 
+# Scale tag from the numeric notebook prefix (00_tiny, 01/06-08 simple, ...).
+_SCALE_BY_PREFIX = {
+    "00": "tiny", "01": "simple", "06": "simple", "07": "simple", "08": "simple",
+    "02": "mid", "04": "mid", "09": "mid", "10": "mid", "11": "mid", "12": "mid",
+    "13": "mid", "14": "mid", "18": "mid", "19": "mid", "20": "mid", "21": "mid",
+    "22": "mid", "23": "mid",
+    "03": "large", "05": "large", "15": "large", "16": "large", "17": "large",
+}
+_DOMAIN_BY_KEYWORD = [
+    ("obfuscation", "privacy"), ("privacy", "privacy"),
+    ("differential", "privacy"), ("synthetic", "privacy"),
+    ("clustering", "single-cell"), ("cell_", "single-cell"),
+    ("volcano", "transcriptomics"),
+    ("decay", "kinetics"), ("protein", "structural bio"),
+    ("metabol", "metabolomics"), ("epidem", "epidemiology"),
+    ("regression", "statistics"), ("quick", "statistics"),
+    ("clt", "probability"), ("monte_carlo", "simulation"),
+    ("lotka", "ecology"), ("double_pendulum", "physics"), ("heat", "physics"),
+    ("forecast", "time series"), ("ar_", "time series"),
+    ("hierarchical", "bioinformatics"), ("benchmark", "machine learning"),
+    ("convolution", "image processing"), ("image_", "image processing"),
+    ("logistic", "population"),
+]
+
+
+def default_tags(name: str) -> list[str]:
+    """Derive [scale, domain] tags from a notebook name (examples naming)."""
+    tags: list[str] = []
+    m = re.match(r"(\d{2})_", name)
+    if m and m.group(1) in _SCALE_BY_PREFIX:
+        tags.append(_SCALE_BY_PREFIX[m.group(1)])
+    low = name.lower()
+    for kw, dom in _DOMAIN_BY_KEYWORD:
+        if kw in low:
+            if dom not in tags:
+                tags.append(dom)
+            break
+    return tags
+
+
+def notebook_tags(nb: dict, name: str) -> list[str]:
+    """Tags from notebook metadata (fox.tags) or derived from the name."""
+    stored = (nb.get("metadata") or {}).get("fox", {}).get("tags")
+    if isinstance(stored, list) and stored:
+        return [str(t) for t in stored]
+    return default_tags(name)
+
+
+def notebook_description(nb: dict) -> str:
+    """First heading/text line of the first markdown cell, as a short blurb."""
+    for c in nb.get("cells", []):
+        if c.get("cell_type") == "markdown":
+            src = "".join(_norm_source(c.get("source", "")))
+            for line in src.splitlines():
+                line = line.strip().lstrip("#").strip()
+                if line:
+                    return line[:120]
+            break
+    return ""
+
 
 class NotebookError(RuntimeError):
     pass
@@ -121,6 +181,8 @@ class NotebookService:
                     "executions": nb.get("metadata", {}).get("fox", {}).get("execution_count", 0),
                     "updated": f.stat().st_mtime,
                     "source": "examples" if external else "project",
+                    "tags": notebook_tags(nb, f.stem),
+                    "description": notebook_description(nb),
                 })
         return out
 

@@ -75,21 +75,22 @@
 
     <aside id="side-panel" class="scroll">
       <div class="tabs">
-        <button class="tab active" data-tab="artifacts">Artifacts</button>
-        <button class="tab" data-tab="notebooks">Notebooks</button>
+        <button class="tab" data-tab="artifacts">Artifacts</button>
+        <button class="tab active" data-tab="notebooks">Notebooks</button>
         <button class="tab" data-tab="kernel">Kernel</button>
         <button class="tab" data-tab="review">Review</button>
         <button class="tab" data-tab="grants">Permissions</button>
       </div>
 
-      <div id="tab-artifacts" class="tabpane active">
+      <div id="tab-artifacts" class="tabpane">
         <div id="artifact-list" class="vlist"></div>
       </div>
-      <div id="tab-notebooks" class="tabpane">
+      <div id="tab-notebooks" class="tabpane active">
         <div class="pane-toolbar">
           <span class="pane-title">Jupyter notebooks</span>
           <button id="nb-new-btn" class="btn subtle small">+ New</button>
         </div>
+        <div id="nb-tagchips" class="nb-tagchips"></div>
         <div id="notebook-list" class="vlist"></div>
       </div>
       <div id="tab-kernel" class="tabpane">
@@ -245,7 +246,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v5";
+  window.FOX_VER = "v6";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

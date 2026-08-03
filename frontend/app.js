@@ -12,6 +12,7 @@ const state = {
   busy: false,
   pendingApproval: null,
   streaming: false,
+  nbTag: "all",
 };
 
 /* ============================== helpers ================================= */
@@ -1099,24 +1100,67 @@ async function refreshNotebooks() {
 
 function renderNotebooks() {
   const list = $("notebook-list");
+  if (!list) return;
   list.innerHTML = "";
-  if (!(state.notebooks || []).length) {
+  const nbs = state.notebooks || [];
+  if (!nbs.length) {
     list.innerHTML = '<div class="empty">No notebooks yet. Create one to run experiments as .ipynb — results are held in the notebook.</div>';
     return;
   }
-  for (const nb of state.notebooks) {
-    const el = document.createElement("div");
-    el.className = "nb-item";
-    el.innerHTML = `<span class="nb-icon">📓</span>
-      <div class="nbinfo">
-        <div class="nbname">${esc(nb.name)}</div>
-        <div class="nbmeta">${nb.cells} cells · ${nb.code_cells} code · ${esc(nb.source || "project")}${nb.source === "examples" ? " · demo" : ""}</div>
-      </div>
-      <span class="nb-badge ${nb.executions ? "run" : ""}">${nb.executions ? nb.executions + " runs" : "idle"}</span>`;
-    el.addEventListener("click", () => openNotebook(nb.name));
-    list.appendChild(el);
+  // Normalise tags (notebooks without tags fall under "untagged").
+  const tagsOf = (nb) => (nb.tags && nb.tags.length ? nb.tags : ["untagged"]);
+  const allTags = [...new Set(nbs.flatMap(tagsOf))].sort();
+
+  // tag filter chips
+  const chips = $("nb-tagchips");
+  if (chips) {
+    let h = `<button class="nb-chip ${state.nbTag === "all" ? "active" : ""}" data-tag="all">All (${nbs.length})</button>`;
+    for (const t of allTags) {
+      const c = nbs.filter((nb) => tagsOf(nb).includes(t)).length;
+      h += `<button class="nb-chip ${state.nbTag === t ? "active" : ""}" data-tag="${esc(t)}">${esc(t)} (${c})</button>`;
+    }
+    chips.innerHTML = h;
+  }
+
+  const filtered = state.nbTag === "all"
+    ? nbs : nbs.filter((nb) => tagsOf(nb).includes(state.nbTag));
+  const groups = state.nbTag === "all" ? allTags : [state.nbTag];
+
+  for (const g of groups) {
+    const items = state.nbTag === "all"
+      ? filtered.filter((nb) => tagsOf(nb).includes(g))
+      : filtered;
+    if (!items.length) continue;
+    const head = document.createElement("div");
+    head.className = "nb-group";
+    head.textContent = `🏷 ${g} — ${items.length}`;
+    list.appendChild(head);
+    for (const nb of items) list.appendChild(nbItem(nb));
   }
 }
+
+function nbItem(nb) {
+  const el = document.createElement("div");
+  el.className = "nb-item";
+  const tags = ((nb.tags && nb.tags.length ? nb.tags : ["untagged"]).map((t) => `<span class="nb-tag">${esc(t)}</span>`)).join("");
+  el.innerHTML = `<span class="nb-icon">📓</span>
+    <div class="nbinfo">
+      <div class="nbname">${esc(nb.name)}${tags}</div>
+      ${nb.description ? `<div class="nbdesc">${esc(nb.description)}</div>` : ""}
+      <div class="nbmeta">${nb.cells} cells · ${nb.code_cells} code · ${esc(nb.source || "project")}${nb.source === "examples" ? " · demo" : ""}</div>
+    </div>
+    <span class="nb-badge ${nb.executions ? "run" : ""}">${nb.executions ? nb.executions + " runs" : "idle"}</span>`;
+  el.addEventListener("click", () => openNotebook(nb.name));
+  return el;
+}
+
+// tag chip filtering (delegated; chips are re-rendered each time)
+$("nb-tagchips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".nb-chip");
+  if (!chip) return;
+  state.nbTag = chip.dataset.tag;
+  renderNotebooks();
+});
 
 async function openNotebook(name) {
   try {
