@@ -170,6 +170,8 @@
           <button id="file-upload-btn" class="btn subtle small">Upload</button>
         </div>
         <div id="file-list" class="vlist"></div>
+        <div class="pane-toolbar"><span class="pane-title">Knowledge graphs</span></div>
+        <div id="graph-list" class="vlist"></div>
       </div>
       <div id="tab-review" class="tabpane">
         <div class="pane-toolbar">
@@ -320,7 +322,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v18";
+  window.FOX_VER = "v19";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

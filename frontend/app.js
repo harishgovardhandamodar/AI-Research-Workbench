@@ -719,6 +719,7 @@ async function refreshState() {
   loadWorkflow();
   loadFiles();
   loadApprovals();
+  loadGraphs();
 }
 
 function renderFiles(files) {
@@ -772,6 +773,32 @@ async function deleteFile(name) {
     renderFiles(r.files || []);
     toast(`Deleted ${name}`);
   } catch (e) { toast("Delete failed: " + e.message, 4000); }
+}
+
+function renderGraphs(graphs) {
+  const c = $("graph-list");
+  if (!c) return;
+  c.innerHTML = "";
+  if (!graphs.length) {
+    c.innerHTML = '<div class="empty">No knowledge graphs yet. Ask the agent to build one from a paper\'s notes.</div>';
+    return;
+  }
+  for (const g of graphs) {
+    const d = document.createElement("div");
+    d.className = "file-row";
+    const s = g.stats || {};
+    const detail = `${s.node_count || 0} nodes · ${s.edge_count || 0} edges`;
+    d.innerHTML = `<a class="file-name" href="${esc(g.url)}" target="_blank" rel="noopener" title="Open graph JSON">${esc(g.name)}</a>
+      <span class="muted file-size">${esc(detail)}</span>`;
+    c.appendChild(d);
+  }
+}
+
+async function loadGraphs() {
+  try {
+    const r = await api(`/api/projects/${state.project}/graphs`);
+    renderGraphs(r.graphs || []);
+  } catch (e) { /* best-effort */ }
 }
 
 function renderMessages(msgs) {
@@ -976,7 +1003,7 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".tabpane").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
-    if (t.dataset.tab === "files") loadFiles();
+    if (t.dataset.tab === "files") { loadFiles(); loadGraphs(); }
     if (t.dataset.tab === "grants") loadApprovals();
   });
 });

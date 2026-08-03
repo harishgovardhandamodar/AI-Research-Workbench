@@ -1082,6 +1082,47 @@ async def list_approvals(name: str, limit: int = 50):
     return {"approvals": get_runtime(name).store.list_approvals(limit)}
 
 
+# -------------------------------------------------- knowledge graphs ----------
+
+@app.get("/api/projects/{name}/graphs")
+async def list_knowledge_graphs(name: str):
+    """Auto-exported per-paper arXiv knowledge graphs persisted for this project."""
+    rt = get_runtime(name)
+    gdir = rt.dir / "knowledge_graphs"
+    out = []
+    if gdir.is_dir():
+        for p in sorted(gdir.glob("*.json")):
+            try:
+                data = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            out.append({
+                "name": p.name,
+                "size": p.stat().st_size,
+                "paper_id": data.get("paper_id"),
+                "stats": data.get("stats", {}),
+                "modified": p.stat().st_mtime,
+                "url": f"/api/projects/{name}/graphs/{p.name}",
+            })
+    return {"graphs": out}
+
+
+@app.get("/api/projects/{name}/graphs/{filename}")
+async def get_knowledge_graph(name: str, filename: str):
+    rt = get_runtime(name)
+    safe = Path(filename).name
+    if safe.endswith(".json"):
+        safe = safe[:-5]
+    p = (rt.dir / "knowledge_graphs" / f"{safe}.json")
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="graph not found")
+    try:
+        data = json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(status_code=500, detail="graph unreadable")
+    return {"name": p.name, "graph": data}
+
+
 # ---------------------------------------------------------- workflows --------
 
 PRIVACY_WORKFLOW = {

@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from typing import Awaitable, Callable
 
+from .artifacts.store import Artifact
 from .paths import ROOT
 
 ToolFn = Callable[..., Awaitable[str]]
@@ -162,6 +164,46 @@ def _mcp_installed() -> bool:
         return False
 
 
+def _persist_graph(ctx, tool_name: str, raw: str):
+    """Auto-export a built arXiv knowledge graph into the project.
+
+    Each paper graph lands in ``<project>/knowledge_graphs/<arxiv_id>.json``
+    (merged graphs as ``corpus.json``) and is also registered as an artifact so
+    it survives restarts and shows up in the UI.
+    """
+    try:
+        g = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return
+    if not isinstance(g, dict) or g.get("error"):
+        return
+    graphs_dir = ctx.artifacts.project_dir / "knowledge_graphs"
+    graphs_dir.mkdir(parents=True, exist_ok=True)
+    if tool_name == "merge_knowledge_graphs":
+        fname = "corpus.json"
+    else:
+        pid = str(g.get("paper_id", ""))
+        aid = pid.removeprefix("paper:") if pid.startswith("paper:") else pid
+        fname = f"{aid}.json" if aid else f"graph-{int(time.time())}.json"
+    out = graphs_dir / fname
+    out.write_text(json.dumps(g, indent=2))
+    try:
+        art = Artifact(kind="data", name=f"graph-{fname[:-5]}",
+                       description=f"Persisted knowledge graph: {fname}",
+                       code="", env={},
+                       message_id=getattr(ctx, "message_id", ""),
+                       run_id=getattr(ctx, "run_id", ""))
+        ctx.artifacts.add_artifact(art, data=json.dumps(g).encode(),
+                                   data_type="text")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# Tools whose successful JSON result should be auto-persisted per project.
+_PERSISTED_GRAPH_TOOLS = ("build_knowledge_graph_from_notes",
+                          "merge_knowledge_graphs")
+
+
 class MCPRegistry:
     def __init__(self, servers: list[dict] | None = None):
         self._servers: dict[str, dict] = {}
@@ -304,6 +346,12 @@ class MCPRegistry:
                 text, is_err = await conn.call_tool(tool.name, args)
             except Exception as e:  # noqa: BLE001
                 return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
+            if (sname == "arxiv" and tool.name in _PERSISTED_GRAPH_TOOLS
+                    and not is_err and text):
+                try:
+                    _persist_graph(ctx, tool.name, text)
+                except Exception:  # noqa: BLE001
+                    pass
             return f"[MCP:{sname}] {text}" if text else f"[MCP:{sname}] (no output)"
 
         caller.__name__ = full_name
