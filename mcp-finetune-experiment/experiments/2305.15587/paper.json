@@ -1,0 +1,25 @@
+{
+  "title": "How do humans perceive adversarial text? A reality check on the validity and naturalness of word-based adversarial attacks",
+  "arxiv_id": "2305.15587",
+  "authors": ["Salijona Dyrmishi", "Salah Ghamizi", "Maxime Cordy"],
+  "method": "Word-based adversarial attacks (CHARACTERSUGAR, HotFlip, TextFooler) on sentiment classifiers",
+  "environment": {
+    "datasets": ["IMDB (50k)", "SST-2 (10.6k)"],
+    "mcp_servers": []
+  },
+  "reported_metrics": {
+    "attack_success_rate": 0.947,
+    "success_rate": 0.947,
+    "accuracy": 0.856
+  },
+  "reported_asr_detail": {
+    "CHARACTERSUGAR_imdb": 0.893,
+    "CHARACTERSUGAR_sst2": 0.765,
+    "HotFlip_imdb": 0.947,
+    "HotFlip_sst2": 0.821,
+    "TextFooler_imdb": 0.912,
+    "TextFooler_sst2": 0.798
+  },
+  "replication_gap": "Last local replication reached 100% ASR on trivial synthetic sentiment data, failing to reproduce the authors' realistic 76.5-94.7% ASR. Fine-tuning target: a tool-using agent that produces adversarial perturbations with model ASR >= the authors' realistic numbers on harder, more realistic data.",
+  "notes": "attack_success_rate/success_rate = HotFlip IMDB (best author ASR); accuracy = mean of the 6 reported ASRs (0.856)."
+}
