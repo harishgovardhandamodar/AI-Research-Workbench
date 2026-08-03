@@ -82,7 +82,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T9 · File upload endpoint** — `POST /api/projects/{name}/files`
   (multipart → project dir), surfaces in the file picker.
 
-- [ ] **T10 · Approval resilience + audit** — reject pending approvals on WS
+- [x] **T10 · Approval resilience + audit** — reject pending approvals on WS
   disconnect; persist approval decisions (allow/deny/temporary); timeout message.
 
 - [ ] **T11 · Context compaction** — summarize old turns into a persistent

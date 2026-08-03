@@ -179,6 +179,8 @@
       <div id="tab-grants" class="tabpane">
         <div class="pane-toolbar"><span class="pane-title">Granted permissions</span></div>
         <div id="grant-list" class="vlist"></div>
+        <div class="pane-toolbar"><span class="pane-title">Recent approval decisions</span></div>
+        <div id="approval-list" class="vlist"></div>
       </div>
     </aside>
   </div>
@@ -316,7 +318,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v16";
+  window.FOX_VER = "v17";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

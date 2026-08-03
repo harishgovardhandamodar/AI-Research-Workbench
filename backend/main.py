@@ -954,6 +954,12 @@ async def delete_grant(name: str, grant_id: str):
     return {"deleted": cur.rowcount > 0}
 
 
+@app.get("/api/projects/{name}/approvals")
+async def list_approvals(name: str, limit: int = 50):
+    """Audit trail of approval decisions (allow / deny / temporary / timeout)."""
+    return {"approvals": get_runtime(name).store.list_approvals(limit)}
+
+
 # ---------------------------------------------------------- workflows --------
 
 PRIVACY_WORKFLOW = {
@@ -1396,7 +1402,7 @@ async def ws_chat(ws: WebSocket, name: str):
     # keeps the latest snapshot so page/section loads can fetch it via REST.
     rt.workflow.subscribe(emit)
 
-    broker = ApprovalBroker(emit)
+    broker = ApprovalBroker(emit, store=rt.store)
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
                               record=lambda r: rt.store.add_run(
@@ -1504,6 +1510,7 @@ async def ws_chat(ws: WebSocket, name: str):
                 else:
                     await incoming.put(msg)
         except WebSocketDisconnect:
+            broker.reject_all()  # resolve pending approvals so the agent can't hang
             pass
 
     recv_task = asyncio.create_task(receive_loop())
@@ -1518,9 +1525,8 @@ async def ws_chat(ws: WebSocket, name: str):
         pass
     finally:
         recv_task.cancel()
+        broker.reject_all()  # don't let the agent hang on a vanished client
         rt.workflow.unsubscribe(emit)
-
-
 # ------------------------------------------------------------ static files ---
 
 class NoCacheStaticFiles(StaticFiles):

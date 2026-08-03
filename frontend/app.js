@@ -148,6 +148,11 @@ function handleEvent(type, p) {
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
     case "approval_request": showApproval(p); break;
+    case "approval_result":
+      if (p.decision === "timeout")
+        toast("Approval request timed out — command denied.", 5000);
+      loadApprovals();
+      break;
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
     case "review":
       state._lastFindings = p.findings || [];
@@ -468,6 +473,33 @@ function renderGrants(grants) {
   }
 }
 
+function renderApprovals(approvals) {
+  const c = $("approval-list");
+  if (!c) return;
+  c.innerHTML = "";
+  if (!approvals.length) {
+    c.innerHTML = '<div class="empty">No approval decisions recorded yet.</div>';
+    return;
+  }
+  for (const a of approvals) {
+    const d = document.createElement("div");
+    const sev = a.decision === "allow" ? "ok" : (a.decision === "timeout" ? "warn" : "critical");
+    const when = new Date(a.created_at * 1000).toLocaleTimeString();
+    d.className = "finding " + sev;
+    d.title = a.command;
+    d.innerHTML = `<span class="sev">${esc(a.decision)}${a.temporary ? " (temp)" : ""}</span>` +
+      `<code>${esc((a.command || "").slice(0, 40))}</code> <span class="muted" style="margin-left:6px">${esc(when)}</span>`;
+    c.appendChild(d);
+  }
+}
+
+async function loadApprovals() {
+  try {
+    const r = await api(`/api/projects/${state.project}/approvals`);
+    renderApprovals(r.approvals || []);
+  } catch (e) { /* best-effort */ }
+}
+
 /* ============================ approval =================================== */
 
 function showApproval(p) {
@@ -684,6 +716,7 @@ async function refreshState() {
   refreshNotebooks();
   loadWorkflow();
   loadFiles();
+  loadApprovals();
 }
 
 function renderFiles(files) {
@@ -922,6 +955,7 @@ document.querySelectorAll(".tab").forEach((t) => {
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
     if (t.dataset.tab === "files") loadFiles();
+    if (t.dataset.tab === "grants") loadApprovals();
   });
 });
 $("file-upload-btn").addEventListener("click", uploadFiles);

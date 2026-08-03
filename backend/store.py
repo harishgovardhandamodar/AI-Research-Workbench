@@ -55,6 +55,12 @@ class ProjectStore:
                 metric TEXT PRIMARY KEY, target REAL, higher_better INTEGER,
                 label TEXT, created_at REAL)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS approval_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT, command TEXT, decision TEXT, temporary INTEGER,
+                created_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -110,6 +116,20 @@ class ProjectStore:
 
     def list_grants(self) -> list[dict]:
         rows = self._conn.execute("SELECT * FROM grants").fetchall()
+        return [dict(r) for r in rows]
+
+    # -- approval audit log ---------------------------------------------------
+    def log_approval(self, kind: str, command: str, decision: str,
+                     temporary: bool = False):
+        self._conn.execute(
+            "INSERT INTO approval_log (kind, command, decision, temporary, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (kind, command, decision, 1 if temporary else 0, time.time()))
+        self._conn.commit()
+
+    def list_approvals(self, limit: int = 100) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM approval_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
     # -- settings -----------------------------------------------------------
