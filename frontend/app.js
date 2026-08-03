@@ -862,6 +862,11 @@ async function loadExperiments() {
     populateExpMetrics();
     renderExperiments();
   } catch (e) { /* silent */ }
+  try {
+    const rr = await api(`/api/projects/${state.project}/runs`);
+    state.agentRuns = rr.runs || [];
+  } catch (e) { state.agentRuns = state.agentRuns || []; }
+  populateExpCompare();
 }
 
 function expMetric() { return state.expMetric || "linkage50"; }
@@ -896,6 +901,61 @@ function _metricColor(v, min, max) {
   const t = (v - min) / ((max - min) || 1);
   const lerp = (a, b, x) => Math.round(a + (b - a) * Math.max(0, Math.min(1, x)));
   return `rgb(${lerp(79, 217, t)},${lerp(140, 164, t)},${lerp(255, 65, t)})`;
+}
+
+// --------------------------------------------------------- run comparison ----
+
+function populateExpCompare() {
+  const runs = (state.agentRuns || []).map((r) => ({
+    value: String(r.id),
+    label: `#${r.id} ${(r.prompt || "").replace(/\s+/g, " ").slice(0, 70)}`,
+  })).reverse();
+  const exps = ((state.expGraph && state.expGraph.nodes) || []).map((n) => ({
+    value: String(n.id),
+    label: `${n.label}${n.timestamp ? " · " + new Date(n.timestamp).toLocaleString() : ""}`,
+  }));
+  const opts = [...runs, ...exps];
+  const selA = $("exp-cmp-a"), selB = $("exp-cmp-b"), res = $("exp-cmp-result");
+  if (!opts.length) {
+    selA.innerHTML = selB.innerHTML = "";
+    res.innerHTML = '<div class="empty">No runs yet — run an experiment to compare.</div>';
+    return;
+  }
+  const fill = (sel, idx) => {
+    sel.innerHTML = opts.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("");
+    sel.value = opts[Math.max(0, Math.min(idx, opts.length - 1))].value;
+  };
+  fill(selA, 0);
+  fill(selB, Math.min(1, opts.length - 1));
+  renderExpCompare();
+}
+
+async function renderExpCompare() {
+  const el = $("exp-cmp-result");
+  const a = $("exp-cmp-a").value, b = $("exp-cmp-b").value;
+  if (!a || !b) return;
+  el.innerHTML = '<div class="empty">Comparing…</div>';
+  try {
+    const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(a)}&run_b=${encodeURIComponent(b)}`);
+    const c = r.comparison;
+    if (!c.rows.length) {
+      el.innerHTML = `<div class="empty">No shared numeric metrics between <b>${esc(c.a)}</b> and <b>${esc(c.b)}</b>.</div>`;
+      return;
+    }
+    const sum = c.summary;
+    let rows = `<tr><th>metric</th><th>${esc(c.a)}</th><th>${esc(c.b)}</th><th>Δ</th><th>%</th></tr>`;
+    for (const row of c.rows) {
+      const cls = row.delta > 0 ? "delta-up" : row.delta < 0 ? "delta-down" : "";
+      const arrow = row.delta > 0 ? "▲" : row.delta < 0 ? "▼" : "—";
+      rows += `<tr><td>${esc(row.metric)}</td><td>${_fmtNum(row.a)}</td><td>${_fmtNum(row.b)}</td>
+        <td class="${cls}">${arrow} ${_fmtNum(row.delta)}</td>
+        <td class="${cls}">${row.pct > 0 ? "+" : ""}${_fmtNum(row.pct)}%</td></tr>`;
+    }
+    el.innerHTML = `<table class="cmp-table"><tbody>${rows}</tbody></table>
+      <div class="cmp-summary muted">${sum.shared} shared metric(s) · ${sum.increased} up · ${sum.decreased} down · ${sum.unchanged} unchanged</div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Comparison failed: ${esc(e.message || e)}</div>`;
+  }
 }
 
 // --------------------------------------------------------- timeline chart ----
@@ -1441,6 +1501,9 @@ async function openArtifactById(id) {
   });
 });
 $("exp-refresh-main").addEventListener("click", loadExperiments);
+$("exp-cmp-go").addEventListener("click", renderExpCompare);
+$("exp-cmp-a").addEventListener("change", renderExpCompare);
+$("exp-cmp-b").addEventListener("change", renderExpCompare);
 
 function setExpMetric(v) {
   state.expMetric = v;

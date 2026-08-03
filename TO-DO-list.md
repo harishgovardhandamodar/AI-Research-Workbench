@@ -50,7 +50,7 @@ Branch: `agentic-experimentation` (base `8344264`).
     `_save_artifact`, `_notebook_artifact_cb` (replaces `message_id=""`).
   - Verify: produce an artifact via agent turn → artifact row has the ids.
 
-- [ ] **T4 · Run-to-run comparison for arbitrary runs**
+- [x] **T4 · Run-to-run comparison for arbitrary runs**
   - `experiments.py`: metric-delta edges between comparable runs; new
     `GET /api/projects/{name}/compare?run_a&run_b` returning a delta table.
   - Frontend: show comparison (delta) rows in the Experiments panel.

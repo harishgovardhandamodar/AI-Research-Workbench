@@ -137,6 +137,7 @@ class Coordinator:
         self._mcp_loaded = False
         self._run_seq: list[dict] = []
         self._run_artifacts: list[str] = []
+        self._run_metrics: dict = {}
         self._run_started = 0.0
 
     async def _ensure_mcp(self):
@@ -166,6 +167,7 @@ class Coordinator:
         workflow = getattr(self.ctx, "workflow", None)
         self._run_seq = []
         self._run_artifacts = []
+        self._run_metrics = {}
         self._run_started = time.time()
         self.ctx.run_id = ""
         status = "done"
@@ -235,6 +237,7 @@ class Coordinator:
                         "result": _snippet(result, 300),
                     })
                     self._run_artifacts.extend(_artifact_ids(name, result))
+                    self._run_metrics.update(_extract_metrics(result))
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.get("id", ""),
@@ -268,6 +271,7 @@ class Coordinator:
             "finished_at": time.time(),
             "tool_sequence": self._run_seq,
             "artifact_ids": self._run_artifacts,
+            "metrics": self._run_metrics,
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)
@@ -304,3 +308,24 @@ def _artifact_ids(name: str, result: str) -> list[str]:
     if m:
         ids.extend(re.findall(r"\b[0-9a-f]{32}\b", m.group(1)))
     return ids
+
+
+_METRIC_RE = re.compile(r"['\"]?([A-Za-z_][A-Za-z0-9_.]*)['\"]?\s*[:=]\s*(-?\d+(?:\.\d+)?)")
+
+
+def _extract_metrics(result: str, max_keys: int = 30) -> dict:
+    """Best-effort numeric metric extraction from tool output.
+
+    Catches labelled numeric values like ``accuracy: 0.9`` or ``{"rmse": 1.2}``.
+    Only a bounded set of keys is kept, and values must be finite.
+    """
+    out: dict = {}
+    if not result or not isinstance(result, str):
+        return out
+    for m in _METRIC_RE.finditer(result):
+        key, val = m.group(1), float(m.group(2))
+        if key in out or len(out) >= max_keys:
+            continue
+        if abs(val) < 1e308:
+            out[key] = val
+    return out

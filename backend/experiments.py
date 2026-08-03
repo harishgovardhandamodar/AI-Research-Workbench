@@ -66,10 +66,66 @@ def similarity(a: dict, b: dict) -> float:
     """1 - normalized mean-absolute-difference of the linkage-vs-coverage curves."""
     va, vb = _linkage_vec(a), _linkage_vec(b)
     if not va or not vb or len(va) != len(vb):
-        return 0.0
+        return _metric_similarity(a, b)
     span = max(max(va), max(vb), 1e-9)
     mad = sum(abs(x - y) for x, y in zip(va, vb)) / len(va)
     return max(0.0, 1.0 - mad / span)
+
+
+def _metric_similarity(a: dict, b: dict) -> float:
+    """Similarity from shared numeric metrics (works for any run record)."""
+    ma, mb = _node_metrics(a), _node_metrics(b)
+    keys = sorted(set(ma) & set(mb))
+    if not keys:
+        return 0.0
+    pairs = [(ma[k], mb[k]) for k in keys]
+    lo = min(min(x, y) for x, y in pairs)
+    hi = max(max(x, y) for x, y in pairs)
+    span = (hi - lo) or 1.0
+    mad = sum(abs(x - y) for x, y in pairs) / len(pairs)
+    return max(0.0, 1.0 - mad / span)
+
+
+def compare_runs(a: dict, b: dict) -> dict:
+    """Metric delta table between two run records.
+
+    Returns
+        {"a": label_a, "b": label_b, "rows": [{metric, a, b, delta, pct}...],
+         "summary": {shared, improved, worsened, unchanged, direction}}
+    """
+    ma, mb = _node_metrics(a), _node_metrics(b)
+    keys = sorted(set(ma) & set(mb))
+    rows = []
+    increased = decreased = unchanged = 0
+    for k in keys:
+        va, vb = ma[k], mb[k]
+        delta = vb - va
+        pct = (delta / va * 100) if va else 0.0
+        rows.append({
+            "metric": k,
+            "a": va, "b": vb,
+            "delta": round(delta, 4),
+            "pct": round(pct, 1),
+        })
+        if abs(delta) < 1e-12:
+            unchanged += 1
+        elif delta > 0:
+            increased += 1
+        else:
+            decreased += 1
+    label = lambda r: (r.get("label") or
+                       (f"notebook" if r.get("kind") == "notebook" else f"run {r.get('id')}"))
+    return {
+        "a": label(a),
+        "b": label(b),
+        "rows": rows,
+        "summary": {
+            "shared": len(keys),
+            "increased": increased,
+            "decreased": decreased,
+            "unchanged": unchanged,
+        },
+    }
 
 
 def overlap(a: dict, b: dict) -> float:

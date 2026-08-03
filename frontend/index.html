@@ -64,6 +64,19 @@
       <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
       <div id="expmain-detail" class="exp-main-detail"></div>
+
+      <div class="exp-compare">
+        <div class="exp-compare-head">
+          <span class="exp-compare-title">Run comparison</span>
+          <select id="exp-cmp-a" title="Run A"></select>
+          <span class="muted">vs</span>
+          <select id="exp-cmp-b" title="Run B"></select>
+          <button id="exp-cmp-go" class="btn subtle small">Compare</button>
+          <span class="spacer"></span>
+          <span class="muted exp-hint">deltas are <b>A → B</b> (B minus A)</span>
+        </div>
+        <div id="exp-cmp-result"></div>
+      </div>
     </section>
 
     <section id="agent-panel" class="hidden">
@@ -271,7 +284,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v13";
+  window.FOX_VER = "v14";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

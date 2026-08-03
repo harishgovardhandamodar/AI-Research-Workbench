@@ -518,6 +518,32 @@ async def project_run(name: str, rid: int):
     return {"run": run}
 
 
+@app.get("/api/projects/{name}/compare")
+async def project_compare(name: str, run_a: str = "", run_b: str = ""):
+    """Metric delta between two runs (agent runs or experiment-history records)."""
+    from .experiments import compare_runs, load_experiments
+    if not run_a or not run_b:
+        raise HTTPException(status_code=400, detail="run_a and run_b are required")
+    rt = get_runtime(name)
+
+    def resolve(ref: str):
+        # Agent run ids are integers; experiment-history ids are strings.
+        if ref.isdigit():
+            rec = rt.store.get_run(int(ref))
+            if rec is not None:
+                return rec
+        for exp in load_experiments():
+            if str(exp.get("id")) == ref:
+                return exp
+        return None
+
+    ra, rb = resolve(run_a), resolve(run_b)
+    if ra is None or rb is None:
+        raise HTTPException(status_code=404,
+                            detail=f"could not resolve run ids: {run_a!r}, {run_b!r}")
+    return {"comparison": compare_runs(ra, rb)}
+
+
 @app.get("/api/projects/{name}/artifacts")
 async def list_artifacts(name: str):
     return {"artifacts": get_runtime(name).artifacts.list()}
@@ -1095,6 +1121,7 @@ async def ws_chat(ws: WebSocket, name: str):
                                   finished_at=r.get("finished_at", time.time()),
                                   tool_sequence=r.get("tool_sequence"),
                                   artifact_ids=r.get("artifact_ids"),
+                                  metrics=r.get("metrics"),
                                   review=r.get("review")),
                               max_iters=rt.max_iters, mcp=mcp_registry)
 

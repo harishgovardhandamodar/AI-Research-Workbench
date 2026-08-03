@@ -48,8 +48,13 @@ class ProjectStore:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 prompt TEXT, reply TEXT, status TEXT,
                 started_at REAL, finished_at REAL,
-                tool_sequence TEXT, artifact_ids TEXT, review TEXT)"""
+                tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT)"""
         )
+        # Migration: older databases predate the metrics column.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -145,14 +150,15 @@ class ProjectStore:
                 started_at: float, finished_at: float,
                 tool_sequence: list | None = None,
                 artifact_ids: list | None = None,
+                metrics: dict | None = None,
                 review: dict | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail)."""
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
-            " tool_sequence, artifact_ids, review) VALUES (?,?,?,?,?,?,?,?)",
+            " tool_sequence, artifact_ids, metrics, review) VALUES (?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
-             json.dumps(review or {})))
+             json.dumps(metrics or {}), json.dumps(review or {})))
         self._conn.commit()
         return cur.lastrowid
 
@@ -181,6 +187,7 @@ class ProjectStore:
                 "finished_at": r["finished_at"],
                 "tool_sequence": _jload(r["tool_sequence"], []),
                 "artifact_ids": _jload(r["artifact_ids"], []),
+                "metrics": _jload(r["metrics"], {}),
                 "review": _jload(r["review"], {})}
 
 
