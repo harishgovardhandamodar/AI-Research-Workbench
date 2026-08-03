@@ -130,6 +130,8 @@ class ProjectRuntime:
                            approval=approval, emit=emit, notebooks=self.notebooks)
 
     def build_llm_messages(self) -> list[dict]:
+        from .skills import skills_context
+
         rows = self.store.list_messages()
         msgs: list[dict] = []
         for r in rows:
@@ -148,6 +150,9 @@ class ProjectRuntime:
             elif role == "tool":
                 msgs.append({"role": "tool", "tool_call_id": meta.get("tool_call_id", ""),
                              "content": r["content"]})
+        sk = skills_context()
+        if sk:
+            msgs.insert(0, {"role": "system", "content": sk})
         return sanitize_messages(msgs)
 
     async def stop(self):
@@ -289,6 +294,131 @@ async def get_experiments():
 async def get_experiments_graph():
     """Graph view: one node per run + similarity/overlap edges between runs."""
     return build_graph()
+
+
+# --------------------------------------------------------- agent dashboard ----
+
+@app.get("/api/agent")
+async def agent_dashboard():
+    """Agent dashboard: tools, MCP servers, skills/add-ons, and status."""
+    from .agents.tools import get_tool_schemas
+    from .skills import load_skills
+
+    # Built-in agent tools (the agent's "subagents" / capabilities).
+    tools = [
+        {"name": t["function"]["name"],
+         "description": (t["function"].get("description") or "")[:160]}
+        for t in get_tool_schemas()
+    ]
+
+    # MCP servers + namespaced tools.
+    try:
+        mcp_status = await mcp_registry.statuses()
+        for s in mcp_status:
+            s["tools"] = [f"{s['name']}__{t}" for t in s.get("tools", [])]
+    except Exception:  # noqa: BLE001
+        mcp_status = [{"name": "?  ", "ok": False, "error": "registry error",
+                       "tools": []}]
+
+    # Skills: custom registry + bundled example notebooks/scripts as add-ons.
+    skills = load_skills()
+    bundled = []
+    examples_nb = ROOT / "examples" / "notebooks"
+    if examples_nb.exists():
+        bundled = sorted(f.stem for f in examples_nb.glob("*.ipynb"))
+    bundled_scripts = sorted(
+        p.name for p in (ROOT / "examples" / "experiments").glob("*.py")
+    ) if (ROOT / "examples" / "experiments").exists() else []
+
+    # Status / add-on data.
+    total_artifacts = 0
+    for rt in runtimes.values():
+        try:
+            total_artifacts += len(rt.artifacts.list())
+        except Exception:  # noqa: BLE001
+            pass
+    addons = {
+        "projects": len(runtimes) or (len(list(PROJECTS_DIR.iterdir())) if PROJECTS_DIR.exists() else 0),
+        "experiments": len(load_experiments()),
+        "artifacts": total_artifacts,
+        "notebooks": len(bundled),
+        "scripts": len(bundled_scripts),
+    }
+
+    llm = {
+        "model": CONFIG["llm"].get("model"),
+        "base_url": CONFIG["llm"].get("base_url"),
+        "tool_base_url": CONFIG["llm"].get("tool_base_url"),
+    }
+
+    return {
+        "tools": tools,
+        "mcp": mcp_status,
+        "skills": skills,
+        "bundled": {"notebooks": bundled, "scripts": bundled_scripts},
+        "addons": addons,
+        "llm": llm,
+    }
+
+
+@app.post("/api/agent/skills")
+async def add_agent_skill(body: dict):
+    from .skills import add_skill
+    try:
+        skill = add_skill(body.get("name", ""), body.get("description", ""),
+                          body.get("instruction", ""))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"skill": skill}
+
+
+@app.delete("/api/agent/skills/{skill_id}")
+async def delete_agent_skill(skill_id: str):
+    from .skills import delete_skill
+    return {"deleted": delete_skill(skill_id)}
+
+
+@app.post("/api/mcp/servers")
+async def add_mcp_server(body: dict):
+    """Add an MCP server to the config and rebuild the registry."""
+    cfg = json.loads(json.dumps(CONFIG))
+    servers = cfg.setdefault("mcp", {}).setdefault("servers", [])
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    if any(s.get("name") == name for s in servers):
+        return JSONResponse({"error": f"server '{name}' already exists"}, status_code=400)
+    server = {
+        "name": name,
+        "transport": body.get("transport", "stdio"),
+        "trusted": bool(body.get("trusted", False)),
+    }
+    if server["transport"] == "stdio":
+        server["command"] = body.get("command") or "{python}"
+        server["args"] = [a for a in (body.get("args") or "").split(",") if a.strip()]
+        server["env"] = {"PYTHONPATH": str(ROOT)}
+    else:
+        server["url"] = body.get("url") or ""
+        server["headers"] = body.get("headers") or {}
+    servers.append(server)
+    save_config(cfg)
+    CONFIG["mcp"]["servers"] = servers
+    await rebuild_mcp()
+    return {"server": server}
+
+
+@app.delete("/api/mcp/servers/{name}")
+async def delete_mcp_server(name: str):
+    cfg = json.loads(json.dumps(CONFIG))
+    servers = cfg.setdefault("mcp", {}).setdefault("servers", [])
+    out = [s for s in servers if s.get("name") != name]
+    if len(out) == len(servers):
+        return JSONResponse({"error": "server not found"}, status_code=404)
+    cfg["mcp"]["servers"] = out
+    save_config(cfg)
+    CONFIG["mcp"]["servers"] = out
+    await rebuild_mcp()
+    return {"deleted": True}
 
 
 # --------------------------------------------------------- REST: projects ---

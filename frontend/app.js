@@ -1031,20 +1031,157 @@ function selectRun(id) {
 function switchMainView(view) {
   $("chat-panel").classList.toggle("hidden", view !== "chat");
   $("exp-panel").classList.toggle("hidden", view !== "experiments");
+  $("agent-panel").classList.toggle("hidden", view !== "agent");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
   const app = document.getElementById("app");
-  if (view === "experiments") {
-    // maximize width: collapse the side panel for the expanded view
+  if (view === "experiments" || view === "agent") {
+    // maximize width: collapse the side panel for the expanded views
     if (state._sideBefore == null)
       state._sideBefore = app.classList.contains("side-collapsed");
     app.classList.add("side-collapsed");
-    loadExperiments();
   } else if (state._sideBefore != null) {
     app.classList.toggle("side-collapsed", !!state._sideBefore);
     state._sideBefore = null;
   }
+  if (view === "experiments") loadExperiments();
+  if (view === "agent") loadAgent();
 }
+
+/* ============================ agent dashboard ============================= */
+
+async function loadAgent() {
+  try {
+    state.agent = await api("/api/agent");
+    renderAgent();
+  } catch (e) { /* silent */ }
+}
+
+function renderAgent() {
+  const a = state.agent || {};
+  const body = $("agent-body");
+  if (!body) return;
+  const escA = esc;
+
+  let h = "";
+
+  // agent tools (subagents / capabilities)
+  h += `<div class="agent-card"><div class="agent-card-head">🛠 Agent tools (${(a.tools || []).length})</div>`;
+  h += (a.tools || []).map((t) =>
+    `<div class="agent-item"><span class="agent-name">${escA(t.name)}</span><span class="agent-desc">${escA(t.description)}</span></div>`).join("")
+    || '<div class="empty">none</div>';
+  h += `</div>`;
+
+  // MCP servers
+  h += `<div class="agent-card"><div class="agent-card-head">🔌 MCP servers (${(a.mcp || []).length})</div>`;
+  for (const s of a.mcp || []) {
+    h += `<div class="agent-mcp">
+      <div class="agent-mcp-head">
+        <span class="status-dot ${s.ok ? "ok" : ""}"></span>
+        <b>${escA(s.name)}</b>
+        <span class="muted">${escA(s.transport || "stdio")} · ${(s.tools || []).length} tools</span>
+        ${s.ok ? "" : `<span class="muted">${escA(s.error || "offline")}</span>`}
+        <button class="btn subtle small agent-mcp-del" data-name="${escA(s.name)}">remove</button>
+      </div>
+      <div class="agent-mcp-tools">${(s.tools || []).slice(0, 14).map((t) => `<span class="agent-tool-chip">${escA(t)}</span>`).join("")}</div>
+    </div>`;
+  }
+  h += `<details class="agent-form"><summary>+ Add MCP server</summary>
+    <input id="mcp-add-name" placeholder="name (e.g. uniprot)">
+    <select id="mcp-add-transport"><option value="stdio">stdio</option><option value="http">streamable HTTP</option></select>
+    <input id="mcp-add-command" placeholder="command, or URL for HTTP">
+    <input id="mcp-add-args" placeholder="args, comma-separated (stdio)">
+    <label class="check"><input id="mcp-add-trusted" type="checkbox"> trusted (skip approval)</label>
+    <button id="mcp-add-save" class="btn primary small">Add</button>
+    <span id="mcp-add-status" class="muted"></span>
+  </details>`;
+  h += `</div>`;
+
+  // skills
+  h += `<div class="agent-card"><div class="agent-card-head">🧩 Skills &amp; capabilities</div>`;
+  h += `<div class="ed-sec">Custom skills (${(a.skills || []).length})</div>`;
+  h += (a.skills || []).map((sk) =>
+    `<div class="agent-item"><span class="agent-name">${escA(sk.name)}</span><span class="agent-desc">${escA(sk.description || sk.instruction || "")}</span><button class="btn subtle small agent-skill-del" data-id="${escA(sk.id)}">✕</button></div>`).join("")
+    || '<div class="empty">No custom skills yet.</div>';
+  h += `<details class="agent-form"><summary>+ Add skill</summary>
+    <input id="skill-name" placeholder="skill name">
+    <input id="skill-desc" placeholder="short description">
+    <textarea id="skill-instruction" rows="3" placeholder="instruction the agent should follow when this skill applies"></textarea>
+    <button id="skill-add" class="btn primary small">Add skill</button>
+    <span id="skill-status" class="muted"></span>
+  </details>`;
+  h += `<div class="ed-sec">Bundled notebooks (${(a.bundled && a.bundled.notebooks || []).length})</div>`;
+  h += `<div class="agent-bundled">${(a.bundled && a.bundled.notebooks || []).map((n) => `<span class="agent-tool-chip nb-run" data-nb="${escA(n)}">📓 ${escA(n)}</span>`).join("")}</div>`;
+  h += `<div class="ed-sec">Bundled scripts (${(a.bundled && a.bundled.scripts || []).length})</div>`;
+  h += `<div class="agent-bundled">${(a.bundled && a.bundled.scripts || []).map((s) => `<span class="agent-tool-chip">🐍 ${escA(s)}</span>`).join("")}</div>`;
+  h += `</div>`;
+
+  // status & add-ons
+  h += `<div class="agent-card"><div class="agent-card-head">📊 Status &amp; add-ons</div>
+    <table class="agent-table">
+      <tr><th>LLM model</th><td>${escA(a.llm && a.llm.model || "—")}</td></tr>
+      <tr><th>Gateway</th><td>${escA(a.llm && a.llm.base_url || "—")}</td></tr>
+      <tr><th>Tool endpoint</th><td>${escA(a.llm && a.llm.tool_base_url || "—")}</td></tr>
+      <tr><th>Projects</th><td>${(a.addons && a.addons.projects) ?? "—"}</td></tr>
+      <tr><th>Experiments tracked</th><td>${(a.addons && a.addons.experiments) ?? "—"}</td></tr>
+      <tr><th>Artifacts</th><td>${(a.addons && a.addons.artifacts) ?? "—"}</td></tr>
+      <tr><th>Notebooks / scripts</th><td>${(a.addons && a.addons.notebooks) ?? 0} / ${(a.addons && a.addons.scripts) ?? 0}</td></tr>
+      <tr><th>MCP connected</th><td>${(a.mcp || []).filter((s) => s.ok).length}/${(a.mcp || []).length}</td></tr>
+    </table>
+  </div>`;
+
+  body.innerHTML = h;
+}
+
+// agent dashboard interactions (delegated)
+$("agent-body").addEventListener("click", async (e) => {
+  const del = e.target.closest(".agent-mcp-del");
+  if (del) {
+    await api(`/api/mcp/servers/${encodeURIComponent(del.dataset.name)}`, { method: "DELETE" });
+    loadAgent();
+    return;
+  }
+  const sdel = e.target.closest(".agent-skill-del");
+  if (sdel) {
+    await api(`/api/agent/skills/${encodeURIComponent(sdel.dataset.id)}`, { method: "DELETE" });
+    loadAgent();
+    return;
+  }
+  const run = e.target.closest(".nb-run");
+  if (run && state.project) {
+    toast("Running notebook " + run.dataset.nb + "…");
+    try {
+      const r = await api(`/api/projects/${state.project}/notebooks/${encodeURIComponent(run.dataset.nb)}/execute`,
+        { method: "POST", body: JSON.stringify({ cells: "all" }) });
+      toast("Ran " + r.report.filter((x) => x.ok).length + " cells in " + run.dataset.nb);
+      refreshNotebooks();
+    } catch (err) { toast(err.message, 4000); }
+  }
+});
+$("agent-body").addEventListener("change", () => { /* inputs are read on save */ });
+$("agent-body").addEventListener("click", (e) => {
+  if (e.target.id === "mcp-add-save") {
+    const body = {
+      name: $("mcp-add-name").value.trim(),
+      transport: $("mcp-add-transport").value,
+      trusted: $("mcp-add-trusted").checked,
+    };
+    if (body.transport === "stdio") { body.command = $("mcp-add-command").value.trim(); body.args = $("mcp-add-args").value.trim(); }
+    else { body.url = $("mcp-add-command").value.trim(); }
+    if (!body.name) { $("mcp-add-status").textContent = "name required"; return; }
+    api("/api/mcp/servers", { method: "POST", body: JSON.stringify(body) })
+      .then(() => { $("mcp-add-status").textContent = "added"; loadAgent(); })
+      .catch((err) => { $("mcp-add-status").textContent = err.message; });
+  }
+  if (e.target.id === "skill-add") {
+    const body = { name: $("skill-name").value.trim(), description: $("skill-desc").value.trim(), instruction: $("skill-instruction").value.trim() };
+    if (!body.name) { $("skill-status").textContent = "name required"; return; }
+    api("/api/agent/skills", { method: "POST", body: JSON.stringify(body) })
+      .then(() => { $("skill-status").textContent = "added (injected into agent context)"; loadAgent(); })
+      .catch((err) => { $("skill-status").textContent = err.message; });
+  }
+});
+$("agent-refresh").addEventListener("click", loadAgent);
 
 function similarRuns(id) {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
@@ -1169,6 +1306,7 @@ bindExpView("main");
 
 $("mainview-chat").addEventListener("click", () => switchMainView("chat"));
 $("mainview-experiments").addEventListener("click", () => switchMainView("experiments"));
+$("mainview-agent").addEventListener("click", () => switchMainView("agent"));
 
 /* ============================ notebooks =================================== */
 

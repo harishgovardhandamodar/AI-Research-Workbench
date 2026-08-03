@@ -26,6 +26,7 @@
       <div class="mainview-tabs">
         <button id="mainview-chat" class="mainview-btn active" data-mainview="chat">Chat</button>
         <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments">Experiments</button>
+        <button id="mainview-agent" class="mainview-btn" data-mainview="agent">Agent</button>
       </div>
       <select id="project-select" title="Project"></select>
       <button id="new-project-btn" class="btn subtle" title="New project">+</button>
@@ -63,6 +64,15 @@
       <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
       <div id="expmain-detail" class="exp-main-detail"></div>
+    </section>
+
+    <section id="agent-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">Agent &amp; add-on dashboard</span>
+        <span class="spacer"></span>
+        <button id="agent-refresh" class="btn subtle small">Refresh</button>
+      </div>
+      <div id="agent-body" class="agent-body"></div>
     </section>
 
     <section id="chat-panel">
@@ -246,7 +256,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v7";
+  window.FOX_VER = "v8";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
