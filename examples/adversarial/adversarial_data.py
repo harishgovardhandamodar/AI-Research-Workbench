@@ -71,16 +71,18 @@ def train(model_type: str, Xtr, ytr, seed: int = 42):
 
 
 def fgsm_grad(model, X, y) -> np.ndarray:
-    """Per-sample FGSM gradient direction (linear-model proxy).
+    """Per-sample FGSM gradient direction.
 
-    For linear models uses the true gradient direction sign((pred - y) * w);
-    for non-linear models falls back to a fixed random direction (still a
-    valid demonstration of an untargeted perturbation).
+    For linear models uses the true gradient direction sign((p - y) * w) with
+    p = predicted probability (so the perturbation pushes the decision across
+    the boundary); for non-linear models falls back to a fixed random direction.
     """
-    if hasattr(model, "decision_function"):
+    if hasattr(model, "predict_proba"):
+        s = model.predict_proba(X)[:, 1]
+    elif hasattr(model, "decision_function"):
         s = model.decision_function(X)
     else:
-        s = model.predict_proba(X)[:, 1]
+        s = model.predict(X)
     if hasattr(model, "coef_"):
         w = np.asarray(model.coef_).reshape(-1)
         err = np.clip(s - y, -1, 1)[:, None]
@@ -90,10 +92,17 @@ def fgsm_grad(model, X, y) -> np.ndarray:
 
 
 def perturb_batch(model, X, y, eps: float) -> np.ndarray:
-    """X + eps * sign(FGSM gradient), clipped to the training range."""
-    g = fgsm_grad(model, X, y)
-    X_adv = np.clip(X + eps * np.sign(g), float(X.min()), float(X.max()))
-    return X_adv
+    """Iterative PGD attack: X + eps * sign(gradient), projected to the eps-ball."""
+    steps = 10
+    eps_step = eps / 5 if eps > 0 else 0
+    Xa = X.copy()
+    lo, hi = float(X.min()), float(X.max())
+    for _ in range(steps):
+        g = fgsm_grad(model, Xa, y)
+        Xa = Xa + eps_step * np.sign(g)
+        Xa = np.clip(Xa, X - eps, X + eps)   # stay within the L-inf eps-ball
+        Xa = np.clip(Xa, lo, hi)             # stay within the training range
+    return Xa
 
 
 def evaluate_robustness(model, X, y, eps: float) -> dict:
