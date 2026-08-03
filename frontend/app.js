@@ -94,6 +94,12 @@ function renderMarkdown(src) {
   });
 
   text = text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware)
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
+    const src = /^\/artifacts\//.test(url) ? B(url) : url;
+    const artId = /^\/artifacts\//.test(url) ? url.split("/").pop() : "";
+    return `<img src="${esc(src)}" alt="${esc(alt)}" class="chat-fig" data-art-id="${esc(artId)}">`;
+  });
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
   text = text.replace(/\u0000IC\d+\u0000/g, (m) => inlinePlaceholders[m] ?? m);
@@ -138,7 +144,7 @@ function handleEvent(type, p) {
     case "assistant_message": finalizeAssistant(p.content); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
-    case "artifact": addArtifact(p.artifact); renderArtifacts(); break;
+    case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
     case "approval_request": showApproval(p); break;
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
     case "review": renderReview(p.findings || []); break;
@@ -150,6 +156,7 @@ function handleEvent(type, p) {
 /* ============================ chat rendering ============================= */
 
 let curAssistantEl = null;
+let pendingInlineFigs = [];
 
 function msgContainer(role) {
   const div = document.createElement("div");
@@ -195,6 +202,11 @@ function finalizeAssistant(content) {
     curAssistantEl = null;
   }
   state.streaming = false;
+  // Attach figures that were emitted before the text (e.g. auto-workflows).
+  while (pendingInlineFigs.length) {
+    const art = pendingInlineFigs.shift();
+    if (el) appendInlineFig(el, art);
+  }
 }
 
 function scrollBottom() {
@@ -283,14 +295,24 @@ function openArtifact(a) {
 }
 
 function renderArtifactInline(art) {
-  if (!curAssistantEl) return;
   if (art.data_type !== "png") return;
+  if (curAssistantEl) {
+    appendInlineFig(curAssistantEl, art);
+  } else {
+    // Figures that arrive before the assistant text (e.g. auto-workflows)
+    // are attached to the completed message once it renders.
+    pendingInlineFigs.push(art);
+  }
+}
+
+function appendInlineFig(el, art) {
+  // Skip if this figure was already rendered inline from markdown in the message.
+  if (el.div.querySelector(`img[data-art-id="${esc(art.id)}"]`)) return;
   const fig = document.createElement("div");
   fig.className = "inline-fig";
   fig.innerHTML = `<img src="${B(`/artifacts/${art.id}`)}" alt="${esc(art.name)}" title="${esc(art.description)}">`;
   fig.querySelector("img").addEventListener("click", () => openArtifact(art));
-  curAssistantEl.div.insertBefore(fig, null);
-  curAssistantEl.div.appendChild(fig);
+  el.div.appendChild(fig);
   scrollBottom();
 }
 
@@ -585,6 +607,13 @@ function autoResize(ta) {
 /* ============================ wire up ==================================== */
 
 $("send-btn").addEventListener("click", sendChat);
+// Clicking a figure rendered inside a chat message opens its artifact modal.
+$("messages").addEventListener("click", (e) => {
+  const img = e.target.closest("img.chat-fig");
+  if (!img || !img.dataset.artId) return;
+  const art = (state.artifacts || []).find((a) => a.id === img.dataset.artId);
+  if (art) openArtifact(art);
+});
 $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
