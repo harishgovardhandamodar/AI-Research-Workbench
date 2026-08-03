@@ -77,6 +77,7 @@
 
     <section id="chat-panel">
       <div id="messages" class="scroll"></div>
+      <div id="busy-status" class="busy-status" title="Current activity"></div>
       <div id="composer">
         <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
@@ -256,7 +257,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v9";
+  window.FOX_VER = "v10";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

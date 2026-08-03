@@ -43,8 +43,12 @@ class LLMClient:
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self._gateway = AsyncOpenAI(base_url=base_url, api_key=api_key)
-        self._tool = AsyncOpenAI(base_url=tool_base_url, api_key=api_key)
+        # A bounded timeout + minimal retries so an unreachable endpoint fails
+        # fast with a visible error instead of hanging silently for minutes.
+        self._gateway = AsyncOpenAI(base_url=base_url, api_key=api_key,
+                                    timeout=120.0, max_retries=1)
+        self._tool = AsyncOpenAI(base_url=tool_base_url, api_key=api_key,
+                                 timeout=120.0, max_retries=1)
 
     def _pick(self, tools: Optional[list]) -> AsyncOpenAI:
         return self._tool if tools else self._gateway

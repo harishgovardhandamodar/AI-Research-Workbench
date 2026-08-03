@@ -149,6 +149,7 @@ function handleEvent(type, p) {
     case "approval_request": showApproval(p); break;
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
     case "review": renderReview(p.findings || []); break;
+    case "status": setBusyStatus(p.message); break;
     case "done": onTurnDone(); loadExperiments(); break;
     case "error": onError(p.message); break;
   }
@@ -385,6 +386,7 @@ function showApproval(p) {
   $("approval-reason").textContent = p.reason || "A shell command requires your permission.";
   $("approval-command").textContent = p.command;
   $("approval-modal").classList.remove("hidden");
+  setBusyStatus("⏸ Waiting for your approval…");
 }
 
 $("approval-allow").addEventListener("click", () => {

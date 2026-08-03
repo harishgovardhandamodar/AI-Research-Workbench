@@ -101,7 +101,8 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
     work.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0),
+                                     follow_redirects=True) as client:
             r = await client.get(f"{ARXIV_API}?id_list={base_id}&max_results=1")
             r.raise_for_status()
             raw = r.text
@@ -130,7 +131,8 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
     pdf_path = None
     if download_pdf:
         try:
-            async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0),
+                                         follow_redirects=True) as client:
                 r = await client.get(record["pdf_url"])
                 r.raise_for_status()
                 pdf_path = work / f"{base_id}.pdf"

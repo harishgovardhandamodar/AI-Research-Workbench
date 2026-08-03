@@ -117,7 +117,16 @@ class MCPConnection:
 
     async def call_tool(self, name: str, arguments: dict) -> tuple[str, bool]:
         await self._connect()
-        res = await self._session.call_tool(name, arguments=arguments or {})
+        try:
+            res = await asyncio.wait_for(
+                self._session.call_tool(name, arguments=arguments or {}),
+                timeout=120.0)
+        except asyncio.TimeoutError:
+            # Kill the connection so a wedged server process can't block the
+            # agent indefinitely; it will reconnect on the next call.
+            await self.close()
+            return ("[error] MCP tool call timed out after 120s (server "
+                    "connection reset)"), True
         parts = []
         for block in getattr(res, "content", []) or []:
             btype = getattr(block, "type", "text")
@@ -235,6 +244,15 @@ class MCPRegistry:
                 if grant == "ask":
                     if approval is None:
                         return "[denied] MCP tool requires approval but no approval channel is available."
+                    # Surface the approval request in the chat status line so the
+                    # user knows the agent is waiting on them, not stuck.
+                    emit_fn = getattr(ctx, "emit", None)
+                    if emit_fn:
+                        try:
+                            await emit_fn("status", {"message":
+                                f"⏸ Waiting for your approval to run {sname}__{tool.name}…"})
+                        except Exception:  # noqa: BLE001
+                            pass
                     ok = await approval.request(
                         "mcp_tool", key,
                         f"MCP tool '{tool.name}' on server '{sname}' may modify data "

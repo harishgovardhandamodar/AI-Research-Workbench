@@ -9,7 +9,7 @@ services:
       # If you use the bundled `ollama` service instead, set these to
       # http://ollama:11434/v1 (and http://ollama:11434/v1 for tools too).
       FOX_BASE_URL: ${FOX_BASE_URL:-http://host.docker.internal:8081/v1}
-      FOX_TOOL_BASE_URL: ${FOX_TOOL_BASE_URL:-http://host.docker.internal:11434/v1}
+      FOX_TOOL_BASE_URL: ${FOX_TOOL_BASE_URL:-http://host.docker.internal:11435/v1}
       FOX_MODEL: ${FOX_MODEL:-qwen3.6:latest}
     extra_hosts:
       # Lets "host.docker.internal" resolve to the host on Linux.
@@ -29,6 +29,16 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # Relay the host's Ollama (bound to 127.0.0.1:11434 only) to the container
+  # network on port 11435, so tool-calling turns can reach it via
+  # host.docker.internal:11435 (FOX_TOOL_BASE_URL).
+  ollama-relay:
+    image: alpine/socat:latest
+    container_name: fox-ollama-relay
+    network_mode: host
+    command: TCP-LISTEN:11435,fork,reuseaddr TCP:127.0.0.1:11434
     restart: unless-stopped
 
 volumes:

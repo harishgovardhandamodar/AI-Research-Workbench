@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
         "temperature": 0.2,
         "max_tokens": 4096,
     },
-    "agent": {"max_iters": 8, "reviewer_enabled": True},
+    "agent": {"max_iters": 20, "reviewer_enabled": True},
     "mcp": {"servers": DEFAULT_SERVERS},
 }
 
@@ -133,6 +133,7 @@ class ProjectRuntime:
                            approval=approval, emit=emit, notebooks=self.notebooks)
 
     def build_llm_messages(self) -> list[dict]:
+        from .agents.coordinator import SYSTEM_PROMPT
         from .skills import skills_context
 
         rows = self.store.list_messages()
@@ -154,8 +155,8 @@ class ProjectRuntime:
                 msgs.append({"role": "tool", "tool_call_id": meta.get("tool_call_id", ""),
                              "content": r["content"]})
         sk = skills_context()
-        if sk:
-            msgs.insert(0, {"role": "system", "content": sk})
+        system = SYSTEM_PROMPT + ("\n\n" + sk if sk else "")
+        msgs.insert(0, {"role": "system", "content": system})
         return sanitize_messages(msgs)
 
     async def stop(self):
@@ -1049,9 +1050,13 @@ async def ws_chat(ws: WebSocket, name: str):
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
                 await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
                 if match_workflow(text) or compare_requested(text):
+                    compare = compare_requested(text)
+                    await emit("status", {"message":
+                        ("Comparing previous workflow runs…" if compare else
+                         "Running the privacy workflow — peer exploitation · "
+                         "red team · DP robustness…")})
                     result = await run_privacy_workflow(
-                        rt, emit, fresh=fresh_requested(text),
-                        compare=compare_requested(text))
+                        rt, emit, fresh=fresh_requested(text), compare=compare)
                     amid = rt.store.add_message(
                         "assistant", result,
                         {"tags": message_tags("assistant", result)})
@@ -1062,6 +1067,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 nb = match_notebook_run(text)
                 if nb:
                     name, fresh = nb
+                    await emit("status", {"message": f"Executing notebook {name}"
+                                        + (" with a fresh seed…" if fresh else "…")})
                     result = await run_notebook_intent(rt, emit, name, fresh)
                     tags = ["notebook", "fresh rerun" if fresh else "run"]
                     amid = rt.store.add_message("assistant", result, {"tags": tags})
@@ -1076,6 +1083,7 @@ async def ws_chat(ws: WebSocket, name: str):
                     else:
                         await emit("done", {})
                         return
+                await emit("status", {"message": "Agent is thinking…"})
                 llm_msgs = rt.build_llm_messages()
                 result = await coordinator.run_turn(llm_msgs)
                 amid = rt.store.add_message(
@@ -1086,16 +1094,20 @@ async def ws_chat(ws: WebSocket, name: str):
                                                  "tags": message_tags("assistant",
                                                                       result.get("text", ""))})
                 if rt.reviewer_enabled:
+                    await emit("status", {"message": "Reviewing the turn…"})
                     await emit("review_start", {})
                     try:
                         findings = await Reviewer(rt.llm, rt.store).review()
                         await emit("review", {"findings": findings})
                     except Exception:  # noqa: BLE001
                         await emit("review", {"findings": []})
+                await emit("status", {"message": ""})
                 await emit("done", {})
             except LLMError as e:
+                await emit("status", {"message": ""})
                 await emit("error", {"message": str(e)})
             except Exception as e:  # noqa: BLE001
+                await emit("status", {"message": ""})
                 await emit("error", {"message": f"{type(e).__name__}: {e}"})
 
     incoming: asyncio.Queue = asyncio.Queue()
