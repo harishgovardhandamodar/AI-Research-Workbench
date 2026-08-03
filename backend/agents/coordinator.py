@@ -150,6 +150,7 @@ class Coordinator:
         Returns {"text": final assistant text}."""
         await self._ensure_mcp()
         tools = get_tool_schemas() + list(getattr(self, "_mcp_schemas", []) or [])
+        workflow = getattr(self.ctx, "workflow", None)
         for _ in range(self.max_iters):
             full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
             tcs = full.get("tool_calls")
@@ -163,6 +164,8 @@ class Coordinator:
                             "function": {"name": name, "arguments": args}}]
                     full = {"role": "assistant", "content": "", "tool_calls": tcs}
             if not tcs:
+                if workflow is not None:
+                    await workflow.finish()
                 return {"text": full.get("content", "")}
 
             assistant_msg = {
@@ -189,6 +192,8 @@ class Coordinator:
                 else:
                     await self.emit("tool_start", {"id": tc.get("id"), "name": name,
                                                    "args": args, "ok": True})
+                    if workflow is not None:
+                        await workflow.on_tool_start(name)
                     try:
                         if name == "run_shell":
                             result = await self.tools[name](command=args.get("command", ""),
@@ -199,6 +204,8 @@ class Coordinator:
                     except Exception as e:  # noqa: BLE001
                         result = f"[error] {type(e).__name__}: {e}"
                         ok = False
+                    if workflow is not None:
+                        await workflow.on_tool_end(name, ok)
                     await self.emit("tool_result", {"id": tc.get("id"), "name": name,
                                                     "output": result, "ok": ok})
                 messages.append({
@@ -208,6 +215,8 @@ class Coordinator:
                 })
                 self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
 
+        if workflow is not None:
+            await workflow.finish()
         return {"text": self._fallback()}
 
     @staticmethod

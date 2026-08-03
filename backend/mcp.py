@@ -235,9 +235,15 @@ class MCPRegistry:
         trusted = bool(self._servers.get(sname, {}).get("trusted", False))
         annotations = getattr(tool, "annotations", None)
         read_only = bool(getattr(annotations, "read_only_hint", None)) if annotations else False
+        full_name = f"{sname}__{tool.name}"
+        # Ingest/extract run in-process (not the stdio subprocess) so the host
+        # can stream live progress sub-steps into the workflow tracker.
+        inproc = (sname == "arxiv" and tool.name in ("ingest_arxiv_paper",
+                                                     "extract_paper_text"))
         async def caller(**args) -> str:
             permissions = getattr(ctx, "permissions", None)
             approval = getattr(ctx, "approval", None)
+            workflow = getattr(ctx, "workflow", None)
             if not read_only and not trusted and permissions is not None:
                 key = f"{sname}__{tool.name}"
                 grant = permissions.check("mcp_tool", key)
@@ -253,6 +259,12 @@ class MCPRegistry:
                                 f"⏸ Waiting for your approval to run {sname}__{tool.name}…"})
                         except Exception:  # noqa: BLE001
                             pass
+                    stage = workflow.stage_for_tool(full_name) if workflow else None
+                    if stage:
+                        await workflow.update_stage(
+                            stage, "waiting_approval",
+                            detail="Waiting for your approval…",
+                            message=f"Permission needed for {sname}__{tool.name}")
                     ok, temporary = await approval.request(
                         "mcp_tool", key,
                         f"MCP tool '{tool.name}' on server '{sname}' may modify data "
@@ -263,13 +275,38 @@ class MCPRegistry:
                     # request still prompts (the ask is never silenced).
                     if not temporary:
                         permissions.record("mcp_tool", key, "allow")
+                    if stage:
+                        await workflow.update_stage(stage, "running",
+                                                    detail="Approved — running…")
+            if inproc:
+                import importlib
+
+                mod = importlib.import_module("mcp_servers.arxiv_replication")
+                fn = getattr(mod, "_ingest_impl" if tool.name == "ingest_arxiv_paper"
+                            else "_extract_impl")
+                stage = workflow.stage_for_tool(full_name) if workflow else None
+
+                async def progress(message: str, pct: float):
+                    if workflow and stage:
+                        await workflow.update_stage(stage, "running",
+                                                    detail=message, pct=pct)
+
+                args = dict(args)
+                if tool.name == "ingest_arxiv_paper" and "work_dir" not in args:
+                    args["work_dir"] = str(ROOT / "papers")
+                args["progress"] = progress
+                try:
+                    text = await fn(**args)
+                except Exception as e:  # noqa: BLE001
+                    return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
+                return f"[MCP:{sname}] {text}" if text else f"[MCP:{sname}] (no output)"
             try:
                 text, is_err = await conn.call_tool(tool.name, args)
             except Exception as e:  # noqa: BLE001
                 return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
             return f"[MCP:{sname}] {text}" if text else f"[MCP:{sname}] (no output)"
 
-        caller.__name__ = f"{sname}__{tool.name}"
+        caller.__name__ = full_name
         return caller
 
     async def close(self):

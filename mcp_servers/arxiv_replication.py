@@ -20,9 +20,11 @@ stdlib + httpx.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +49,19 @@ def _now() -> str:
 
 def _json(data) -> str:
     return json.dumps(data, indent=2)
+
+
+async def _report(progress: Callable[[str, float], Awaitable[None] | None] | None,
+                  message: str, pct: float) -> None:
+    """Fire a progress callback (may be sync or async); never raises."""
+    if progress is None:
+        return
+    try:
+        result = progress(message, pct)
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def extract_arxiv_id(text: str) -> str | None:
@@ -90,8 +105,16 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
 
     Network + file writes -> this tool asks the user for approval.
     """
+    return await _ingest_impl(arxiv_id_or_url, download_pdf, work_dir, None)
+
+
+async def _ingest_impl(arxiv_id_or_url: str, download_pdf: bool = True,
+                       work_dir: str = "./papers",
+                       progress: Callable[[str, float], Awaitable[None] | None] | None = None) -> str:
+    """Shared implementation; `progress` reports live sub-steps to the host."""
     import httpx
 
+    await _report(progress, "Parsing arXiv ID / URL…", 5)
     arxiv_id = extract_arxiv_id(arxiv_id_or_url)
     if not arxiv_id:
         return _json({"error": f"Could not parse arXiv ID from: {arxiv_id_or_url}"})
@@ -108,6 +131,7 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
             raw = r.text
     except Exception as e:  # noqa: BLE001
         return _json({"error": f"Failed to fetch arXiv metadata: {e}"})
+    await _report(progress, "Metadata fetched — parsing Atom feed", 30)
 
     try:
         meta = _parse_atom_metadata(raw)
@@ -127,10 +151,12 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
         "ingested_at": _now(),
     }
     (work / "metadata.json").write_text(json.dumps(record, indent=2))
+    await _report(progress, f"Metadata saved to papers/{base_id}/metadata.json", 45)
 
     pdf_path = None
     if download_pdf:
         try:
+            await _report(progress, "Downloading PDF from arXiv…", 55)
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0),
                                          follow_redirects=True) as client:
                 r = await client.get(record["pdf_url"])
@@ -138,14 +164,24 @@ async def ingest_arxiv_paper(arxiv_id_or_url: str, download_pdf: bool = True,
                 pdf_path = work / f"{base_id}.pdf"
                 pdf_path.write_bytes(r.content)
                 record["pdf_path"] = str(pdf_path)
+            await _report(progress, f"PDF saved ({len(r.content) / 1024:.0f} KB)", 90)
         except Exception as e:  # noqa: BLE001
             record["pdf_error"] = str(e)
+    else:
+        await _report(progress, "Skipping PDF download (metadata only)", 90)
 
+    await _report(progress, "Ingest complete", 100)
     return _json(record)
 
 
-def extract_paper_text(pdf_path: str, max_pages: int = 30) -> str:
+async def extract_paper_text(pdf_path: str, max_pages: int = 30) -> str:
     """Extract plain text from a local PDF (PyMuPDF). Writes a .txt copy."""
+    return await _extract_impl(pdf_path, max_pages, None)
+
+
+async def _extract_impl(pdf_path: str, max_pages: int = 30,
+                        progress: Callable[[str, float], Awaitable[None] | None] | None = None) -> str:
+    """Shared implementation; `progress` reports per-page extraction."""
     try:
         import fitz  # PyMuPDF
     except ImportError:
@@ -155,6 +191,7 @@ def extract_paper_text(pdf_path: str, max_pages: int = 30) -> str:
     path = Path(pdf_path)
     if not path.exists():
         return _json({"error": f"PDF not found: {pdf_path}"})
+    await _report(progress, f"Opening {path.name}", 5)
 
     doc = fitz.open(path)
     n_pages = len(doc)
@@ -163,11 +200,14 @@ def extract_paper_text(pdf_path: str, max_pages: int = 30) -> str:
         if i >= max_pages:
             break
         pages.append(page.get_text())
+        await _report(progress, f"Extracting text — page {i + 1}/{min(n_pages, max_pages)}",
+                      10 + int(80 * (i + 1) / max(1, min(n_pages, max_pages))))
     doc.close()
 
     text = "\n\n".join(pages)
     out = path.with_suffix(".txt")
     out.write_text(text)
+    await _report(progress, f"Saved text ({len(text)} chars)", 100)
     return _json({
         "pdf_path": str(path),
         "text_path": str(out),

@@ -31,6 +31,7 @@ class ToolContext:
     approval: "ApprovalBroker | None" = None
     emit: Callable[[str, dict], Awaitable[None]] | None = None
     notebooks: NotebookService | None = None
+    workflow: "WorkflowTracker | None" = None
 
 
 TOOL_SCHEMAS: list[dict] = [

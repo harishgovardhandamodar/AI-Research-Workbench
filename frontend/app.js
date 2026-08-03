@@ -13,6 +13,7 @@ const state = {
   pendingApproval: null,
   streaming: false,
   nbTag: "all",
+  workflow: null,
 };
 
 /* ============================== helpers ================================= */
@@ -150,6 +151,7 @@ function handleEvent(type, p) {
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
     case "review": renderReview(p.findings || []); break;
     case "status": setBusyStatus(p.message); break;
+    case "workflow": renderWorkflow(p); break;
     case "done": onTurnDone(); loadExperiments(); break;
     case "error": onError(p.message); break;
   }
@@ -221,6 +223,59 @@ function finalizeAssistant(content, tags) {
 function scrollBottom() {
   const m = $("messages");
   m.scrollTop = m.scrollHeight;
+}
+
+/* -------- workflow progress panel (arXiv ingestion & replication) -------- */
+
+const WF_STATES = {
+  pending:          { cls: "pending",  ico: "○", label: "queued" },
+  running:          { cls: "running",  ico: "◔", label: "running" },
+  waiting_approval: { cls: "approval", ico: "⏸", label: "needs your approval" },
+  done:             { cls: "done",     ico: "✓", label: "done" },
+  failed:           { cls: "failed",   ico: "✗", label: "failed" },
+};
+
+function renderWorkflow(snap) {
+  if (!snap) return;
+  state.workflow = snap;
+  const panel = $("workflow-panel");
+  const stages = snap.stages || [];
+  if (!stages.length || snap.status === "idle") {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  $("workflow-title").textContent = snap.title || "Workflow";
+  $("workflow-state").textContent = snap.status === "running" ? "running"
+    : snap.status === "waiting_approval" ? "waiting" : snap.status;
+  $("workflow-state").className = "wf-state " + snap.status;
+  $("workflow-status").textContent = snap.message || "";
+  $("workflow-fill").style.width = (snap.pct || 0) + "%";
+
+  const wrap = $("workflow-stages");
+  wrap.innerHTML = "";
+  for (const s of stages) {
+    const meta = WF_STATES[s.state] || WF_STATES.pending;
+    const detail = s.detail || (s.state === "pending" ? "queued" : meta.label);
+    const row = document.createElement("div");
+    row.className = `wf-stage ${meta.cls}`;
+    row.innerHTML = `
+      <span class="wf-ico">${meta.ico}</span>
+      <div class="wf-stage-body">
+        <div class="wf-label">${esc(s.label)}</div>
+        <div class="wf-detail">${esc(detail)}</div>
+        <div class="wf-mini"><div class="wf-mini-fill" style="width:${Number(s.pct) || 0}%"></div></div>
+      </div>`;
+    wrap.appendChild(row);
+  }
+  scrollBottom();
+}
+
+async function loadWorkflow() {
+  try {
+    const r = await api(`/api/projects/${state.project}/workflow`);
+    renderWorkflow(r.workflow);
+  } catch (e) { /* silent */ }
 }
 
 /* -------- tool cards -------- */
@@ -593,6 +648,7 @@ async function refreshState() {
     renderGrants(r.grants || []);
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
   refreshNotebooks();
+  loadWorkflow();
 }
 
 function renderMessages(msgs) {
@@ -696,6 +752,7 @@ $("print-btn").addEventListener("click", () => {
     + new Date().toLocaleString() + "</div>";
   window.print();
 });$("settings-close").addEventListener("click", () => $("settings-modal").classList.add("hidden"));
+$("workflow-close").addEventListener("click", () => $("workflow-panel").classList.add("hidden"));
 $("cfg-save").addEventListener("click", saveSettings);
 $("cfg-test").addEventListener("click", testConnection);
 

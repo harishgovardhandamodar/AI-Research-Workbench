@@ -35,6 +35,7 @@ from .notebooks import NotebookError, NotebookService, new_notebook
 from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import PermissionManager
 from .store import ProjectStore
+from .workflows import WorkflowTracker
 
 DEFAULT_CONFIG = {
     "llm": {
@@ -126,11 +127,13 @@ class ProjectRuntime:
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         self.max_iters = CONFIG["agent"].get("max_iters", 8)
+        self.workflow = WorkflowTracker()
 
     def ctx(self, emit, approval) -> ToolContext:
         return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
                            store=self.store, permissions=self.permissions,
-                           approval=approval, emit=emit, notebooks=self.notebooks)
+                           approval=approval, emit=emit, notebooks=self.notebooks,
+                           workflow=self.workflow)
 
     def build_llm_messages(self) -> list[dict]:
         from .agents.coordinator import SYSTEM_PROMPT
@@ -474,6 +477,16 @@ async def project_state(name: str):
         vars_ = {}
     return {"name": name, "messages": msgs, "artifacts": arts, "grants": grants,
             "env": env, "variables": vars_}
+
+
+@app.get("/api/projects/{name}/workflow")
+async def project_workflow(name: str):
+    """Latest workflow-progress snapshot (arXiv replication, …).
+
+    The WebSocket pushes `workflow` events live; this endpoint lets any page or
+    section load fetch the current state on demand (event-driven self-heal).
+    """
+    return {"workflow": get_runtime(name).workflow.snapshot()}
 
 
 @app.get("/api/projects/{name}/artifacts")
@@ -1038,6 +1051,10 @@ async def ws_chat(ws: WebSocket, name: str):
         except Exception:  # noqa: BLE001
             pass
 
+    # Live workflow-progress events are pushed to this chat window; the tracker
+    # keeps the latest snapshot so page/section loads can fetch it via REST.
+    rt.workflow.subscribe(emit)
+
     broker = ApprovalBroker(emit)
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
@@ -1141,6 +1158,7 @@ async def ws_chat(ws: WebSocket, name: str):
         pass
     finally:
         recv_task.cancel()
+        rt.workflow.unsubscribe(emit)
 
 
 # ------------------------------------------------------------ static files ---
