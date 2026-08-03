@@ -516,11 +516,20 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit) -> str:
                     pass
 
     # Build a chat message that includes the run summary AND the full report
-    # (audit trail) plus the figures, so the researcher sees everything in chat.
+    # (audit trail), with each figure embedded inline next to its stage section.
     audit = (report_dir / "audit_trail.md")
     report_md = audit.read_text() if audit.exists() else ""
     summary_block = "\n".join(
         f"    {ln}" if ln.strip() else ln for ln in summary.splitlines())
+
+    # Resolve inline figure placeholders (<!-- FIGURE:name -->) to artifact links.
+    fig_by_name = {name: aid for name, aid in fig_links}
+    if fig_by_name:
+        import re as _re
+        report_md = _re.sub(
+            r"<!-- FIGURE:(\S+) -->",
+            lambda m: f"![{m.group(1)}](/artifacts/{fig_by_name[m.group(1)]})",
+            report_md)
 
     lines = [
         "## Privacy workflow — peer exploitation · red team · DP robustness",
@@ -537,9 +546,6 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit) -> str:
     ]
     if report_md:
         lines += ["", "### Full report (audit trail)", "", report_md]
-    if fig_links:
-        lines += ["", "### Figures", ""]
-        lines += [f"![{name}](/artifacts/{aid})" for name, aid in fig_links]
     lines += [
         "",
         "> Artifacts registered: " + ", ".join(artifact_names),
