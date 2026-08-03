@@ -92,8 +92,36 @@ Other useful commands:
 ```bash
 docker compose logs -f fox      # follow logs
 docker compose down             # stop (data is kept in the volume)
-docker compose down -v          # stop AND delete all persistent data
 ```
+
+## In-browser VS Code editor (edit generated content)
+
+`docker compose up` also starts a **code-server** sidecar (`codercom/code-server`)
+sharing the same `fox_data` volume, so everything the agent generates — reports,
+notebooks, knowledge graphs, project files — can be opened and edited in a full
+VS Code editor running in your browser.
+
+- Open the **Editor** tab in the top bar (or go to <http://127.0.0.1:8787>).
+  The editor opens the workbench volume at `/home/coder/workbench`, which mirrors
+  `/app/workbench` inside the fox container.
+- No login by default. To require one, set `CODE_SERVER_AUTH=password` and a
+  `CODE_SERVER_PASSWORD`.
+- The agent can also drive the editor as part of its workflow via the
+  `editor__list_files` / `editor__read_file` / `editor__edit_file` /
+  `editor__open` tools (edits ask for approval, like `run_shell`).
+
+Configuration (all optional):
+
+```bash
+CODE_SERVER_AUTH=password \
+CODE_SERVER_PASSWORD=my-password \
+FOX_EDITOR_URL=http://127.0.0.1:8787 \
+docker compose up -d --build
+```
+
+See **[docs/VSCODE-EDITOR.md](docs/VSCODE-EDITOR.md)** for the full how-to:
+opening the Editor tab, editing generated content, the agent's `editor__*`
+tools, path mapping, configuration and troubleshooting.
 
 ## Model Context Protocol (MCP) support
 

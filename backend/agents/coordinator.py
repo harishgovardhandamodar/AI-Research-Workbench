@@ -142,6 +142,36 @@ class Coordinator:
         self._run_artifacts: list[str] = []
         self._run_metrics: dict = {}
         self._run_started = 0.0
+        self.agent_name = "Fox"
+        self.model_name = getattr(self.llm, "model", "") or ""
+        try:
+            from ..skills import load_skills
+
+            self._skill_names = [s.get("name") for s in load_skills() if s.get("name")]
+        except Exception:  # noqa: BLE001
+            self._skill_names = []
+
+    async def _emit_status(self, phase: str = "", tool: str = "",
+                           mcp: str = "", skills: list | None = None) -> None:
+        """Rich, structured status so the chat window can show, live, which
+        tools / MCP servers / skills / workflow stage the agent is using."""
+        if self.emit is None:
+            return
+        payload: dict = {"agent": self.agent_name, "model": self.model_name,
+                         "phase": phase, "tool": tool, "mcp": mcp,
+                         "skills": skills or []}
+        wf = getattr(self.ctx, "workflow", None)
+        if wf is not None:
+            try:
+                snap = wf.snapshot()
+                if snap.get("status") == "running" and (
+                        snap.get("message") or snap.get("title")):
+                    payload["workflow"] = (
+                        f"{snap.get('title') or 'Workflow'}: "
+                        f"{snap.get('message') or 'running'}")
+            except Exception:  # noqa: BLE001
+                pass
+        await self.emit("status", payload)
 
     async def _ensure_mcp(self):
         """Merge MCP server tools into the tool set (lazy, once)."""
@@ -176,6 +206,7 @@ class Coordinator:
         status = "done"
         text = ""
         try:
+            await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
                 full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
                 tcs = full.get("tool_calls")
@@ -192,6 +223,7 @@ class Coordinator:
                     if workflow is not None:
                         await workflow.finish()
                     text = full.get("content", "")
+                    await self._emit_status(phase="complete")
                     return {"text": text}
 
                 assistant_msg = {
@@ -218,6 +250,10 @@ class Coordinator:
                     else:
                         await self.emit("tool_start", {"id": tc.get("id"), "name": name,
                                                        "args": args, "ok": True})
+                        mcp_server = name.split("__", 1)[0] if "__" in name else ""
+                        await self._emit_status(phase="tool", tool=name,
+                                                mcp=mcp_server,
+                                                skills=self._skill_names)
                         if workflow is not None:
                             await workflow.on_tool_start(name)
                         try:
@@ -251,6 +287,7 @@ class Coordinator:
             if workflow is not None:
                 await workflow.finish()
             text = self._fallback()
+            await self._emit_status(phase="complete")
             return {"text": text}
         except Exception:  # noqa: BLE001
             status = "error"

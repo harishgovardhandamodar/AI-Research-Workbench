@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,7 @@ from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import PermissionManager
 from .store import ProjectStore, close_project_db
 from .workflows import WorkflowTracker
+from . import editor as editor_cfg
 
 DEFAULT_CONFIG = {
     "llm": {
@@ -49,6 +50,7 @@ DEFAULT_CONFIG = {
     },
     "agent": {"max_iters": 20, "reviewer_enabled": True},
     "mcp": {"servers": DEFAULT_SERVERS},
+    "editor": editor_cfg.editor_config(),
 }
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -80,6 +82,7 @@ def load_config() -> dict:
             cfg = json.loads(json.dumps(DEFAULT_CONFIG))
             cfg["llm"].update(saved.get("llm", {}))
             cfg["agent"].update(saved.get("agent", {}))
+            cfg["editor"].update(saved.get("editor", {}))
             if "servers" in saved.get("mcp", {}):
                 # Keep user's servers but always surface the bundled default
                 # servers (e.g. newly-added "privacy") unless overridden by name.
@@ -309,6 +312,31 @@ async def set_config(body: dict):
         rt.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         rt.max_iters = CONFIG["agent"].get("max_iters", 8)
     return {"config": CONFIG}
+
+
+@app.get("/api/editor")
+async def editor_status(request: Request):
+    """In-browser editor (code-server) info + a lightweight reachability probe."""
+    import urllib.request
+
+    info = editor_cfg.editor_config()
+    info["reachable"] = False
+    # When running on a remote host, "http://127.0.0.1:8787" is unreachable from
+    # the user's browser. If the configured URL is the default loopback one,
+    # derive it from the host the user is browsing from (same host, port 8787).
+    if info.get("url") == "http://127.0.0.1:8787":
+        host = request.url.hostname or "127.0.0.1"
+        info["url"] = f"http://{host}:8787" if host not in ("127.0.0.1", "localhost") \
+            else "http://127.0.0.1:8787"
+    if info.get("enabled"):
+        try:
+            await asyncio.to_thread(
+                urllib.request.urlopen, editor_cfg.editor_probe_url(), timeout=3
+            )
+            info["reachable"] = True
+        except Exception:  # noqa: BLE001
+            info["reachable"] = False
+    return {"editor": info}
 
 
 # ---------------------------------------------------------------- MCP --------

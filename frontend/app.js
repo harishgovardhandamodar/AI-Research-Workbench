@@ -135,11 +135,70 @@ function setConn(kind) {
   el.title = kind === "ok" ? "Connected" : kind === "busy" ? "Working…" : "Disconnected";
 }
 
-function setBusyStatus(txt) {
+// Rotating work-in-progress phrases shown next to the busy indicator while the
+// agent is active, to keep the chat window engaging.
+const WIP_PHRASES = [
+  "Crunching numbers…",
+  "Brewing up an experiment…",
+  "Calling the tools…",
+  "Talking to the MCP servers…",
+  "Finetuning the details…",
+  "Polishing the figures…",
+  "Reading the paper…",
+  "Running the numbers again…",
+  "\u201CAll models are wrong, but some are useful.\u201D \u2014 G.E.P. Box",
+  "\u201CE pur si muove.\u201D \u2014 Galileo",
+  "\u201CThe important thing is not to stop questioning.\u201D \u2014 Einstein",
+  "\u201CIt is not knowledge, but the act of learning.\u201D \u2014 Cato",
+];
+let busyPhraseTimer = null;
+const busyPhraseEl = document.createElement("span");
+busyPhraseEl.className = "busy-phrase";
+busyPhraseEl.title = "Work in progress";
+
+function startBusyPhrases(active) {
+  clearInterval(busyPhraseTimer);
+  busyPhraseTimer = null;
+  if (active) {
+    busyPhraseEl.textContent = " · " + WIP_PHRASES[0];
+    busyPhraseTimer = setInterval(() => {
+      busyPhraseEl.textContent = " · " + WIP_PHRASES[Math.floor(Math.random() * WIP_PHRASES.length)];
+    }, 6000);
+  } else {
+    busyPhraseEl.textContent = "";
+  }
+}
+
+function setBusyStatus(p) {
   const el = $("busy-status");
   if (!el) return;
-  el.textContent = txt || "";
-  el.classList.toggle("working", !!txt);
+  // Legacy plain-message status ("Agent is thinking…", "").
+  if (typeof p === "string" || (p && !p.phase)) {
+    const txt = typeof p === "string" ? p : p.message || "";
+    el.innerHTML = txt ? esc(txt) : "";
+    el.appendChild(busyPhraseEl);
+    el.classList.toggle("working", !!txt);
+    startBusyPhrases(!!txt);
+    return;
+  }
+  // Rich structured status: agent · model · tool · MCP · skills · workflow.
+  const parts = [];
+  const who = [p.agent, p.model].filter(Boolean).join(" · ");
+  if (who) parts.push(`<span class="bs-who">${esc(who)}</span>`);
+  if (p.phase === "starting") parts.push(`<span class="bs-chip">starting…</span>`);
+  if (p.tool) {
+    const m = p.mcp ? `<span class="bs-mcp">MCP ${esc(p.mcp)}</span>` : "";
+    parts.push(`<span class="bs-chip bs-tool" title="Tool">${m}<span class="bs-toolname">${esc(p.tool)}</span></span>`);
+  }
+  if (p.skills && p.skills.length) {
+    parts.push(`<span class="bs-chip bs-skill" title="Skills">📚 ${esc(p.skills.map((s) => String(s).replace(/_/g, " ")).join(", "))}</span>`);
+  }
+  if (p.workflow) parts.push(`<span class="bs-chip bs-wf" title="Workflow">${esc(p.workflow)}</span>`);
+  const html = parts.join(" ");
+  el.innerHTML = html;
+  el.appendChild(busyPhraseEl);
+  el.classList.toggle("working", !!html);
+  startBusyPhrases(!!html);
 }
 
 function send(obj) {
@@ -167,7 +226,7 @@ function handleEvent(type, p) {
       renderReview(state._lastFindings, state._lastSuggestions);
       break;
     case "notice": toast(p.message, 6000); break;
-    case "status": setBusyStatus(p.message); break;
+    case "status": setBusyStatus(p); break;
     case "workflow": renderWorkflow(p); break;
     case "done": onTurnDone(); loadExperiments(); break;
     case "error": onError(p.message); break;
@@ -306,7 +365,14 @@ function renderWorkflow(snap) {
 async function loadWorkflow() {
   try {
     const r = await api(`/api/projects/${state.project}/workflow`);
-    renderWorkflow(r.workflow);
+    const wf = r.workflow;
+    // A completed pipeline shouldn't resurrect its progress overlay on every
+    // page load; only an active one (running / waiting on approval) is shown.
+    if (wf && (wf.status === "done" || wf.status === "failed")) {
+      $("workflow-panel").classList.add("hidden");
+      return;
+    }
+    renderWorkflow(wf);
   } catch (e) { /* silent */ }
 }
 
@@ -1882,10 +1948,11 @@ function switchMainView(view) {
   $("chat-panel").classList.toggle("hidden", view !== "chat");
   $("exp-panel").classList.toggle("hidden", view !== "experiments");
   $("agent-panel").classList.toggle("hidden", view !== "agent");
+  $("editor-panel").classList.toggle("hidden", view !== "editor");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
   const app = document.getElementById("app");
-  if (view === "experiments" || view === "agent") {
+  if (view === "experiments" || view === "agent" || view === "editor") {
     // maximize width: collapse the side panel for the expanded views
     if (state._sideBefore == null)
       state._sideBefore = app.classList.contains("side-collapsed");
@@ -1896,6 +1963,37 @@ function switchMainView(view) {
   }
   if (view === "experiments") loadExperiments();
   if (view === "agent") loadAgent();
+  if (view === "editor") loadEditor();
+}
+
+/* ============================ editor (VS Code) ============================= */
+
+async function loadEditor() {
+  const status = $("editor-status");
+  try {
+    const r = await api("/api/editor");
+    const ed = (r && r.editor) || {};
+    const url = (ed.url || "").replace(/\/+$/, "");
+    const frame = $("editor-frame");
+    const fallback = $("editor-fallback");
+    const openNew = $("editor-open-new");
+    if (!ed.enabled) {
+      status.textContent = "editor disabled (FOX_EDITOR_ENABLED=0)";
+      fallback.classList.remove("hidden");
+      frame.classList.add("hidden");
+      $("editor-fallback-link").href = "#";
+      return;
+    }
+    openNew.href = url;
+    $("editor-fallback-link").href = url;
+    frame.src = url + "/?folder=" + encodeURIComponent(ed.folder || "");
+    status.textContent = ed.reachable ? "connected" : "code-server unreachable — start it with `docker compose up -d code-server`";
+    if (!ed.reachable) fallback.classList.remove("hidden");
+    else fallback.classList.add("hidden");
+    frame.classList.toggle("hidden", !ed.reachable);
+  } catch (e) {
+    status.textContent = "failed to load editor config";
+  }
 }
 
 /* ============================ agent dashboard ============================= */
@@ -2195,6 +2293,8 @@ bindExpView("main");
 $("mainview-chat").addEventListener("click", () => switchMainView("chat"));
 $("mainview-experiments").addEventListener("click", () => switchMainView("experiments"));
 $("mainview-agent").addEventListener("click", () => switchMainView("agent"));
+$("mainview-editor").addEventListener("click", () => switchMainView("editor"));
+$("editor-refresh").addEventListener("click", loadEditor);
 
 /* ============================ notebooks =================================== */
 

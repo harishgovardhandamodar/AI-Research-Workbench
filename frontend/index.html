@@ -27,6 +27,7 @@
         <button id="mainview-chat" class="mainview-btn active" data-mainview="chat">Chat</button>
         <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments">Experiments</button>
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent">Agent</button>
+        <button id="mainview-editor" class="mainview-btn" data-mainview="editor">Editor</button>
       </div>
       <select id="project-select" title="Project"></select>
       <button id="new-project-btn" class="btn subtle" title="New project">+</button>
@@ -108,6 +109,27 @@
         <button id="agent-refresh" class="btn subtle small">Refresh</button>
       </div>
       <div id="agent-body" class="agent-body"></div>
+    </section>
+
+    <section id="editor-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">VS Code — edit generated content</span>
+        <span id="editor-status" class="muted exp-hint"></span>
+        <span class="spacer"></span>
+        <a id="editor-open-new" class="btn subtle small" target="_blank" rel="noopener">Open in new tab</a>
+        <button id="editor-refresh" class="btn subtle small">Refresh</button>
+      </div>
+      <div id="editor-frame-wrap" class="editor-frame-wrap">
+        <div id="editor-fallback" class="hidden editor-fallback">
+          <div class="editor-fallback-inner">
+            <div class="big">🦊</div>
+            <p><b>VS Code editor is not reachable.</b></p>
+            <p class="muted">Start it with <code>docker compose up -d code-server</code> (or <code>docker compose up -d</code>), then refresh.</p>
+            <a id="editor-fallback-link" class="btn primary" target="_blank" rel="noopener">Try opening in a new tab</a>
+          </div>
+        </div>
+        <iframe id="editor-frame" title="VS Code editor"></iframe>
+      </div>
     </section>
 
     <section id="chat-panel">
@@ -357,7 +379,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v28";
+  window.FOX_VER = "v31";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

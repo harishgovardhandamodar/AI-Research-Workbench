@@ -61,9 +61,11 @@ class TestCoordinatorLoop(unittest.IsolatedAsyncioTestCase):
                                permissions=PermissionManager(self.store))
         self.emitted = []
         self.recorded = None
+        self.emitted_payloads = []
 
     async def _emit(self, t: str, p: dict):
         self.emitted.append(t)
+        self.emitted_payloads.append((t, p))
 
     async def test_tool_loop_runs_tool_and_records_run(self):
         coordinator = Coordinator(FakeLLM(), self.ctx, emit=self._emit,
@@ -86,6 +88,25 @@ class TestCoordinatorLoop(unittest.IsolatedAsyncioTestCase):
     def _set_record(self, r: dict):
         self.recorded = r
         return 1
+
+    async def test_rich_status_payloads(self):
+        coordinator = Coordinator(FakeLLM(), self.ctx, emit=self._emit,
+                                  persist=lambda r, c, m: None,
+                                  record=lambda r: self._set_record(r),
+                                  max_iters=4, mcp=None)
+        await coordinator.run_turn([
+            {"role": "user", "content": "run the experiment"},
+        ])
+        statuses = [p for t, p in self.emitted_payloads if t == "status"]
+        self.assertTrue(statuses, "coordinator should emit status events")
+        self.assertEqual(statuses[0]["phase"], "starting")
+        self.assertEqual(statuses[0]["agent"], "Fox")
+        self.assertIn("model", statuses[0])
+        tool_status = next((p for p in statuses if p.get("phase") == "tool"), None)
+        self.assertIsNotNone(tool_status)
+        self.assertEqual(tool_status["tool"], "run_python")
+        self.assertEqual(tool_status["mcp"], "")
+        self.assertIn("skills", tool_status)
 
     async def test_tool_failure_records_error_status(self):
         def boom_tool(code):

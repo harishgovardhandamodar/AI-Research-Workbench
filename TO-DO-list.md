@@ -103,6 +103,9 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T17 · Persistent R kernel** (or document limitation in UI).
 - [x] **T18 · Replace brittle keyword intents** with an LLM intent classifier or
   explicit UI buttons.
+- [x] **T19 · In-browser VS Code editor** — `code-server` sidecar shares the
+  workbench volume; new **Editor** tab iframes it; agent `editor__*` tools
+  (list/read/edit/open) drive the workflow over generated content.
 
 ---
 

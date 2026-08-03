@@ -13,8 +13,10 @@ import dataclasses
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .. import editor as editor_cfg
 from ..artifacts.store import Artifact, ArtifactStore
 from ..experiments import record_experiment
 from ..kernels.manager import KernelManager
@@ -153,6 +155,79 @@ TOOL_SCHEMAS: list[dict] = [
                     "code": {"type": "string", "description": "Initial Python code for the first code cell"},
                 },
                 "required": ["name", "code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__list_files",
+            "description": (
+                "List the files in this project's workspace (the folder the in-browser "
+                "VS Code editor shows): artifacts, notebooks, knowledge_graphs, project "
+                "files. Use before reading/editing so paths are exact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "Relative folder to list (default '.')"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__read_file",
+            "description": (
+                "Read a generated-content file (report, notebook, knowledge-graph JSON, "
+                "project file) in the VS Code workspace. Returns the text (capped)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path, e.g. 'artifacts/1_report.md'"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__edit_file",
+            "description": (
+                "Apply a text replacement to a file in the VS Code workspace so generated "
+                "content can be fixed/improved in place. The exact `old` text must appear "
+                "exactly once. Writes require user approval."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path of the file to edit"},
+                    "old": {"type": "string", "description": "Exact existing text to replace"},
+                    "new": {"type": "string", "description": "Replacement text"},
+                },
+                "required": ["path", "old", "new"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__open",
+            "description": (
+                "Open the in-browser VS Code editor at this project's workspace (optionally "
+                "on a specific file), e.g. to let the user review or continue editing "
+                "generated content by hand."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "Optional relative file/folder to focus, e.g. 'artifacts/1_report.md'"},
+                },
             },
         },
     },
@@ -357,6 +432,107 @@ async def _create_notebook(ctx: ToolContext, name: str, code: str) -> str:
             f"a title cell and one code cell. Run it with the run_notebook tool.")
 
 
+# ------------------------------------------------------------- editor tools --
+# The in-browser VS Code (code-server) works on the same volume as the workbench
+# projects, so the agent's editor__* tools operate on the same generated content
+# the user sees in the Editor tab.
+
+def _editor_root(ctx: ToolContext) -> Path:
+    return Path(ctx.artifacts.project_dir)
+
+
+def _editor_safe(ctx: ToolContext, rel: str) -> Path | None:
+    root = _editor_root(ctx).resolve()
+    p = (root / rel).resolve()
+    if p != root and root not in p.parents:
+        return None
+    return p
+
+
+async def _editor_list_files(ctx: ToolContext, path: str = ".") -> str:
+    base = _editor_safe(ctx, path)
+    if base is None or not base.is_dir():
+        return f"[error] not a valid workspace folder: {path}"
+    skip = {"workbench.db", "workbench.db-wal", "workbench.db-shm"}
+    lines = []
+    for p in sorted(base.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.name in skip:
+            continue
+        rel = p.relative_to(_editor_root(ctx))
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        lines.append(f"{rel} ({size} B)")
+    if not lines:
+        return "(workspace has no files yet)"
+    head = f"Workspace files under '{path}' ({len(lines)}):"
+    return "\n".join([head] + lines)[:50_000]
+
+
+async def _editor_read_file(ctx: ToolContext, path: str) -> str:
+    p = _editor_safe(ctx, path)
+    if p is None or not p.is_file():
+        return f"[error] file not found in workspace: {path}"
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"[error] could not read {path}: {e}"
+    if len(text) > 40_000:
+        text = text[:40_000] + "\n…[truncated]"
+    return f"--- {path} ---\n{text}"
+
+
+async def _editor_edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
+    p = _editor_safe(ctx, path)
+    if p is None or not p.is_file():
+        return f"[error] file not found in workspace: {path}"
+    decision = ctx.permissions.check("editor_edit_file", path)
+    if decision == "deny":
+        return "[denied] Editing this file is blocked by the permission policy."
+    if decision == "ask":
+        if ctx.approval is None:
+            return "[denied] This edit requires approval but no approval channel is available."
+        ok, temporary = await ctx.approval.request(
+            "editor_edit_file", path, f"Apply an edit to {path} in the VS Code workspace")
+        if not ok:
+            return "[denied by user]"
+        if not temporary:
+            ctx.permissions.record("editor_edit_file", path, "allow")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as e:
+        return f"[error] could not read {path}: {e}"
+    count = text.count(old)
+    if count == 0:
+        return f"[error] the `old` text was not found in {path} (0 matches)."
+    if count > 1:
+        return f"[error] the `old` text matches {count} times; make it more specific."
+    try:
+        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+    except OSError as e:
+        return f"[error] could not write {path}: {e}"
+    return (f"Edited {path}: replaced 1 occurrence "
+            f"(removed {len(old)} chars, added {len(new)} chars). "
+            f"The change is visible in the Editor tab.")
+
+
+async def _editor_open(ctx: ToolContext, path: str | None = None) -> str:
+    base = editor_cfg.editor_url().rstrip("/")
+    folder = editor_cfg.editor_folder()
+    url = f"{base}/?folder={folder}"
+    if path:
+        safe = _editor_safe(ctx, path)
+        if safe is None or not safe.exists():
+            return f"[error] file not found in workspace: {path}"
+        url = f"{base}/?folder={folder}#{path}"
+    return (f"Open the in-browser VS Code editor to edit generated content: {url}\n"
+            f"(Also available via the 'Editor' tab in the top bar. If it shows a login, "
+            f"the code-server password is the one set by CODE_SERVER_PASSWORD.)")
+
+
 def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
     return {
         "run_python": lambda code: _run_python(ctx, code),
@@ -367,4 +543,8 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "list_kernel_variables": lambda: _list_vars(ctx),
         "run_notebook": lambda notebook, cells="all": _run_notebook(ctx, notebook, cells),
         "create_notebook": lambda name, code="": _create_notebook(ctx, name, code),
+        "editor__list_files": lambda path=".": _editor_list_files(ctx, path),
+        "editor__read_file": lambda path: _editor_read_file(ctx, path),
+        "editor__edit_file": lambda path, old, new: _editor_edit_file(ctx, path, old, new),
+        "editor__open": lambda path=None: _editor_open(ctx, path),
     }
