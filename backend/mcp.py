@@ -38,6 +38,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "robustness",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/robustness_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
