@@ -113,6 +113,14 @@ Claude, Cursor or VS Code could use.
   `docs/PRIVACY-MCP.md`. A privacy workflow (peer-in-distribution exploitation →
   red-team corner cases → DP robustness → audit trail) auto-runs when you ask
   for it in chat — reports and figures land in the Artifacts panel.
+- A built-in **`mcp_servers/robustness_tools.py`** server evaluates adversarial
+  robustness (ART FGSM/PGD on sklearn, robustness metrics, checklist, simple
+  FGSM perturbation) — see `docs/Add_MCP_adversarial_robustness_evaluation.md`.
+- A built-in **`mcp_servers/arxiv_replication.py`** server turns an arXiv paper
+  into a research workflow: ingest (metadata + PDF), summarize, structured
+  notes, experiment spec, result comparison, a provenance-linked replication
+  report, and a queryable **knowledge graph** (Paper/Author/Method/Dataset/
+  Metric/Experiment/Claim) that can be merged across papers (`arxiv__*` tools).
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may

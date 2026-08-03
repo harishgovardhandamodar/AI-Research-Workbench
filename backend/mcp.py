@@ -46,6 +46,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "arxiv",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/arxiv_replication.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
