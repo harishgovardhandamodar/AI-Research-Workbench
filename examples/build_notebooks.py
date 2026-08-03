@@ -796,6 +796,129 @@ NOTEBOOKS = {
             "sys.path.insert(0, str(Path.cwd()))\n\n"
             "exec(open('examples/privacy/run_peer_exploitation.py').read())"),
     ],
+
+    # ------------------------------------------------ ADVERSARIAL ROBUSTNESS --
+    "24_adversarial_swift_robustness": [
+        (M, "# Adversarial robustness — SWIFT payments\n\nBuild a binary "
+            "classifier (URGENCY vs not) on synthetic SWIFT transaction data "
+            "from the obfuscation-study generator, then attack it with an "
+            "FGSM-style gradient perturbation and measure robust accuracy / "
+            "ASR across perturbation budgets."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))\n\n"
+            "import pandas as pd\n"
+            "from examples.adversarial import swift_binary_dataset, train_test, train, robustness_sweep\n"
+            "from mcp_servers import robustness_tools as rt\n\n"
+            "X, y, feats, target = swift_binary_dataset(2000, seed=42)\n"
+            "Xtr, Xte, ytr, yte = train_test(X, y)\n"
+            "print('features:', feats, '| target:', target)\n"
+            "print('train/test:', Xtr.shape[0], '/', Xte.shape[0])"),
+        (C, "model = train('lr', Xtr, ytr)\n"
+            "clean = model.predict(Xte)\n"
+            "print('clean accuracy: %.3f' % (clean == yte).mean())\n"
+            "print(rt.adversarial_robustness_checklist('sklearn', 'tabular', high_stakes=False))"),
+        (C, "epsilons = [0.0, 0.1, 0.25, 0.5, 1.0, 2.0]\n"
+            "rows = robustness_sweep(model, Xte, yte, epsilons)\n"
+            "df = pd.DataFrame(rows)\n"
+            "print(df.to_string(index=False))\n\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, ax = plt.subplots(figsize=(7, 4))\n"
+            "ax.plot(df['eps'], df['clean_accuracy'], 'o-', label='clean accuracy', color='#4f8cff')\n"
+            "ax.plot(df['eps'], df['robust_accuracy'], 'o-', label='robust accuracy', color='#e05b5b')\n"
+            "ax.plot(df['eps'], df['asr'], 'o--', label='ASR (on correct)', color='#d9a441')\n"
+            "ax.set_xlabel('perturbation budget eps'); ax.set_ylabel('accuracy')\n"
+            "ax.legend(); ax.set_title('SWIFT classifier — robustness vs eps')\n"
+            "ax.grid(alpha=0.3)"),
+    ],
+
+    "25_adversarial_clinical_robustness": [
+        (M, "# Adversarial robustness — clinical cohort\n\nRun the same "
+            "robustness battery on the small clinical cohort (insurance "
+            "prediction). n is small so the numbers are noisy — that is the "
+            "point of this test."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))\n\n"
+            "import pandas as pd\n"
+            "from examples.adversarial import clinical_binary_dataset, train_test, train, robustness_sweep\n\n"
+            "X, y, feats, target = clinical_binary_dataset(300, seed=7)\n"
+            "Xtr, Xte, ytr, yte = train_test(X, y)\n"
+            "print('features:', feats, '| target:', target)\n"
+            "print('train/test:', Xtr.shape[0], '/', Xte.shape[0])\n"
+            "print('class balance: %.2f' % y.mean())"),
+        (C, "model = train('mlp', Xtr, ytr)\n"
+            "print('clean accuracy: %.3f' % (model.predict(Xte) == yte).mean())\n"
+            "epsilons = [0.0, 0.1, 0.25, 0.5, 1.0]\n"
+            "df = pd.DataFrame(robustness_sweep(model, Xte, yte, epsilons))\n"
+            "print(df.to_string(index=False))\n\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, ax = plt.subplots(figsize=(7, 4))\n"
+            "ax.plot(df['eps'], df['clean_accuracy'], 'o-', label='clean accuracy', color='#4f8cff')\n"
+            "ax.plot(df['eps'], df['robust_accuracy'], 'o-', label='robust accuracy', color='#e05b5b')\n"
+            "ax.plot(df['eps'], df['asr'], 'o--', label='ASR (on correct)', color='#d9a441')\n"
+            "ax.set_xlabel('perturbation budget eps'); ax.set_ylabel('accuracy')\n"
+            "ax.legend(); ax.set_title('Clinical cohort — robustness vs eps (small n)')\n"
+            "ax.grid(alpha=0.3)"),
+    ],
+
+    "26_adversarial_model_comparison": [
+        (M, "# Model comparison under attack\n\nTrain logistic regression, "
+            "random forest and a small MLP on the same SWIFT dataset and "
+            "compare clean vs robust accuracy and ASR at a fixed epsilon."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))\n\n"
+            "import pandas as pd\n"
+            "from examples.adversarial import swift_binary_dataset, train_test, train, evaluate_robustness\n\n"
+            "X, y, feats, target = swift_binary_dataset(2000, seed=42)\n"
+            "Xtr, Xte, ytr, yte = train_test(X, y)\n"
+            "EPS = 0.5\n"
+            "rows = []\n"
+            "models = {}\n"
+            "for name in ['lr', 'rf', 'mlp']:\n"
+            "    m = train(name, Xtr, ytr)\n"
+            "    models[name] = m\n"
+            "    r = evaluate_robustness(m, Xte, yte, EPS)\n"
+            "    rows.append({'model': name.upper(), 'clean_acc': r['clean_accuracy'],\n"
+            "                 'robust_acc': r['robust_accuracy'], 'asr': r['attack_success_rate_on_correct']})\n"
+            "df = pd.DataFrame(rows)\n"
+            "print(df.to_string(index=False))"),
+        (C, "import matplotlib.pyplot as plt\n"
+            "x = range(len(df))\n"
+            "fig, ax = plt.subplots(figsize=(7.5, 4))\n"
+            "ax.bar([i - 0.2 for i in x], df['clean_acc'], width=0.4, label='clean accuracy', color='#4f8cff')\n"
+            "ax.bar([i + 0.2 for i in x], df['robust_acc'], width=0.4, label=f'robust accuracy (eps={EPS})', color='#e05b5b')\n"
+            "ax.set_xticks(list(x)); ax.set_xticklabels(df['model'])\n"
+            "ax.set_ylabel('accuracy'); ax.legend()\n"
+            "ax.set_title('Robustness by model family (SWIFT URGENCY task)')\n"
+            "for i, r in enumerate(df['asr']):\n"
+            "    ax.text(i + 0.2, 0.02, 'ASR %.0f%%' % (r * 100), fontsize=8, ha='center')\n"
+            "ax.grid(alpha=0.3, axis='y')"),
+    ],
+
+    "27_adversarial_fgsm_art": [
+        (M, "# FGSM demo + ART evaluation\n\nApply the lightweight "
+            "`robustness__simple_fgsm_perturbation` to a single feature vector, "
+            "then attempt the full ART `robustness__evaluate_sklearn_robustness` "
+            "(requires adversarial-robustness-toolbox)."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))\n\n"
+            "import joblib, numpy as np\n"
+            "from examples.adversarial import swift_binary_dataset, train_test, train, fgsm_grad\n"
+            "from mcp_servers import robustness_tools as rt\n\n"
+            "X, y, feats, target = swift_binary_dataset(1000, seed=42)\n"
+            "Xtr, Xte, ytr, yte = train_test(X, y)\n"
+            "m = train('lr', Xtr, ytr)\n"
+            "joblib.dump(m, 'examples/adversarial/swift_lr.joblib')\n"
+            "np.save('examples/adversarial/X_test.npy', Xte)\n"
+            "np.save('examples/adversarial/y_test.npy', yte)\n"
+            "print('saved model + test arrays under examples/adversarial/')"),
+        (C, "g = fgsm_grad(m, Xte[:1], yte[:1])[0]\n"
+            "print(rt.simple_fgsm_perturbation(Xte[0].tolist(), g.tolist(), eps=0.5))"),
+        (C, "print(rt.evaluate_sklearn_robustness(\n"
+            "    'examples/adversarial/swift_lr.joblib',\n"
+            "    'examples/adversarial/X_test.npy',\n"
+            "    'examples/adversarial/y_test.npy',\n"
+            "    attack='ProjectedGradientDescent', eps=0.5, norm='inf'))"),
+    ],
 }
 
 
