@@ -504,6 +504,20 @@ async def project_workflow_history(name: str):
     return {"workflow_runs": get_runtime(name).store.list_workflow_runs()}
 
 
+@app.get("/api/projects/{name}/runs")
+async def project_runs(name: str, limit: int = 50):
+    """Every agent turn recorded as a run (traceability)."""
+    return {"runs": get_runtime(name).store.list_runs(limit)}
+
+
+@app.get("/api/projects/{name}/runs/{rid}")
+async def project_run(name: str, rid: int):
+    run = get_runtime(name).store.get_run(rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"run": run}
+
+
 @app.get("/api/projects/{name}/artifacts")
 async def list_artifacts(name: str):
     return {"artifacts": get_runtime(name).artifacts.list()}
@@ -1073,6 +1087,15 @@ async def ws_chat(ws: WebSocket, name: str):
     broker = ApprovalBroker(emit)
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
+                              record=lambda r: rt.store.add_run(
+                                  prompt=r.get("prompt", ""),
+                                  reply=r.get("reply", ""),
+                                  status=r.get("status", "done"),
+                                  started_at=r.get("started_at", 0.0),
+                                  finished_at=r.get("finished_at", time.time()),
+                                  tool_sequence=r.get("tool_sequence"),
+                                  artifact_ids=r.get("artifact_ids"),
+                                  review=r.get("review")),
                               max_iters=rt.max_iters, mcp=mcp_registry)
 
     async def handle_turn(text: str):

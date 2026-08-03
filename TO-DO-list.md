@@ -29,7 +29,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 
 ## Phase 1 — Traceability foundation (highest impact)
 
-- [ ] **T1 · Workflow persistence + always-visible idle panel**
+- [x] **T1 · Workflow persistence + always-visible idle panel**
   - `WorkflowTracker` gains `persist`/`record` callbacks; snapshots saved to
     SQLite every broadcast; `finish()` archives a run to `workflow_runs`.
   - Runtime wires `persist`→`store.set_setting("workflow_latest", …)` and
@@ -38,7 +38,7 @@ Branch: `agentic-experimentation` (base `8344264`).
   - Frontend: panel always visible, shows idle state instead of hiding.
   - Verify: backend unit test, `curl` endpoints, chromium panel test, WS e2e.
 
-- [ ] **T2 · Runs table: record every agent turn as a run**
+- [x] **T2 · Runs table: record every agent turn as a run**
   - New `runs` SQLite table (id, prompt, reply, started/finished, status,
     tool_sequence JSON, metrics JSON, artifact_ids, reviewer JSON).
   - Coordinator turn records a run row on completion (and on failure/exception).

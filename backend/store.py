@@ -43,6 +43,13 @@ class ProjectStore:
                 started_at REAL, finished_at REAL,
                 title TEXT, status TEXT, pct REAL, stages TEXT)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT, reply TEXT, status TEXT,
+                started_at REAL, finished_at REAL,
+                tool_sequence TEXT, artifact_ids TEXT, review TEXT)"""
+        )
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -132,3 +139,53 @@ class ProjectStore:
                         "finished_at": r["finished_at"], "title": r["title"],
                         "status": r["status"], "pct": r["pct"], "stages": stages})
         return out
+
+    # -- agent runs (every completed agent turn, for traceability) ---------
+    def add_run(self, prompt: str, reply: str, status: str,
+                started_at: float, finished_at: float,
+                tool_sequence: list | None = None,
+                artifact_ids: list | None = None,
+                review: dict | None = None) -> int:
+        """Persist one agent turn as a run row (prompt → reply → tool trail)."""
+        cur = self._conn.execute(
+            "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
+            " tool_sequence, artifact_ids, review) VALUES (?,?,?,?,?,?,?,?)",
+            (prompt, reply, status, started_at, finished_at,
+             json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
+             json.dumps(review or {})))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in reversed(rows):
+            out.append(self._row_run(r))
+        return out
+
+    def get_run(self, rid: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
+        return self._row_run(row) if row else None
+
+    def update_run_review(self, rid: int, review: dict):
+        self._conn.execute(
+            "UPDATE runs SET review=? WHERE id=?",
+            (json.dumps(review), rid))
+        self._conn.commit()
+
+    def _row_run(self, r) -> dict:
+        return {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],
+                "status": r["status"], "started_at": r["started_at"],
+                "finished_at": r["finished_at"],
+                "tool_sequence": _jload(r["tool_sequence"], []),
+                "artifact_ids": _jload(r["artifact_ids"], []),
+                "review": _jload(r["review"], {})}
+
+
+def _jload(raw: str | None, default):
+    try:
+        return json.loads(raw or "null") or default
+    except json.JSONDecodeError:
+        return default

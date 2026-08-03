@@ -5,6 +5,8 @@ emitting streaming events to the client."""
 from __future__ import annotations
 
 import json
+import re
+import time
 from typing import Awaitable, Callable
 
 from ..llm import LLMClient
@@ -84,6 +86,10 @@ run_python by exec'ing that file, then summarize the stage 1-3 findings.
 """
 
 
+async def _noop_emit(event: str, payload: dict):
+    return None
+
+
 def parse_tool_call_json(content: str, tools: dict) -> tuple | None:
     """Try to interpret assistant text as a JSON tool call.
 
@@ -118,15 +124,20 @@ class Coordinator:
     def __init__(self, llm: LLMClient, ctx: ToolContext,
                  emit: Callable[[str, dict], Awaitable[None]] | None = None,
                  persist: Callable[[str, str, dict], None] | None = None,
+                 record: Callable[[dict], int] | None = None,
                  max_iters: int = 8, mcp=None):
         self.llm = llm
         self.ctx = ctx
-        self.emit = emit or (lambda t, p: None)
+        self.emit = emit or _noop_emit
         self.persist = persist or (lambda r, c, m: None)
+        self.record = record or (lambda r: None)
         self.max_iters = max_iters
         self.mcp = mcp
         self.tools = build_tools(ctx)
         self._mcp_loaded = False
+        self._run_seq: list[dict] = []
+        self._run_artifacts: list[str] = []
+        self._run_started = 0.0
 
     async def _ensure_mcp(self):
         """Merge MCP server tools into the tool set (lazy, once)."""
@@ -146,80 +157,140 @@ class Coordinator:
     async def run_turn(self, messages: list[dict]) -> dict:
         """Run one agent turn over `messages` (already ending with the user message).
 
-        Intermediate assistant/tool messages are persisted via `persist`.
+        Intermediate assistant/tool messages are persisted via `persist`. When the
+        turn completes, a run record (prompt → tool trail → reply) is emitted via
+        `record` so every agent turn is traceable.
         Returns {"text": final assistant text}."""
         await self._ensure_mcp()
         tools = get_tool_schemas() + list(getattr(self, "_mcp_schemas", []) or [])
         workflow = getattr(self.ctx, "workflow", None)
-        for _ in range(self.max_iters):
-            full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
-            tcs = full.get("tool_calls")
-            if not tcs:
-                # Rescue: some local models emit a tool call as JSON text instead of
-                # a structured tool_calls chunk. Parse it if it clearly matches.
-                rescued = parse_tool_call_json(full.get("content", ""), self.tools)
-                if rescued is not None:
-                    name, args = rescued
-                    tcs = [{"id": "rescue", "type": "function",
-                            "function": {"name": name, "arguments": args}}]
-                    full = {"role": "assistant", "content": "", "tool_calls": tcs}
-            if not tcs:
-                if workflow is not None:
-                    await workflow.finish()
-                return {"text": full.get("content", "")}
-
-            assistant_msg = {
-                "role": "assistant",
-                "content": full.get("content", "") or "",
-                "tool_calls": [
-                    {"id": tc["id"], "type": "function",
-                     "function": {"name": tc["function"]["name"],
-                                  "arguments": json.dumps(tc["function"]["arguments"])}}
-                    for tc in full["tool_calls"] if tc.get("function")
-                ],
-            }
-            messages.append(assistant_msg)
-            self.persist("assistant", assistant_msg["content"],
-                         {"tool_calls": assistant_msg["tool_calls"]})
-
-            for tc in full["tool_calls"]:
-                fn = tc.get("function") or {}
-                name = fn.get("name", "")
-                args = fn.get("arguments", {}) or {}
-                if name not in self.tools:
-                    result = f"[error] unknown tool: {name}"
-                    ok = False
-                else:
-                    await self.emit("tool_start", {"id": tc.get("id"), "name": name,
-                                                   "args": args, "ok": True})
+        self._run_seq = []
+        self._run_artifacts = []
+        self._run_started = time.time()
+        status = "done"
+        text = ""
+        try:
+            for _ in range(self.max_iters):
+                full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
+                tcs = full.get("tool_calls")
+                if not tcs:
+                    # Rescue: some local models emit a tool call as JSON text instead
+                    # of a structured tool_calls chunk. Parse it if it clearly matches.
+                    rescued = parse_tool_call_json(full.get("content", ""), self.tools)
+                    if rescued is not None:
+                        name, args = rescued
+                        tcs = [{"id": "rescue", "type": "function",
+                                "function": {"name": name, "arguments": args}}]
+                        full = {"role": "assistant", "content": "", "tool_calls": tcs}
+                if not tcs:
                     if workflow is not None:
-                        await workflow.on_tool_start(name)
-                    try:
-                        if name == "run_shell":
-                            result = await self.tools[name](command=args.get("command", ""),
-                                                            timeout=args.get("timeout", 30))
-                        else:
-                            result = await self.tools[name](**args)
-                        ok = not result.startswith("[error]")
-                    except Exception as e:  # noqa: BLE001
-                        result = f"[error] {type(e).__name__}: {e}"
+                        await workflow.finish()
+                    text = full.get("content", "")
+                    return {"text": text}
+
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": full.get("content", "") or "",
+                    "tool_calls": [
+                        {"id": tc["id"], "type": "function",
+                         "function": {"name": tc["function"]["name"],
+                                      "arguments": json.dumps(tc["function"]["arguments"])}}
+                        for tc in full["tool_calls"] if tc.get("function")
+                    ],
+                }
+                messages.append(assistant_msg)
+                self.persist("assistant", assistant_msg["content"],
+                             {"tool_calls": assistant_msg["tool_calls"]})
+
+                for tc in full["tool_calls"]:
+                    fn = tc.get("function") or {}
+                    name = fn.get("name", "")
+                    args = fn.get("arguments", {}) or {}
+                    if name not in self.tools:
+                        result = f"[error] unknown tool: {name}"
                         ok = False
-                    if workflow is not None:
-                        await workflow.on_tool_end(name, ok)
-                    await self.emit("tool_result", {"id": tc.get("id"), "name": name,
-                                                    "output": result, "ok": ok})
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": result,
-                })
-                self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
+                    else:
+                        await self.emit("tool_start", {"id": tc.get("id"), "name": name,
+                                                       "args": args, "ok": True})
+                        if workflow is not None:
+                            await workflow.on_tool_start(name)
+                        try:
+                            if name == "run_shell":
+                                result = await self.tools[name](command=args.get("command", ""),
+                                                                timeout=args.get("timeout", 30))
+                            else:
+                                result = await self.tools[name](**args)
+                            ok = not result.startswith("[error]")
+                        except Exception as e:  # noqa: BLE001
+                            result = f"[error] {type(e).__name__}: {e}"
+                            ok = False
+                        if workflow is not None:
+                            await workflow.on_tool_end(name, ok)
+                        await self.emit("tool_result", {"id": tc.get("id"), "name": name,
+                                                        "output": result, "ok": ok})
+                    self._run_seq.append({
+                        "name": name, "ok": ok,
+                        "args": _snippet(args, 200),
+                        "result": _snippet(result, 300),
+                    })
+                    self._run_artifacts.extend(_artifact_ids(name, result))
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": result,
+                    })
+                    self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
 
-        if workflow is not None:
-            await workflow.finish()
-        return {"text": self._fallback()}
+            if workflow is not None:
+                await workflow.finish()
+            text = self._fallback()
+            return {"text": text}
+        except Exception:  # noqa: BLE001
+            status = "error"
+            if workflow is not None:
+                await workflow.finish()
+            raise
+        finally:
+            self._record_run(messages, status, text)
+
+    def _record_run(self, messages: list[dict], status: str, text: str) -> None:
+        prompt = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                prompt = m.get("content", "")
+                break
+        self.record({
+            "prompt": prompt,
+            "reply": text,
+            "status": status,
+            "started_at": self._run_started,
+            "finished_at": time.time(),
+            "tool_sequence": self._run_seq,
+            "artifact_ids": self._run_artifacts,
+        })
 
     @staticmethod
     def _fallback() -> str:
         return ("I hit the maximum number of tool steps for this turn and couldn't "
                 "finish. Let me know if you'd like me to continue or adjust the approach.")
+
+
+def _snippet(value, limit: int) -> str:
+    """Compact a tool-call argument or result to a bounded one-line snippet."""
+    s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    s = " ".join(s.split())
+    return s[:limit]
+
+
+def _artifact_ids(name: str, result: str) -> list[str]:
+    """Best-effort extraction of artifact ids from tool results."""
+    if not result or not isinstance(result, str):
+        return []
+    ids: list[str] = []
+    m = re.search(r"Saved artifact (\S+)", result)
+    if m:
+        ids.append(m.group(1))
+    m = re.search(r"Figures generated \(artifacts\):\s*([^\n]+)", result)
+    if m:
+        ids.extend(re.findall(r"\b[a-z0-9]{8}\b", m.group(1)))
+    return ids
