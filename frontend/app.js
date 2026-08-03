@@ -639,7 +639,14 @@ $("model-select").addEventListener("change", async (e) => {
   setTimeout(connect, 200);
 });
 $("settings-btn").addEventListener("click", openSettings);
-$("settings-close").addEventListener("click", () => $("settings-modal").classList.add("hidden"));
+$("print-btn").addEventListener("click", () => {
+  const h = $("print-header");
+  h.innerHTML = `<h1>Fox — AI Science Workbench · chat transcript</h1>`
+    + `<div>Project: <strong>${esc(state.project || "—")}</strong> · Model: `
+    + `<strong>${esc(state.config?.llm?.model || "—")}</strong> · Exported `
+    + new Date().toLocaleString() + "</div>";
+  window.print();
+});$("settings-close").addEventListener("click", () => $("settings-modal").classList.add("hidden"));
 $("cfg-save").addEventListener("click", saveSettings);
 $("cfg-test").addEventListener("click", testConnection);
 
