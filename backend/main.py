@@ -8,6 +8,7 @@ persistent Python kernel.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 import sys
@@ -643,13 +644,98 @@ def fresh_requested(text: str) -> bool:
 
 
 def compare_requested(text: str) -> bool:
-    """True when the prompt asks to compare results across workflow runs."""
+    """True when the user asks to COMPARE the privacy-workflow runs.
+
+    Only fires when there is a clear privacy-workflow context, so ordinary
+    requests like "compare how DP protects data" are NOT hijacked into the
+    privacy-run comparison.
+    """
     low = (text or "").lower()
     if not any(w in low for w in COMPARE_WORKFLOW_WORDS):
         return False
-    # Require some run/result context to avoid false positives on everyday chat.
-    return any(w in low for w in ("run", "result", "privacy", "workflow",
-                                  "experiment", "seed", "comparison"))
+    return any(w in low for w in (
+        "privacy run", "privacy workflow", "workflow run", "experiment run",
+        "results of the privacy", "results of the runs", "compare the runs",
+        "compare results", "compare the privacy", "run comparison"))
+
+
+# A "rerun" the researcher can trigger for a specific notebook:
+# e.g. "rerun with fresh results Run 26_adversarial_model_comparison".
+NOTEBOOK_RUN_WORDS = ["run", "rerun", "re-run", "execute"]
+FRESH_RERUN_WORDS = ["fresh", "rerun", "re-run", "new seed", "different results",
+                     "new results", "run again"]
+
+
+def match_notebook_run(text: str) -> tuple | None:
+    """Detect 'run/rerun <notebook>' intent. Returns (name, fresh) or None."""
+    low = (text or "").lower()
+    if not any(w in low for w in NOTEBOOK_RUN_WORDS):
+        return None
+    names = []
+    nb_dir = ROOT / "examples" / "notebooks"
+    if nb_dir.exists():
+        names = sorted((f.stem for f in nb_dir.glob("*.ipynb")), key=len, reverse=True)
+    found = next((n for n in names if n in low), None)
+    if not found:
+        return None
+    fresh = any(w in low for w in FRESH_RERUN_WORDS)
+    return found, fresh
+
+
+def has_analysis_intent(text: str) -> bool:
+    """True when the prompt asks for a parameterised deep analysis (seeds/DP)."""
+    low = (text or "").lower()
+    return any(w in low for w in ("seed", "epsilon", "differential privacy",
+                                  "protect", "compare how"))
+
+
+def _nb_artifact_cb(rt: ProjectRuntime, emit):
+    async def on_artifact(fig_b64: str, source: str):
+        env = await rt.kernels.get_env()
+        art = Artifact(kind="figure", name="notebook-figure",
+                       description="Figure produced by a notebook cell",
+                       code=source, env=env, message_id="")
+        rt.artifacts.add_artifact(art, data=base64.b64decode(fig_b64), data_type="png")
+        if emit:
+            try:
+                await emit("artifact", {"artifact": art.to_dict()})
+            except Exception:  # noqa: BLE001
+                pass
+        return art
+    return on_artifact
+
+
+async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
+                              fresh: bool) -> str:
+    """Execute a notebook (fresh seed when requested) and summarize the results."""
+    from .notebooks import NotebookError
+    svc = rt.notebooks
+    try:
+        svc.load(name)
+    except NotebookError as e:
+        return f"[error] {e}"
+    prelude = ""
+    if fresh:
+        import random as _r
+        prelude = f"import os; os.environ['FOX_RUN_SEED']='{_r.randint(1, 10**9)}'"
+    res = await svc.execute(name, on_artifact=_nb_artifact_cb(rt, emit), prelude=prelude)
+    nb = res["notebook"]
+    lines = [f"Executed **{name}**" + (" with a **fresh seed** (results differ)" if fresh
+                                       else "") + f" — {len(res['report'])} code cell(s)."]
+    for r in res["report"]:
+        if r["ok"]:
+            lines.append(f"- cell {r['index']}: ok" +
+                         (f" ({r['figures']} figure(s))" if r["figures"] else ""))
+        else:
+            lines.append(f"- cell {r['index']}: **FAILED** — {r['error'][:160]}")
+    outs = []
+    for c in nb.get("cells", []):
+        for o in (c.get("outputs") or []):
+            if o.get("output_type") == "stream":
+                outs.append("".join(o.get("text", [])))
+    if outs:
+        lines.append("\n```text\n" + "\n".join(outs)[-2500:] + "\n```")
+    return "\n".join(lines)
 
 
 # Meaningful tags shown on chat messages so experiments are recognisable at a
@@ -921,6 +1007,23 @@ async def ws_chat(ws: WebSocket, name: str):
                                                      "tags": message_tags("assistant", result)})
                     await emit("done", {})
                     return
+                nb = match_notebook_run(text)
+                if nb:
+                    name, fresh = nb
+                    result = await run_notebook_intent(rt, emit, name, fresh)
+                    tags = ["notebook", "fresh rerun" if fresh else "run"]
+                    amid = rt.store.add_message("assistant", result, {"tags": tags})
+                    await emit("assistant_message", {"id": amid, "content": result,
+                                                     "tags": tags})
+                    if has_analysis_intent(text):
+                        # The rerun result is already shown; also hand the deep
+                        # parameterised analysis (seeds / DP) to the agent.
+                        rt.store.add_message(
+                            "tool", result,
+                            {"name": "run_notebook", "tool_call_id": "notebook"})
+                    else:
+                        await emit("done", {})
+                        return
                 llm_msgs = rt.build_llm_messages()
                 result = await coordinator.run_turn(llm_msgs)
                 amid = rt.store.add_message(

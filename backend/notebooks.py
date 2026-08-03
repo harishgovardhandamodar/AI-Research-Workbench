@@ -209,8 +209,16 @@ class NotebookService:
 
     # -- execution ----------------------------------------------------------
     async def execute(self, name: str, indices: list[int] | None = None,
-                      on_artifact: ArtifactFn | None = None) -> dict:
+                      on_artifact: ArtifactFn | None = None,
+                      prelude: str = "") -> dict:
+        """Execute cells of a notebook.
+
+        `prelude` (optional) runs once in the kernel before the cells — used to
+        inject a fresh seed for reruns.
+        """
         nb = self.load(name)
+        if prelude and prelude.strip():
+            await self.kernel.run_code(prelude)
         meta = nb["metadata"].setdefault("fox", {})
         counter = meta.get("execution_count", 0)
         cells = nb["cells"]
