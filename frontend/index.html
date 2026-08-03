@@ -30,6 +30,8 @@
       </div>
       <select id="project-select" title="Project"></select>
       <button id="new-project-btn" class="btn subtle" title="New project">+</button>
+      <button id="fork-project-btn" class="btn subtle" title="Fork this project into a new session">⧉</button>
+      <button id="delete-project-btn" class="btn subtle" title="Delete this project">✕</button>
       <select id="model-select" title="Model"></select>
     </div>
     <div class="topbar-right">
@@ -318,7 +320,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v17";
+  window.FOX_VER = "v18";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

@@ -696,6 +696,8 @@ async function switchProject(name) {
   if (state.ws) state.ws.close();
   state.project = name;
   localStorage.setItem("fox.project", name);
+  const sel = $("project-select");
+  if (sel) sel.value = name;
   state.artifacts = [];
   $("messages").innerHTML = "";
   curAssistantEl = null;
@@ -846,6 +848,26 @@ $("new-project-btn").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 $("project-select").addEventListener("change", (e) => switchProject(e.target.value));
+$("fork-project-btn").addEventListener("click", async () => {
+  const name = prompt("Fork '" + state.project + "' as (new project name):", state.project + "-fork");
+  if (!name) return;
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/fork`,
+                        { method: "POST", body: JSON.stringify({ name }) });
+    await loadProjects();
+    await switchProject(r.name);
+    toast("Forked project as '" + r.name + "'");
+  } catch (e) { toast(e.message); }
+});
+$("delete-project-btn").addEventListener("click", async () => {
+  if (!confirm(`Delete project '${state.project}'? This removes its messages, runs, artifacts and files.`)) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(state.project)}`, { method: "DELETE" });
+    await loadProjects();
+    await switchProject(state.projects.length ? state.projects[0].name : "default");
+    toast("Project deleted");
+  } catch (e) { toast(e.message); }
+});
 $("model-select").addEventListener("change", async (e) => {
   const cfg = JSON.parse(JSON.stringify(state.config || {}));
   cfg.llm = cfg.llm || {};

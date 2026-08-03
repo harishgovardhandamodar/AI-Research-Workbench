@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -18,7 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,7 +36,7 @@ from .mcp import DEFAULT_SERVERS, MCPRegistry
 from .notebooks import NotebookError, NotebookService, new_notebook
 from .paths import CONFIG_PATH, FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import PermissionManager
-from .store import ProjectStore
+from .store import ProjectStore, close_project_db
 from .workflows import WorkflowTracker
 
 DEFAULT_CONFIG = {
@@ -501,6 +502,49 @@ async def create_project(body: dict):
     d.mkdir(parents=True, exist_ok=True)
     get_runtime(name)
     return {"name": name}
+
+
+def _valid_project_name(name: str) -> bool:
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+
+
+@app.delete("/api/projects/{name}")
+async def delete_project(name: str):
+    """Delete a project (session, artifacts, notebook files) and drop its runtime."""
+    if not _valid_project_name(name):
+        raise HTTPException(status_code=400, detail="invalid project name")
+    d = PROJECTS_DIR / name
+    if not d.is_dir():
+        raise HTTPException(status_code=404, detail="project not found")
+    rt = runtimes.pop(name, None)
+    if rt is not None:
+        try:
+            await rt.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    close_project_db(d)
+    shutil.rmtree(d, ignore_errors=True)
+    return {"deleted": name}
+
+
+@app.post("/api/projects/{name}/fork")
+async def fork_project(name: str, body: dict):
+    """Fork a project as a new session: snapshot of messages, runs, artifacts,
+    notebooks and files."""
+    src = PROJECTS_DIR / name
+    if not src.is_dir():
+        raise HTTPException(status_code=404, detail="project not found")
+    new_name = (body.get("name") or "").strip().replace("/", "_")
+    if not new_name:
+        new_name = f"{name}-fork"
+    if not _valid_project_name(new_name):
+        raise HTTPException(status_code=400, detail="invalid project name")
+    dst = PROJECTS_DIR / new_name
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="project already exists")
+    shutil.copytree(src, dst)
+    get_runtime(new_name)
+    return {"name": new_name}
 
 
 # -------------------------------------------------- REST: project state ------

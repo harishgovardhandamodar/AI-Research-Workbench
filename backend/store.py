@@ -31,6 +31,18 @@ def connect_project_db(project_dir: Path) -> sqlite3.Connection:
         return conn
 
 
+def close_project_db(project_dir: Path) -> None:
+    """Close and drop the cached connection for a project db (e.g. on delete)."""
+    key = str(Path(project_dir).resolve())
+    with _DB_CACHE_LOCK:
+        conn = _PROJECT_DB_CACHE.pop(key, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+
+
 class ProjectStore:
     def __init__(self, project_dir: Path):
         self.project_dir = project_dir
