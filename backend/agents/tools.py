@@ -11,9 +11,12 @@ import asyncio
 import base64
 import dataclasses
 import json
+import time
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from ..artifacts.store import Artifact, ArtifactStore
+from ..experiments import record_experiment
 from ..kernels.manager import KernelManager
 from ..notebooks import NotebookError, NotebookService
 from ..permissions import PermissionManager
@@ -255,20 +258,32 @@ async def _list_vars(ctx: ToolContext) -> str:
     return json.dumps(vars_, indent=2) if vars_ else "(kernel has no user variables)"
 
 
-def _notebook_artifact_cb(ctx: ToolContext):
-    async def on_artifact(fig_b64: str, source: str):
-        env = await ctx.kernels.get_env()
-        data = base64.b64decode(fig_b64)
-        art = Artifact(kind="figure",
-                       name="notebook-figure",
-                       description="Figure produced by a notebook cell",
-                       code=source, env=env,
-                       message_id=ctx.message_id, run_id=ctx.run_id)
-        ctx.artifacts.add_artifact(art, data=data, data_type="png")
-        if ctx.emit:
-            await ctx.emit("artifact", {"artifact": art.to_dict()})
-        return art
-    return on_artifact
+async def _notebook_metrics(ctx: ToolContext) -> dict:
+    """Best-effort numeric metrics from the last notebook execution.
+
+    Mirrors the chat-rerun path (run_notebook_intent): any structured result
+    the notebook helper exposed (e.g. clean/robust accuracy) plus a fallback
+    that pulls labelled numbers straight from the kernel.
+    """
+    metrics: dict = {}
+    try:
+        resp = await ctx.kernels.python.run_code(
+            "import json\n"
+            "try:\n"
+            "    from examples.adversarial import adversarial_data as _ad\n"
+            "    _d = getattr(_ad, 'LAST_RESULT', {}) or {}\n"
+            "except Exception:\n"
+            "    _d = {}\n"
+            "print(json.dumps(_d))")
+        out = (resp.get("output") or "").strip()
+        if out:
+            parsed = json.loads(out.splitlines()[-1])
+            if isinstance(parsed, dict):
+                metrics = {k: v for k, v in parsed.items()
+                           if isinstance(v, (int, float))}
+    except Exception:  # noqa: BLE001
+        pass
+    return metrics
 
 
 async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> str:
@@ -280,9 +295,24 @@ async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> 
             indices = [int(x) for x in cells.split(",") if x.strip()]
         except ValueError:
             return "[error] cells must be 'all' or comma-separated indices like '0,2'"
+    collected = []
+
+    async def on_artifact(fig_b64: str, source: str):
+        env = await ctx.kernels.get_env()
+        data = base64.b64decode(fig_b64)
+        art = Artifact(kind="figure", name="notebook-figure",
+                       description=f"Figure produced by notebook '{notebook}'",
+                       code=source, env=env,
+                       message_id=ctx.message_id, run_id=ctx.run_id)
+        ctx.artifacts.add_artifact(art, data=data, data_type="png")
+        collected.append(art.to_dict())
+        if ctx.emit:
+            await ctx.emit("artifact", {"artifact": art.to_dict()})
+        return art
+
     try:
         res = await ctx.notebooks.execute(notebook, indices,
-                                          on_artifact=_notebook_artifact_cb(ctx))
+                                          on_artifact=on_artifact)
     except NotebookError as e:
         return f"[error] {e}"
     nb = res["notebook"]
@@ -291,7 +321,26 @@ async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> 
         status = "ok" if r["ok"] else "FAILED"
         extra = f" ({r['figures']} figure(s), {r['outputs']} output(s))" if r["ok"] else f": {r['error'][:200]}"
         lines.append(f"  cell {r['index']}: {status}{extra}")
-    return "\n".join(lines)
+    result = "\n".join(lines)
+
+    # Record the experiment the same way as the chat-rerun path so the agent's
+    # notebook runs appear on the Experiments timeline/graph too.
+    try:
+        metrics = await _notebook_metrics(ctx)
+        record_experiment({
+            "id": f"nb-tool-{int(time.time())}",
+            "kind": "notebook",
+            "label": notebook,
+            "seed": None,
+            "fresh": False,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "metrics": metrics,
+            "artifacts": [{"name": a["name"], "id": a["id"]} for a in collected],
+            "source": "agent-tool",
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 async def _create_notebook(ctx: ToolContext, name: str, code: str) -> str:

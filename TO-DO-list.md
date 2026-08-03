@@ -88,7 +88,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T11 · Context compaction** — summarize old turns into a persistent
   system summary once messages exceed a limit.
 
-- [ ] **T12 · Consistent experiment recording** — `run_notebook` tool records
+- [x] **T12 · Consistent experiment recording** — `run_notebook` tool records
   experiments the same way as the chat rerun path.
 
 - [ ] **T13 · Test suite** — kernel protocol round-trip, coordinator tool loop
