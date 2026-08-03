@@ -36,6 +36,14 @@ def load_experiments() -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+def record_experiment(record: dict) -> None:
+    """Append any experiment run (notebook rerun, workflow run, ...) to history."""
+    runs = load_experiments()
+    runs.append(record)
+    RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RUNS_FILE.write_text(json.dumps(runs, indent=2))
+
+
 # ---------------------------------------------------------------- metrics ----
 
 def _linkage_vec(run: dict) -> list[float]:
@@ -78,23 +86,44 @@ def overlap(a: dict, b: dict) -> float:
 
 # ------------------------------------------------------------------- graph ----
 
+def _node_metrics(run: dict) -> dict:
+    """Uniform numeric metrics dict for any run record (privacy or notebook)."""
+    metrics = {}
+    raw = run.get("metrics")
+    if isinstance(raw, dict):
+        metrics.update({k: v for k, v in raw.items() if isinstance(v, (int, float))})
+    s1 = run.get("stage1") or []
+    s2 = run.get("stage2") or {}
+    s3 = run.get("stage3") or []
+    if s1:
+        last1 = s1[-1]
+        if last1.get("linkage_success") is not None:
+            metrics["linkage50"] = last1.get("linkage_success")
+        if last1.get("attack_plausibility") is not None:
+            metrics["plausibility"] = last1.get("attack_plausibility")
+    if s2.get("unique_pct") is not None:
+        metrics["unique_pct"] = s2["unique_pct"]
+    if s3 and s3[0].get("attacker_pred_rmse") is not None:
+        metrics["rmse_eps0_1"] = s3[0]["attacker_pred_rmse"]
+    return metrics
+
+
 def build_graph() -> dict:
-    """Nodes (one per run, with headline metrics) + similarity/overlap edges."""
+    """Nodes (one per run/experiment, with headline metrics) + similarity edges."""
     runs = load_experiments()
     nodes = []
     for i, r in enumerate(runs):
-        linkage = _linkage_vec(r)
-        s3 = r.get("stage3") or []
+        kind = r.get("kind", "privacy_workflow")
+        label = r.get("label") or ("notebook" if kind == "notebook" else f"seed {r.get('seed')}")
         nodes.append({
             "id": r.get("id"),
             "index": i,
+            "kind": kind,
+            "label": label,
             "seed": r.get("seed"),
             "fresh": bool(r.get("fresh")),
             "timestamp": r.get("timestamp"),
-            "linkage50": linkage[-1] if linkage else None,
-            "plausibility": _plausibility(r),
-            "unique_pct": r.get("stage2", {}).get("unique_pct"),
-            "rmse_eps0_1": s3[0].get("attacker_pred_rmse") if s3 else None,
+            "metrics": _node_metrics(r),
             "artifacts": r.get("artifacts", []),
         })
     edges = []

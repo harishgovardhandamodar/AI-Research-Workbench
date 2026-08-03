@@ -15,6 +15,10 @@ import numpy as np
 from examples.obfuscation.swift_data import generate_swift
 from examples.privacy.clinical_cohort import build_cohort
 
+# Set by the evaluation helpers so the workbench can record run metrics for
+# the Experiments tab after a notebook executes.
+LAST_RESULT: dict = {}
+
 
 def _std(X: np.ndarray) -> np.ndarray:
     from sklearn.preprocessing import StandardScaler
@@ -99,7 +103,14 @@ def evaluate_robustness(model, X, y, eps: float) -> dict:
     clean = model.predict(X).tolist()
     X_adv = perturb_batch(model, X, y, eps)
     adv = model.predict(X_adv).tolist()
-    return json.loads(rt.robustness_metrics_from_predictions(clean, adv, y.tolist()))
+    res = json.loads(rt.robustness_metrics_from_predictions(clean, adv, y.tolist()))
+    LAST_RESULT.update({
+        "eps": float(eps),
+        "clean_accuracy": res["clean_accuracy"],
+        "robust_accuracy": res["robust_accuracy"],
+        "asr": res["attack_success_rate_on_correct"],
+    })
+    return res
 
 
 def robustness_sweep(model, X, y, epsilons) -> list[dict]:
@@ -112,4 +123,6 @@ def robustness_sweep(model, X, y, epsilons) -> list[dict]:
             "robust_accuracy": r["robust_accuracy"],
             "asr": r["attack_success_rate_on_correct"],
         })
+    LAST_RESULT["sweep"] = rows
+    LAST_RESULT["eps"] = epsilons[-1]
     return rows

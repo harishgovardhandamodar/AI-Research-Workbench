@@ -12,7 +12,9 @@ import base64
 import json
 import re
 import sys
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -708,6 +710,7 @@ def _nb_artifact_cb(rt: ProjectRuntime, emit):
 async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
                               fresh: bool) -> str:
     """Execute a notebook (fresh seed when requested) and summarize the results."""
+    from .experiments import record_experiment
     from .notebooks import NotebookError
     svc = rt.notebooks
     try:
@@ -715,11 +718,60 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
     except NotebookError as e:
         return f"[error] {e}"
     prelude = ""
+    seed_used = None
     if fresh:
         import random as _r
-        prelude = f"import os; os.environ['FOX_RUN_SEED']='{_r.randint(1, 10**9)}'"
-    res = await svc.execute(name, on_artifact=_nb_artifact_cb(rt, emit), prelude=prelude)
+        seed_used = _r.randint(1, 10**9)
+        prelude = f"import os; os.environ['FOX_RUN_SEED']='{seed_used}'"
+
+    collected = []
+
+    async def on_artifact(fig_b64, source):
+        env = await rt.kernels.get_env()
+        art = Artifact(kind="figure", name="notebook-figure",
+                       description=f"Figure produced by notebook '{name}'",
+                       code=source, env=env, message_id="")
+        rt.artifacts.add_artifact(art, data=base64.b64decode(fig_b64), data_type="png")
+        collected.append({"name": art.name, "id": art.id})
+        if emit:
+            try:
+                await emit("artifact", {"artifact": art.to_dict()})
+            except Exception:  # noqa: BLE001
+                pass
+        return art
+
+    res = await svc.execute(name, on_artifact=on_artifact, prelude=prelude)
     nb = res["notebook"]
+
+    # Record the run in the Experiments history (kind = notebook), reading any
+    # metrics the notebook helper exposed (e.g. clean/robust accuracy).
+    metrics = {}
+    try:
+        resp = await rt.kernels.python.run_code(
+            "import json\nfrom examples.adversarial import adversarial_data as _ad\n"
+            "print(json.dumps(_ad.LAST_RESULT))")
+        out = (resp.get("output") or "").strip()
+        if out:
+            parsed = json.loads(out.splitlines()[-1])
+            if isinstance(parsed, dict):
+                metrics = {k: v for k, v in parsed.items()
+                           if isinstance(v, (int, float))}
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        record_experiment({
+            "id": f"nb-{int(time.time())}",
+            "kind": "notebook",
+            "label": name,
+            "seed": seed_used,
+            "fresh": bool(fresh),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "metrics": metrics,
+            "artifacts": collected,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
     lines = [f"Executed **{name}**" + (" with a **fresh seed** (results differ)" if fresh
                                        else "") + f" — {len(res['report'])} code cell(s)."]
     for r in res["report"]:

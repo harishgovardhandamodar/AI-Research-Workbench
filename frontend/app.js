@@ -755,16 +755,34 @@ async function loadExperiments() {
     state.expRuns = r.experiments || [];
     const g = await api("/api/experiments/graph");
     state.expGraph = g;
+    populateExpMetrics();
     renderExperiments();
   } catch (e) { /* silent */ }
 }
 
 function expMetric() { return state.expMetric || "linkage50"; }
-function expNodeValue(run, metric) {
-  const v = run[metric];
+function expNodeValue(node, metric) {
+  const v = (node.metrics && node.metrics[metric] != null) ? node.metrics[metric] : node[metric];
   return (v == null || Number.isNaN(Number(v))) ? null : Number(v);
 }
 function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
+
+function populateExpMetrics() {
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const keys = new Set();
+  nodes.forEach((n) => Object.keys(n.metrics || {}).forEach((k) => keys.add(k)));
+  ["linkage50", "plausibility", "unique_pct", "rmse_eps0_1"].forEach((k) => keys.add(k));
+  const opts = [...keys].sort();
+  if (!opts.includes(state.expMetric)) state.expMetric = opts[0];
+  const fill = (sel) => {
+    if (!sel) return;
+    sel.innerHTML = opts.map((k) =>
+      `<option value="${esc(k)}">${esc(k.replace(/_/g, " "))}</option>`).join("");
+    sel.value = state.expMetric;
+  };
+  fill($("exp-metric"));
+  fill($("exp-metric-main"));
+}
 function _fmtNum(v) {
   if (v == null || Number.isNaN(Number(v))) return "—";
   const n = Number(v);
@@ -873,24 +891,43 @@ function _forceLayout(nodes, edges, W, H) {
 // shows at a glance what each experiment contains.
 function expSubNodes(run) {
   const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
-  const last1 = s1[s1.length - 1] || {}, first3 = s3[0] || {};
   const nodes = [];
   const tag = (label) => nodes.push({ kind: "tag", label, color: "#d9a441" });
   const find = (label) => nodes.push({ kind: "finding", label, color: "#4f8cff" });
   const art = (label) => nodes.push({ kind: "artifact", label, color: "#35c4b6" });
 
+  // notebook / generic experiment run (has a metrics dict, no stage structure)
+  if ((run.metrics && Object.keys(run.metrics).length) && !s1.length) {
+    tag(run.fresh ? "fresh" : "deterministic");
+    tag(run.kind === "notebook" ? "notebook" : "experiment");
+    const m = run.metrics;
+    if (m.clean_accuracy != null) find("clean " + (m.clean_accuracy * 100).toFixed(0) + "%");
+    if (m.robust_accuracy != null) find("robust " + (m.robust_accuracy * 100).toFixed(0) + "%");
+    if (m.asr != null) find("ASR " + (m.asr * 100).toFixed(0) + "%");
+    if (m.eps != null) find("eps " + _fmtNum(m.eps));
+    for (const a of (run.artifacts || []).slice(0, 3)) {
+      const name = (typeof a === "object" ? a.name : a) || "";
+      art(name.replace(/\.(png|md)$/, "").slice(0, 16));
+    }
+    return nodes;
+  }
+
   tag(run.fresh ? "fresh" : "deterministic");
-  if (last1.plausibility_verdict) tag("plausibility " + last1.plausibility_verdict.toLowerCase());
+  if (last1Val(s1, "plausibility_verdict")) tag("plausibility " + last1Val(s1, "plausibility_verdict").toLowerCase());
   if (s2.reid_risk) tag("re-id " + s2.reid_risk.toLowerCase());
   if (s2.unique_pct != null) find("unique " + s2.unique_pct.toFixed(0) + "%");
   if (s2.extreme_unique_corner_cases != null) find("corner " + s2.extreme_unique_corner_cases);
-  if (first3.protection_index != null) find("DP prot " + (first3.protection_index * 100).toFixed(0) + "%");
-  if (last1.linkage_success != null) find("linkage " + (last1.linkage_success * 100).toFixed(0) + "%");
+  if (s3.length && s3[0].protection_index != null) find("DP prot " + (s3[0].protection_index * 100).toFixed(0) + "%");
+  if (last1Val(s1, "linkage_success") != null) find("linkage " + (last1Val(s1, "linkage_success") * 100).toFixed(0) + "%");
   for (const a of (run.artifacts || []).slice(0, 3)) {
     const name = (typeof a === "object" ? a.name : a) || "";
     art(name.replace(/\.(png|md)$/, "").slice(0, 16));
   }
   return nodes;
+}
+
+function last1Val(s1, key) {
+  return s1.length ? s1[s1.length - 1][key] : undefined;
 }
 
 function _separate(pos, n, minDist, W, H) {
@@ -956,7 +993,7 @@ function buildGraphSvg(metric, W) {
       const sx = pos[n.index].x + Math.cos(a) * R;
       const sy = pos[n.index].y + Math.sin(a) * R;
       out += `<line x1="${pos[n.index].x}" y1="${pos[n.index].y}" x2="${sx}" y2="${sy}" `
-        + `stroke="#57606a" stroke-width="0.5" stroke-dasharray="2 3" opacity="0.5"></line>`;
+        + `stroke="#8b97a5" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></line>`;
     });
   }
 
@@ -1217,6 +1254,28 @@ function renderExpDetail() {
                           : '<span class="exp-badge det">deterministic</span>';
   const time = new Date(run.timestamp).toLocaleString();
   const pct = (v) => (v == null ? "—" : (Number(v) * 100).toFixed(1) + "%");
+
+  // notebook / generic experiment run (metrics dict, no stage structure)
+  if ((run.metrics && Object.keys(run.metrics).length) && !s1.length) {
+    let h = `<div class="ed-head">Run #${idx + 1} · ${esc(run.label || "notebook")} ${badge}</div>`;
+    h += `<div class="ed-meta">${time}</div>`;
+    h += `<div class="ed-sec">Experiment</div>`;
+    h += `<div class="ed-find">${esc(run.label || "notebook run")}`
+      + (run.seed ? ` · seed ${run.seed}` : "") + ` · ${run.kind || "notebook"}</div>`;
+    h += `<div class="ed-sec">Metrics</div><table>`;
+    for (const [k, v] of Object.entries(run.metrics)) {
+      h += `<tr><th>${esc(k.replace(/_/g, " "))}</th><td>${_fmtNum(v)}</td></tr>`;
+    }
+    h += `</table>`;
+    h += `<div class="ed-sec">Artifacts</div>`;
+    for (const a of run.artifacts || []) {
+      const obj = typeof a === "object" ? a : { name: a, id: null };
+      h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+    }
+    if (el) el.innerHTML = h;
+    if ($("expmain-detail") && $("expmain-detail") !== el) $("expmain-detail").innerHTML = h;
+    return;
+  }
 
   let h = `<div class="ed-head">Run #${idx + 1} · seed ${run.seed} ${badge}</div>`;
   h += `<div class="ed-meta">${time}</div>`;
