@@ -79,7 +79,6 @@
         <button class="tab" data-tab="notebooks">Notebooks</button>
         <button class="tab" data-tab="kernel">Kernel</button>
         <button class="tab" data-tab="review">Review</button>
-        <button class="tab" data-tab="experiments">Experiments</button>
         <button class="tab" data-tab="grants">Permissions</button>
       </div>
 
@@ -108,27 +107,6 @@
           <button id="review-btn" class="btn subtle small">Run now</button>
         </div>
         <div id="review-findings" class="vlist"></div>
-      </div>
-      <div id="tab-experiments" class="tabpane">
-        <div class="pane-toolbar">
-          <span class="pane-title">Workflow experiment runs</span>
-          <button id="exp-refresh" class="btn subtle small">Refresh</button>
-        </div>
-        <div class="exp-views">
-          <button class="expview-btn active" data-expview="timeline">Timeline</button>
-          <button class="expview-btn" data-expview="graph">Graph</button>
-        </div>
-        <div class="exp-metric">
-          <select id="exp-metric" title="Metric for timeline/graph">
-            <option value="linkage50">Linkage @50%</option>
-            <option value="plausibility">Plausibility @50%</option>
-            <option value="unique_pct">Unique records %</option>
-            <option value="rmse_eps0_1">DP RMSE @ε=0.1</option>
-          </select>
-        </div>
-        <div id="exp-timeline" class="exp-view"></div>
-        <div id="exp-graph" class="exp-view hidden"></div>
-        <div id="exp-detail"></div>
       </div>
       <div id="tab-grants" class="tabpane">
         <div class="pane-toolbar"><span class="pane-title">Granted permissions</span></div>
@@ -267,7 +245,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v3";
+  window.FOX_VER = "v4";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

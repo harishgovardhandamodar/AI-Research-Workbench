@@ -735,9 +735,6 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".tabpane").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
-    // The Experiments tab opens the full-width main view (the side pane is
-    // too narrow for the timeline/graph).
-    if (t.dataset.tab === "experiments") switchMainView("experiments");
   });
 });
 
@@ -918,8 +915,6 @@ function renderExperiments() {
   const empty = '<div class="empty">No workflow runs yet. Trigger the privacy workflow in chat (or add &quot;rerun with fresh results&quot;) to build up a history.</div>';
   const metric = expMetric();
   const charts = [
-    ["exp-timeline", "timeline", 640],
-    ["exp-graph", "graph", 640],
     ["expmain-timeline", "timeline", 1240],
     ["expmain-graph", "graph", 1240],
   ];
@@ -1034,21 +1029,22 @@ async function openArtifactById(id) {
   } catch (e) { toast("Artifact not found"); }
 }
 
-["exp-timeline", "exp-graph", "expmain-timeline", "expmain-graph"].forEach((id) => {
+["expmain-timeline", "expmain-graph"].forEach((id) => {
   $(id).addEventListener("click", (e) => {
     const n = e.target.closest(".exp-node");
     if (n) selectRun(n.dataset.id);
   });
 });
 ["exp-detail", "expmain-detail"].forEach((id) => {
-  $(id).addEventListener("click", (e) => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("click", (e) => {
     const sim = e.target.closest(".ed-sim-link");
     if (sim) { selectRun(sim.dataset.id); return; }
     const art = e.target.closest(".ed-art");
     if (art) openArtifactById(art.dataset.artId);
   });
 });
-$("exp-refresh").addEventListener("click", loadExperiments);
 $("exp-refresh-main").addEventListener("click", loadExperiments);
 
 function setExpMetric(v) {
@@ -1057,7 +1053,7 @@ function setExpMetric(v) {
   if ($("exp-metric-main")) $("exp-metric-main").value = v;
   renderExperiments();
 }
-$("exp-metric").addEventListener("change", (e) => setExpMetric(e.target.value));
+if ($("exp-metric")) $("exp-metric").addEventListener("change", (e) => setExpMetric(e.target.value));
 $("exp-metric-main").addEventListener("change", (e) => setExpMetric(e.target.value));
 
 function bindExpView(scope) {

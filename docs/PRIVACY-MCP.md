@@ -180,8 +180,9 @@ artifacts. Standalone:
 
 **Experiment tracking + timeline/graph UI.** Each run record stores timestamps,
 settings (population/victim sizes, coverage, ε levels), metrics ("exposure"),
-and its artifact ids. The **Experiments tab** (in the side panel, parallel to
-chat) renders this history:
+and its artifact ids. The **Experiments view** is a full main panel accessed via
+the topbar **Chat / Experiments** selector (shown one at a time; it collapses
+the side panel so the graph spans the full width):
 
 - **Timeline view** — runs over time as a line/scatter chart, colored
   deterministic vs fresh; pick the metric (linkage, plausibility, unique
