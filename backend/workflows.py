@@ -197,6 +197,14 @@ class WorkflowTracker:
             self._status = "failed" if failed else "done"
             self._message = ("Pipeline finished with a failed stage."
                              if failed else "Pipeline complete.")
+            if not failed:
+                # A completed pipeline must not leave stages queued/running: the
+                # agent may finish a stage without the exact matching tool call
+                # (e.g. summarizing inline), so resolve leftovers as done so the
+                # stage list matches the "Pipeline complete" status.
+                for s in self._stages:
+                    if s["state"] in ("pending", "running"):
+                        s["state"] = "done"
             self._recompute()
             self._updated = time.time()
         await self._broadcast()
