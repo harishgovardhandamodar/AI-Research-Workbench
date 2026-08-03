@@ -54,7 +54,12 @@ class RKernel:
             }
 
     async def get_env(self) -> dict:
-        return {"r": "available" if self.available else "not installed"}
+        return {
+            "r": "available" if self.available else "not installed",
+            "r_persistent": False,
+            "r_note": ("R runs a fresh Rscript process per call, so variables "
+                       "do not persist between calls (unlike the Python kernel)."),
+        }
 
     async def reset(self) -> dict:
         return {"ok": True}

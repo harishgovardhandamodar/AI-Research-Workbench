@@ -24,6 +24,9 @@ Working style:
   kernel (numpy, pandas, scipy, matplotlib available). Variables persist across calls.
 - Use run_python for computation, data analysis and figures. Use matplotlib to make
   clear, well-labelled publication-style figures.
+- run_r also runs R code, but each run_r call starts a FRESH Rscript process:
+  variables and loaded packages do NOT persist between R calls (unlike Python),
+  so re-set state inside each R snippet or prefer run_python for multi-step work.
 - Figures are AUTOMATICALLY saved as artifacts — do NOT call plt.savefig() or any
   save function for that.
 - Use the save_artifact TOOL (a separate tool call, never inside the Python kernel)

@@ -100,7 +100,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T15 · Project lifecycle** — `DELETE /api/projects/{name}`,
   `POST …/fork` (session forking).
 - [x] **T16 · Persistent knowledge graph** — auto-export arXiv graph per paper.
-- [ ] **T17 · Persistent R kernel** (or document limitation in UI).
+- [x] **T17 · Persistent R kernel** (or document limitation in UI).
 - [ ] **T18 · Replace brittle keyword intents** with an LLM intent classifier or
   explicit UI buttons.
 

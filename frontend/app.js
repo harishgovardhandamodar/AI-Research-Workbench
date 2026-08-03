@@ -416,6 +416,19 @@ function renderKernel(vars, env) {
   const e = $("kernel-env");
   e.innerHTML = "";
   if (env) for (const [name, ver] of Object.entries(env)) e.appendChild(kv(name, ver));
+
+  const r = $("r-kernel-status");
+  if (r) {
+    r.innerHTML = "";
+    const rstate = (env && env.r) || "unknown";
+    const persistent = env && env.r_persistent;
+    const avail = rstate === "available";
+    const d = document.createElement("div");
+    d.className = avail ? "finding info" : "finding warning";
+    d.innerHTML = `<span class="sev">${esc(avail ? "available" : "not installed")}</span>` +
+      `<span>R runs a fresh Rscript process per call${persistent ? "" : " — state is <b>not persistent</b>"} between calls, unlike the persistent Python kernel. ${avail ? "" : "Install R (Rscript) to enable it."}</span>`;
+    r.appendChild(d);
+  }
 }
 
 function kv(k, val) {
