@@ -757,12 +757,22 @@ function expNodeValue(run, metric) {
   return (v == null || Number.isNaN(Number(v))) ? null : Number(v);
 }
 function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
+function _fmtNum(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  const n = Number(v);
+  return n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(3);
+}
+function _metricColor(v, min, max) {
+  const t = (v - min) / ((max - min) || 1);
+  const lerp = (a, b, x) => Math.round(a + (b - a) * Math.max(0, Math.min(1, x)));
+  return `rgb(${lerp(79, 217, t)},${lerp(140, 164, t)},${lerp(255, 65, t)})`;
+}
 
-function buildExpSvg(opts, metric, W) {
+// --------------------------------------------------------- timeline chart ----
+
+function buildTimelineSvg(metric, W) {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  metric = metric || expMetric();
-  W = W || 640;
-  const H = 300, padL = 40, padR = 14, padT = 18, padB = 26;
+  const H = 330, padL = 48, padR = 16, padT = 28, padB = 30;
   const vals = nodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   if (!present.length) return '<div class="empty">No numeric values for this metric.</div>';
@@ -771,42 +781,134 @@ function buildExpSvg(opts, metric, W) {
     ? padL + i * (W - padL - padR) / (nodes.length - 1) : W / 2);
   const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
 
-  let g = "";
+  let out = `<svg viewBox="0 0 ${W} ${H}">`
+    + `<defs><linearGradient id="tlfill" x1="0" y1="0" x2="0" y2="1">`
+    + `<stop offset="0%" stop-color="#35c4b6" stop-opacity="0.35"/>`
+    + `<stop offset="100%" stop-color="#35c4b6" stop-opacity="0"/></linearGradient></defs>`;
+
   for (let k = 0; k <= 4; k++) {
     const v = min + span * k / 4, yy = y(v);
-    g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#232b36" stroke-width="0.5"></line>`;
-    g += `<text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#8b97a5">${_fmtAxis(v)}</text>`;
+    out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#232b36" stroke-width="0.5"></line>`;
+    out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="#8b97a5">${_fmtNum(v)}</text>`;
+  }
+  nodes.forEach((n, i) => {
+    if (vals[i] != null)
+      out += `<text x="${xs[i]}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#8b97a5">#${i + 1}</text>`;
+  });
+
+  const pts = nodes.map((n, i) => vals[i] == null ? null : `${xs[i]},${y(vals[i])}`).filter(Boolean);
+  if (pts.length) {
+    const linePts = pts.join(" ");
+    const area = `${xs[0]},${y(min)} ${linePts} ${xs[nodes.length - 1]},${y(min)}`;
+    out += `<polygon points="${area}" fill="url(#tlfill)"></polygon>`;
+    out += `<polyline points="${linePts}" fill="none" stroke="#35c4b6" stroke-width="2"></polyline>`;
   }
 
-  let line = "";
-  if (opts.line) {
-    const pts = vals.map((v, i) => v == null ? null : `${xs[i]},${y(v)}`).filter(Boolean).join(" ");
-    if (pts) line = `<polyline points="${pts}" fill="none" stroke="#35c4b6" stroke-width="1.5" opacity="0.7"></polyline>`;
-  }
-
-  let edges = "";
-  if (opts.edges && state.expGraph) {
-    const byId = {}; nodes.forEach((n, i) => { byId[n.id] = i; });
-    for (const e of state.expGraph.edges || []) {
-      const a = byId[e.source], b = byId[e.target];
-      if (a == null || b == null || vals[a] == null || vals[b] == null) continue;
-      const sim = e.similarity || 0;
-      if (sim < 0.35 && !(e.overlap > 0.5)) continue;
-      edges += `<line class="exp-edge" x1="${xs[a]}" y1="${y(vals[a])}" x2="${xs[b]}" `
-        + `y2="${y(vals[b])}" stroke-width="${(0.5 + sim * 2.5).toFixed(2)}"></line>`;
-    }
-  }
-
-  let nodeSvg = "";
   nodes.forEach((n, i) => {
     if (vals[i] == null) return;
     const color = n.fresh ? "#d9a441" : "#4f8cff";
     const sel = state.expSelected === n.id ? " selected" : "";
-    nodeSvg += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
-      + `<circle r="7" fill="${color}"></circle><text y="-11" text-anchor="middle">#${i + 1}</text></g>`;
+    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
+      + `<title>${esc(tip)}</title>`
+      + `<circle r="7" fill="${color}" stroke="#0b0f14" stroke-width="2"></circle>`
+      + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">#${i + 1}</text></g>`;
   });
 
-  return `<svg viewBox="0 0 ${W} ${H}">${g}${line}${edges}${nodeSvg}</svg>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#d7dee7">${metric.replace(/_/g, " ")} — evolution across runs</text>`;
+  out += `</svg>`;
+  return out;
+}
+
+// --------------------------------------------------------- similarity graph --
+
+function _forceLayout(nodes, edges, W, H) {
+  const n = nodes.length;
+  const byId = {}; nodes.forEach((x, i) => { byId[x.id] = i; });
+  const pos = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * 2 * Math.PI;
+    pos.push({ x: W / 2 + Math.cos(a) * 120, y: H / 2 + Math.sin(a) * 120, vx: 0, vy: 0 });
+  }
+  for (let t = 0; t < 200; t++) {
+    const cool = 1 - t / 200;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      let dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y;
+      const d2 = Math.max(dx * dx + dy * dy, 1), f = 600 / d2 * cool, d = Math.sqrt(d2);
+      dx /= d; dy /= d;
+      pos[i].vx += dx * f; pos[i].vy += dy * f;
+      pos[j].vx -= dx * f; pos[j].vy -= dy * f;
+    }
+    for (const e of edges) {
+      const a = byId[e.source], b = byId[e.target];
+      if (a == null || b == null) continue;
+      const sim = e.similarity || 0.5;
+      let dx = pos[b].x - pos[a].x, dy = pos[b].y - pos[a].y;
+      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+      const f = (d - (110 - sim * 50)) * 0.05 * (0.3 + sim);
+      dx /= d; dy /= d;
+      pos[a].vx += dx * f; pos[a].vy += dy * f;
+      pos[b].vx -= dx * f; pos[b].vy -= dy * f;
+    }
+    for (const p of pos) {
+      p.vx += (W / 2 - p.x) * 0.01 * cool;
+      p.vy += (H / 2 - p.y) * 0.01 * cool;
+      p.vx *= 0.85; p.vy *= 0.85;
+      p.x = Math.max(46, Math.min(W - 46, p.x + p.vx));
+      p.y = Math.max(40, Math.min(H - 40, p.y + p.vy));
+    }
+  }
+  return pos;
+}
+
+function buildGraphSvg(metric, W) {
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const edges = (state.expGraph && state.expGraph.edges) || [];
+  const H = 400;
+  if (!nodes.length) return '<div class="empty">No runs yet.</div>';
+  const vals = nodes.map((n) => expNodeValue(n, metric));
+  const present = vals.filter((v) => v != null);
+  const vmin = present.length ? Math.min(...present) : 0;
+  const vmax = present.length ? Math.max(...present) : 1;
+  const pos = _forceLayout(nodes, edges, W, H);
+
+  let out = `<svg viewBox="0 0 ${W} ${H}">`;
+  for (const e of edges) {
+    const a = nodes.findIndex((n) => n.id === e.source);
+    const b = nodes.findIndex((n) => n.id === e.target);
+    if (a < 0 || b < 0) continue;
+    const sim = e.similarity || 0;
+    out += `<line class="exp-edge" x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}" `
+      + `stroke-width="${(0.6 + sim * 3.2).toFixed(2)}" opacity="${(0.18 + sim * 0.6).toFixed(2)}">`
+      + `<title>similarity ${(sim * 100).toFixed(0)}% · overlap ${((e.overlap || 0) * 100).toFixed(0)}%</title></line>`;
+  }
+  nodes.forEach((n, i) => {
+    const v = vals[i];
+    const r = v == null ? 7 : 9 + (v - vmin) / (vmax - vmin || 1) * 13;
+    const color = v == null ? "#8b97a5" : _metricColor(v, vmin, vmax);
+    const sel = state.expSelected === n.id ? " selected" : "";
+    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}`;
+    out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
+      + `<title>${esc(tip)}</title>`
+      + `<circle r="${r}" fill="${color}" stroke="#0b0f14" stroke-width="2"></circle>`
+      + `<text y="${r + 13}" text-anchor="middle" font-size="9" fill="#8b97a5">seed ${n.seed}</text></g>`;
+  });
+
+  // legend: metric colour scale
+  out += `<g transform="translate(${W - 190}, 10)">`
+    + `<text x="0" y="-4" font-size="9" fill="#8b97a5">${metric.replace(/_/g, " ")}</text>`;
+  for (let i = 0; i < 70; i++) {
+    const t = i / 69;
+    out += `<rect x="${i}" y="0" width="2" height="9" fill="${_metricColor(vmin + t * (vmax - vmin), vmin, vmax)}"></rect>`;
+  }
+  out += `<text x="0" y="20" font-size="8.5" fill="#8b97a5">${_fmtNum(vmin)}</text>`
+    + `<text x="69" y="20" text-anchor="end" font-size="8.5" fill="#8b97a5">${_fmtNum(vmax)}</text>`
+    + `<text x="78" y="9" font-size="9" fill="#d9a441">● fresh</text>`
+    + `<text x="78" y="20" font-size="9" fill="#4f8cff">● seed run</text></g>`;
+
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#d7dee7">similarity graph — ${metric.replace(/_/g, " ")} (node size = metric · edge = similarity)</text>`;
+  out += `</svg>`;
+  return out;
 }
 
 function renderExperiments() {
@@ -814,14 +916,17 @@ function renderExperiments() {
   const empty = '<div class="empty">No workflow runs yet. Trigger the privacy workflow in chat (or add &quot;rerun with fresh results&quot;) to build up a history.</div>';
   const metric = expMetric();
   const charts = [
-    ["exp-timeline", { line: true, edges: false }, metric, 640],
-    ["exp-graph", { line: false, edges: true }, metric, 640],
-    ["expmain-timeline", { line: true, edges: false }, metric, 1160],
-    ["expmain-graph", { line: false, edges: true }, metric, 1160],
+    ["exp-timeline", "timeline", 640],
+    ["exp-graph", "graph", 640],
+    ["expmain-timeline", "timeline", 1240],
+    ["expmain-graph", "graph", 1240],
   ];
-  for (const [id, opts, m, w] of charts) {
+  for (const [id, kind, w] of charts) {
     const el = $(id);
-    if (el) el.innerHTML = runs.length ? buildExpSvg(opts, m, w) : empty;
+    if (!el) continue;
+    el.innerHTML = runs.length
+      ? (kind === "timeline" ? buildTimelineSvg(metric, w) : buildGraphSvg(metric, w))
+      : empty;
   }
   renderExpDetail();
 }
@@ -836,7 +941,17 @@ function switchMainView(view) {
   $("exp-panel").classList.toggle("hidden", view !== "experiments");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
-  if (view === "experiments") loadExperiments();
+  const app = document.getElementById("app");
+  if (view === "experiments") {
+    // maximize width: collapse the side panel for the expanded view
+    if (state._sideBefore == null)
+      state._sideBefore = app.classList.contains("side-collapsed");
+    app.classList.add("side-collapsed");
+    loadExperiments();
+  } else if (state._sideBefore != null) {
+    app.classList.toggle("side-collapsed", !!state._sideBefore);
+    state._sideBefore = null;
+  }
 }
 
 function similarRuns(id) {
