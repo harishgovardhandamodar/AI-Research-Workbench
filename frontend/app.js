@@ -140,9 +140,9 @@ function send(obj) {
 
 function handleEvent(type, p) {
   switch (type) {
-    case "user_message": renderUserMessage(p.content); break;
+    case "user_message": renderUserMessage(p.content, p.tags); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -159,13 +159,20 @@ function handleEvent(type, p) {
 let curAssistantEl = null;
 let pendingInlineFigs = [];
 
-function msgContainer(role) {
+function msgTagsHtml(tags) {
+  if (!tags || !tags.length) return "";
+  return '<div class="msg-tags">' + tags.map((t) => `<span class="m-tag">${esc(t)}</span>`).join("") + '</div>';
+}
+
+function msgContainer(role, tags) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const label = document.createElement("div");
   label.className = "msg-label";
   label.textContent = role === "user" ? "You" : "Fox";
   div.appendChild(label);
+  const tagHtml = msgTagsHtml(tags);
+  if (tagHtml) div.insertAdjacentHTML("beforeend", tagHtml);
   const body = document.createElement("div");
   body.className = "msg-body";
   div.appendChild(body);
@@ -173,15 +180,15 @@ function msgContainer(role) {
   return { div, body };
 }
 
-function renderUserMessage(content) {
-  const { body } = msgContainer("user");
+function renderUserMessage(content, tags) {
+  const { body } = msgContainer("user", tags);
   body.textContent = content;
   scrollBottom();
 }
 
-function ensureAssistant() {
+function ensureAssistant(tags) {
   if (curAssistantEl && document.body.contains(curAssistantEl.div)) return curAssistantEl;
-  const el = msgContainer("assistant");
+  const el = msgContainer("assistant", tags);
   curAssistantEl = el;
   setConn("busy");
   state.streaming = true;
@@ -195,7 +202,7 @@ function streamDelta(text) {
   scrollBottom();
 }
 
-function finalizeAssistant(content) {
+function finalizeAssistant(content, tags) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
@@ -560,11 +567,12 @@ function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
   for (const m of msgs) {
+    const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const { body } = msgContainer("user");
+      const { body } = msgContainer("user", mtags);
       body.textContent = m.content;
     } else if (m.role === "assistant") {
-      const { body } = msgContainer("assistant");
+      const { body } = msgContainer("assistant", mtags);
       body.innerHTML = renderMarkdown(m.content);
     } else if (m.role === "tool") {
       // tool results persisted; rendered as compact card
@@ -861,41 +869,126 @@ function _forceLayout(nodes, edges, W, H) {
   return pos;
 }
 
+// Per-experiment sub-nodes: tags, findings and artifact keywords, so the graph
+// shows at a glance what each experiment contains.
+function expSubNodes(run) {
+  const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
+  const last1 = s1[s1.length - 1] || {}, first3 = s3[0] || {};
+  const nodes = [];
+  const tag = (label) => nodes.push({ kind: "tag", label, color: "#d9a441" });
+  const find = (label) => nodes.push({ kind: "finding", label, color: "#4f8cff" });
+  const art = (label) => nodes.push({ kind: "artifact", label, color: "#35c4b6" });
+
+  tag(run.fresh ? "fresh" : "deterministic");
+  if (last1.plausibility_verdict) tag("plausibility " + last1.plausibility_verdict.toLowerCase());
+  if (s2.reid_risk) tag("re-id " + s2.reid_risk.toLowerCase());
+  if (s2.unique_pct != null) find("unique " + s2.unique_pct.toFixed(0) + "%");
+  if (s2.extreme_unique_corner_cases != null) find("corner " + s2.extreme_unique_corner_cases);
+  if (first3.protection_index != null) find("DP prot " + (first3.protection_index * 100).toFixed(0) + "%");
+  if (last1.linkage_success != null) find("linkage " + (last1.linkage_success * 100).toFixed(0) + "%");
+  for (const a of (run.artifacts || []).slice(0, 3)) {
+    const name = (typeof a === "object" ? a.name : a) || "";
+    art(name.replace(/\.(png|md)$/, "").slice(0, 16));
+  }
+  return nodes;
+}
+
+function _separate(pos, n, minDist, W, H) {
+  for (let iter = 0; iter < 60; iter++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      let dx = pos[j].x - pos[i].x, dy = pos[j].y - pos[i].y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < minDist && d > 0) {
+        const push = (minDist - d) / 2;
+        dx /= d; dy /= d;
+        pos[i].x -= dx * push; pos[i].y -= dy * push;
+        pos[j].x += dx * push; pos[j].y += dy * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  for (const p of pos) {
+    p.x = Math.max(120, Math.min(W - 120, p.x));
+    p.y = Math.max(110, Math.min(H - 110, p.y));
+  }
+  return pos;
+}
+
 function buildGraphSvg(metric, W) {
-  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const gnodes = (state.expGraph && state.expGraph.nodes) || [];
+  const runs = state.expRuns || [];
   const edges = (state.expGraph && state.expGraph.edges) || [];
-  const H = 400;
-  if (!nodes.length) return '<div class="empty">No runs yet.</div>';
-  const vals = nodes.map((n) => expNodeValue(n, metric));
+  const H = 580;
+  if (!gnodes.length) return '<div class="empty">No runs yet.</div>';
+  const nodes = gnodes.map((g, i) => ({
+    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {},
+  }));
+  const vals = gnodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   const vmin = present.length ? Math.min(...present) : 0;
   const vmax = present.length ? Math.max(...present) : 1;
-  const pos = _forceLayout(nodes, edges, W, H);
+  let pos = _forceLayout(nodes, edges, W, H);
+  pos = _separate(pos, nodes.length, 230, W, H);
+  const byId = {}; nodes.forEach((n, i) => { byId[n.id] = i; });
 
   let out = `<svg viewBox="0 0 ${W} ${H}">`;
+
+  // similarity edges with relation labels
   for (const e of edges) {
-    const a = nodes.findIndex((n) => n.id === e.source);
-    const b = nodes.findIndex((n) => n.id === e.target);
-    if (a < 0 || b < 0) continue;
-    const sim = e.similarity || 0;
-    out += `<line class="exp-edge" x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}" `
-      + `stroke-width="${(0.6 + sim * 3.2).toFixed(2)}" opacity="${(0.18 + sim * 0.6).toFixed(2)}">`
-      + `<title>similarity ${(sim * 100).toFixed(0)}% · overlap ${((e.overlap || 0) * 100).toFixed(0)}%</title></line>`;
+    const a = byId[e.source], b = byId[e.target];
+    if (a == null || b == null) continue;
+    const sim = e.similarity || 0, ov = e.overlap || 0;
+    const x1 = pos[a].x, y1 = pos[a].y, x2 = pos[b].x, y2 = pos[b].y;
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    out += `<g class="exp-edge-wrap"><line class="exp-edge" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" `
+      + `stroke-width="${(0.7 + sim * 3).toFixed(2)}" opacity="${(0.25 + sim * 0.5).toFixed(2)}"></line>`
+      + `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="8.5" fill="#8b97a5" paint-order="stroke" stroke="#0b0f14" stroke-width="2.5">sim ${(sim * 100).toFixed(0)}% · ov ${(ov * 100).toFixed(0)}%</text></g>`;
   }
+
+  // sub-node spokes (drawn under experiment nodes)
+  for (const n of nodes) {
+    const subs = expSubNodes(n.run);
+    const R = 92;
+    subs.forEach((s, i) => {
+      const a = -Math.PI / 2 + i / subs.length * 2 * Math.PI;
+      const sx = pos[n.index].x + Math.cos(a) * R;
+      const sy = pos[n.index].y + Math.sin(a) * R;
+      out += `<line x1="${pos[n.index].x}" y1="${pos[n.index].y}" x2="${sx}" y2="${sy}" `
+        + `stroke="#57606a" stroke-width="0.5" stroke-dasharray="2 3" opacity="0.5"></line>`;
+    });
+  }
+
+  // experiment nodes + sub-nodes
   nodes.forEach((n, i) => {
     const v = vals[i];
-    const r = v == null ? 7 : 9 + (v - vmin) / (vmax - vmin || 1) * 13;
     const color = v == null ? "#8b97a5" : _metricColor(v, vmin, vmax);
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}`;
+    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
-      + `<circle r="${r}" fill="${color}" stroke="#0b0f14" stroke-width="2"></circle>`
-      + `<text y="${r + 13}" text-anchor="middle" font-size="9" fill="#8b97a5">seed ${n.seed}</text></g>`;
+      + `<circle r="16" fill="${color}" stroke="#0b0f14" stroke-width="2.5"></circle>`
+      + `<text y="-24" text-anchor="middle" font-size="11" font-weight="700" fill="#d7dee7">Run #${i + 1}</text>`
+      + `<text y="30" text-anchor="middle" font-size="9" fill="#8b97a5">seed ${n.seed}</text></g>`;
+
+    const subs = expSubNodes(n.run);
+    const R = 92;
+    subs.forEach((s, k) => {
+      const a = -Math.PI / 2 + k / subs.length * 2 * Math.PI;
+      const sx = pos[i].x + Math.cos(a) * R;
+      const sy = pos[i].y + Math.sin(a) * R;
+      out += `<g class="exp-subnode" data-id="${esc(n.id)}" transform="translate(${sx},${sy})">`
+        + `<title>${esc(`${n.seed}: ${s.kind} — ${s.label}`)}</title>`
+        + `<circle r="6.5" fill="${s.color}" stroke="#0b0f14" stroke-width="1.2"></circle></g>`;
+      // tiny visible label on the sub-node
+      const lx = sx + Math.cos(a) * 14, ly = sy + Math.sin(a) * 14 + 3;
+      out += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="8" fill="${s.color}" opacity="0.95" paint-order="stroke" stroke="#0b0f14" stroke-width="2">${esc(s.label)}</text>`;
+    });
   });
 
-  // legend: metric colour scale
-  out += `<g transform="translate(${W - 190}, 10)">`
+  // legend
+  out += `<g transform="translate(${W - 230}, 12)">`
     + `<text x="0" y="-4" font-size="9" fill="#8b97a5">${metric.replace(/_/g, " ")}</text>`;
   for (let i = 0; i < 70; i++) {
     const t = i / 69;
@@ -903,10 +996,11 @@ function buildGraphSvg(metric, W) {
   }
   out += `<text x="0" y="20" font-size="8.5" fill="#8b97a5">${_fmtNum(vmin)}</text>`
     + `<text x="69" y="20" text-anchor="end" font-size="8.5" fill="#8b97a5">${_fmtNum(vmax)}</text>`
-    + `<text x="78" y="9" font-size="9" fill="#d9a441">● fresh</text>`
-    + `<text x="78" y="20" font-size="9" fill="#4f8cff">● seed run</text></g>`;
+    + `<text x="78" y="9" font-size="9" fill="#d9a441">● tag</text>`
+    + `<text x="78" y="20" font-size="9" fill="#4f8cff">● finding</text>`
+    + `<text x="78" y="31" font-size="9" fill="#35c4b6">● artifact</text></g>`;
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#d7dee7">similarity graph — ${metric.replace(/_/g, " ")} (node size = metric · edge = similarity)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#d7dee7">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap)</text>`;
   out += `</svg>`;
   return out;
 }
@@ -1032,8 +1126,8 @@ async function openArtifactById(id) {
 
 ["expmain-timeline", "expmain-graph"].forEach((id) => {
   $(id).addEventListener("click", (e) => {
-    const n = e.target.closest(".exp-node");
-    if (n) selectRun(n.dataset.id);
+    const n = e.target.closest(".exp-node, .exp-subnode");
+    if (n && n.dataset.id) selectRun(n.dataset.id);
   });
 });
 ["exp-detail", "expmain-detail"].forEach((id) => {

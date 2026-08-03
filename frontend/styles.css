@@ -117,6 +117,9 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .msg.user { max-width: 85%; }
 .msg.assistant .msg-body { width: 100%; }
 .msg-label { font-size: 11px; color: var(--text-dim); letter-spacing: .5px; text-transform: uppercase; }
+.msg-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
+.m-tag { font-size: 10px; padding: 1px 8px; border-radius: 10px; background: rgba(79,140,255,.15); color: var(--accent-2); border: 1px solid rgba(79,140,255,.35); }
+.msg.user .m-tag { background: rgba(224,91,91,.12); color: #ffb4b4; border-color: rgba(224,91,91,.35); }
 
 .msg-body pre, .codeblock {
   background: #0a0e13; border: 1px solid var(--border); border-radius: 8px;

@@ -522,6 +522,45 @@ def compare_requested(text: str) -> bool:
                                   "experiment", "seed", "comparison"))
 
 
+# Meaningful tags shown on chat messages so experiments are recognisable at a
+# glance (rendered as small badges next to the message text).
+def message_tags(role: str, text: str) -> list[str]:
+    tags: list[str] = []
+    low = (text or "").lower()
+    if role == "user":
+        if match_workflow(text):
+            tags.append("privacy workflow")
+            if fresh_requested(text):
+                tags.append("fresh rerun")
+            if compare_requested(text):
+                tags.append("compare runs")
+        elif "obfusc" in low:
+            tags.append("obfuscation")
+        elif "privacy" in low or "differential privacy" in low:
+            tags.append("privacy")
+        elif "notebook" in low or ".ipynb" in low:
+            tags.append("notebook")
+        elif any(k in low for k in ("plot", "figure", "chart", "graph")):
+            tags.append("figure")
+        elif any(k in low for k in ("analysis", "experiment", "run ",
+                                    "compute", "simulate", "data")):
+            tags.append("experiment")
+        else:
+            tags.append("question")
+    elif role == "assistant":
+        if low.startswith("## privacy workflow — run comparison"):
+            tags.append("comparison")
+        elif "privacy workflow" in low:
+            tags.append("privacy workflow")
+        if "fresh rerun" in low:
+            tags.append("fresh rerun")
+        if not tags:
+            tags.append("agent reply")
+        if "error" in low[:300]:
+            tags.append("error")
+    return tags
+
+
 async def run_privacy_workflow(rt: ProjectRuntime, emit,
                                fresh: bool = False, compare: bool = False) -> str:
     """Run (or compare) the privacy workflow and register outputs as artifacts."""
@@ -738,20 +777,29 @@ async def ws_chat(ws: WebSocket, name: str):
     async def handle_turn(text: str):
         async with rt.lock:
             try:
-                mid = rt.store.add_message("user", text)
-                await emit("user_message", {"id": mid, "content": text})
+                user_tags = message_tags("user", text)
+                mid = rt.store.add_message("user", text, {"tags": user_tags})
+                await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
                 if match_workflow(text) or compare_requested(text):
                     result = await run_privacy_workflow(
                         rt, emit, fresh=fresh_requested(text),
                         compare=compare_requested(text))
-                    amid = rt.store.add_message("assistant", result)
-                    await emit("assistant_message", {"id": amid, "content": result})
+                    amid = rt.store.add_message(
+                        "assistant", result,
+                        {"tags": message_tags("assistant", result)})
+                    await emit("assistant_message", {"id": amid, "content": result,
+                                                     "tags": message_tags("assistant", result)})
                     await emit("done", {})
                     return
                 llm_msgs = rt.build_llm_messages()
                 result = await coordinator.run_turn(llm_msgs)
-                amid = rt.store.add_message("assistant", result.get("text", ""))
-                await emit("assistant_message", {"id": amid, "content": result.get("text", "")})
+                amid = rt.store.add_message(
+                    "assistant", result.get("text", ""),
+                    {"tags": message_tags("assistant", result.get("text", ""))})
+                await emit("assistant_message", {"id": amid,
+                                                 "content": result.get("text", ""),
+                                                 "tags": message_tags("assistant",
+                                                                      result.get("text", ""))})
                 if rt.reviewer_enabled:
                     await emit("review_start", {})
                     try:
