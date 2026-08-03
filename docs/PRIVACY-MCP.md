@@ -1,6 +1,6 @@
 # Expanded Privacy MCP Server + Workbench Integration
 
-Local-first privacy tooling for the Fox AI Science Workbench. Everything runs on
+Local-first privacy tooling for the Fox - Experiment workbench. Everything runs on
 the user's machine — no data leaves home.
 
 - **Privacy assessment** — PII detection, dataframe privacy assessment

@@ -180,7 +180,7 @@ def _load_jupyter_server_extension(server_app) -> None:
     atexit.register(_stop)
 
     server_app.log.info(
-        "Fox AI Science Workbench mounted at %s (sidecar on 127.0.0.1:%s)",
+        "Fox - Experiment workbench mounted at %s (sidecar on 127.0.0.1:%s)",
         PREFIX, sidecar.port)
 
 

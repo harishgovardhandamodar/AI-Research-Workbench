@@ -1,4 +1,4 @@
-"""Fox — AI Science Workbench: FastAPI backend.
+"""Fox - Experiment workbench: FastAPI backend.
 
 Serves the web UI + JSON REST API + WebSocket chat. Each project gets its own
 folder under <workbench>/projects with SQLite persistence, artifact storage and a
@@ -49,7 +49,7 @@ DEFAULT_CONFIG = {
 }
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are Fox, an open-source AI science workbench running fully on the user's "
+    "You are Fox, an open-source experiment workbench running fully on the user's "
     "machine with local models. You help computational biologists, chemists, "
     "physicists and data scientists run real analyses hands-on.\n\n"
     "Working style:\n"
@@ -205,7 +205,7 @@ async def lifespan(app: FastAPI):
         await rt.stop()
 
 
-app = FastAPI(title="Fox — AI Science Workbench", lifespan=lifespan)
+app = FastAPI(title="Fox - Experiment workbench", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=False,

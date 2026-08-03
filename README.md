@@ -1,6 +1,6 @@
-# Fox — AI Science Workbench
+# Fox - Experiment workbench
 
-A fully local, open-source AI science workbench: the local-models equivalent of
+A fully local, open-source experiment workbench: the local-models equivalent of
 "Claude Science". It runs entirely on your machine with local LLMs (via Ollama),
 so your data never leaves home unless you explicitly approve a network command.
 

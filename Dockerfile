@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="Fox — AI Science Workbench"
-LABEL org.opencontainers.image.description="Local AI science workbench (chat + agent + persistent kernels + notebooks)"
+LABEL org.opencontainers.image.title="Fox - Experiment workbench"
+LABEL org.opencontainers.image.description="Local experiment workbench (chat + agent + persistent kernels + notebooks)"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
