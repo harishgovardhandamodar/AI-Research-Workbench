@@ -437,6 +437,17 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .run-prompt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-meta { font-size: 11px; white-space: nowrap; }
 
+/* ---------- project files ---------- */
+.file-input { font-size: 11px; flex: 1; min-width: 0; }
+.file-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+}
+.file-name { color: var(--accent); text-decoration: none; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-name:hover { text-decoration: underline; }
+.file-size { font-size: 11px; white-space: nowrap; }
+.file-del { color: var(--text-dim); }
+
 /* ---------- run comparison ---------- */
 .exp-compare { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .exp-compare-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

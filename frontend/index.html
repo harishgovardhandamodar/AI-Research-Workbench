@@ -132,6 +132,7 @@
       <div class="tabs">
         <button class="tab" data-tab="artifacts">Artifacts</button>
         <button class="tab active" data-tab="notebooks">Notebooks</button>
+        <button class="tab" data-tab="files">Files</button>
         <button class="tab" data-tab="kernel">Kernel</button>
         <button class="tab" data-tab="review">Review</button>
         <button class="tab" data-tab="grants">Permissions</button>
@@ -156,6 +157,17 @@
         <div id="kernel-vars" class="vlist"></div>
         <div class="pane-toolbar"><span class="pane-title">Environment</span></div>
         <div id="kernel-env" class="vlist"></div>
+      </div>
+      <div id="tab-files" class="tabpane">
+        <div class="pane-toolbar">
+          <span class="pane-title">Project files</span>
+          <button id="files-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div class="pane-toolbar">
+          <input id="file-input" type="file" class="file-input" />
+          <button id="file-upload-btn" class="btn subtle small">Upload</button>
+        </div>
+        <div id="file-list" class="vlist"></div>
       </div>
       <div id="tab-review" class="tabpane">
         <div class="pane-toolbar">
@@ -304,7 +316,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v15";
+  window.FOX_VER = "v16";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -798,6 +798,70 @@ async def artifact_meta(artifact_id: str):
 async def delete_artifact(name: str, artifact_id: str):
     rt = get_runtime(name)
     return {"deleted": rt.artifacts.delete(artifact_id)}
+
+
+# ------------------------------------------------------------ project files --
+
+_IGNORED_FILES = {"workbench.db", "config.json"}
+
+
+def _safe_filename(name: str) -> str:
+    base = Path(name).name
+    if not base or base in (".", ".."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    return base
+
+
+def _list_project_files(name: str) -> list[dict]:
+    rt = get_runtime(name)
+    out = []
+    for p in sorted(rt.dir.iterdir()):
+        if not p.is_file() or p.name in _IGNORED_FILES:
+            continue
+        out.append({
+            "name": p.name,
+            "size": p.stat().st_size,
+            "modified": p.stat().st_mtime,
+            "url": f"/api/projects/{name}/files/{p.name}",
+        })
+    return out
+
+
+@app.get("/api/projects/{name}/files")
+async def project_files(name: str):
+    return {"files": _list_project_files(name)}
+
+
+@app.post("/api/projects/{name}/files")
+async def project_files_upload(name: str, upload: UploadFile = File(...)):
+    rt = get_runtime(name)
+    filename = _safe_filename(upload.filename or "")
+    dest = rt.dir / filename
+    data = await upload.read()
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file too large (limit 50 MB)")
+    dest.write_bytes(data)
+    return {"files": _list_project_files(name)}
+
+
+@app.get("/api/projects/{name}/files/{filename}")
+async def project_file_download(name: str, filename: str):
+    rt = get_runtime(name)
+    dest = rt.dir / _safe_filename(filename)
+    if not dest.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    media = "application/octet-stream"
+    return FileResponse(dest, media_type=media, filename=dest.name)
+
+
+@app.delete("/api/projects/{name}/files/{filename}")
+async def project_file_delete(name: str, filename: str):
+    rt = get_runtime(name)
+    dest = rt.dir / _safe_filename(filename)
+    if not dest.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    dest.unlink()
+    return {"files": _list_project_files(name)}
 
 
 @app.post("/api/projects/{name}/kernel/reset")

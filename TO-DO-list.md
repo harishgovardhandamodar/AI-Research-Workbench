@@ -79,7 +79,7 @@ Branch: `agentic-experimentation` (base `8344264`).
 - [x] **T8 · Artifact serving across restarts** — `/artifacts/{id}` falls back to
   scanning project dirs instead of 404 when runtime not loaded.
 
-- [ ] **T9 · File upload endpoint** — `POST /api/projects/{name}/files`
+- [x] **T9 · File upload endpoint** — `POST /api/projects/{name}/files`
   (multipart → project dir), surfaces in the file picker.
 
 - [ ] **T10 · Approval resilience + audit** — reject pending approvals on WS

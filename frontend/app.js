@@ -683,6 +683,60 @@ async function refreshState() {
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
   refreshNotebooks();
   loadWorkflow();
+  loadFiles();
+}
+
+function renderFiles(files) {
+  const c = $("file-list");
+  if (!c) return;
+  c.innerHTML = "";
+  if (!files.length) {
+    c.innerHTML = '<div class="empty">No project files yet. Upload a CSV, data file or script.</div>';
+    return;
+  }
+  for (const f of files) {
+    const d = document.createElement("div");
+    d.className = "file-row";
+    const kb = f.size > 1024 ? (f.size / 1024).toFixed(1) + " KB" : f.size + " B";
+    d.innerHTML = `<a class="file-name" href="${esc(f.url)}" target="_blank" rel="noopener" title="Open">${esc(f.name)}</a>
+      <span class="muted file-size">${esc(kb)}</span>
+      <button class="btn subtle small file-del" data-name="${esc(f.name)}">✕</button>`;
+    d.querySelector(".file-del").addEventListener("click", () => deleteFile(f.name));
+    c.appendChild(d);
+  }
+}
+
+async function loadFiles() {
+  try {
+    const r = await api(`/api/projects/${state.project}/files`);
+    renderFiles(r.files || []);
+  } catch (e) { /* files list is best-effort */ }
+}
+
+async function uploadFiles() {
+  const input = $("file-input");
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("upload", file, file.name);
+  try {
+    const res = await fetch(B(`/api/projects/${state.project}/files`), {
+      method: "POST", body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    renderFiles(data.files || []);
+    input.value = "";
+    toast(`Uploaded ${file.name}`);
+  } catch (e) { toast("Upload failed: " + e.message, 4000); }
+}
+
+async function deleteFile(name) {
+  try {
+    const r = await api(`/api/projects/${state.project}/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+    renderFiles(r.files || []);
+    toast(`Deleted ${name}`);
+  } catch (e) { toast("Delete failed: " + e.message, 4000); }
 }
 
 function renderMessages(msgs) {
@@ -867,8 +921,11 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".tabpane").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
+    if (t.dataset.tab === "files") loadFiles();
   });
 });
+$("file-upload-btn").addEventListener("click", uploadFiles);
+$("files-refresh").addEventListener("click", loadFiles);
 
 /* ============================ experiments ================================= */
 
