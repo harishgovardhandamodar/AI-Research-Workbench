@@ -85,7 +85,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .mainview-btn.active { color: var(--text); border-color: var(--accent); background: rgba(53,196,182,.1); }
 
 /* expanded experiments panel (main view) */
-#exp-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; }
+#exp-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
 #exp-panel.hidden { display: none; }
 
 /* agent dashboard (main view) */
@@ -116,8 +116,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .exp-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .exp-toolbar select { font-size: 12px; }
 .exp-hint { font-size: 11.5px; }
-.exp-main-chart { flex: 1 1 auto; min-height: 0; }
-.exp-main-chart svg { height: 100%; min-height: 320px; }
+.exp-main-chart { flex: 1 0 auto; height: 62vh; min-height: 520px; position: relative; overflow: hidden; user-select: none; }
+.exp-main-chart svg { height: 100%; min-height: 0; }
 .exp-main-detail { flex: 0 0 auto; max-height: 45vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 10px; }
 
 .scroll { overflow-y: auto; }
@@ -282,8 +282,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 .empty { color: var(--text-dim); font-size: 12.5px; padding: 14px 4px; font-style: italic; }
 
-/* ---------- knowledge graph viewer ---------- */
-.modal-box.nb.graph { display: flex; }
+/* ---------- knowledge graph viewer (lonewolf graph theme) ---------- */
+.modal-box.nb.graph { display: flex; max-height: none; height: calc(100vh - 24px); }
 .graph-body { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding: 10px 14px; gap: 8px; }
 .graph-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 0 0 auto; }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -293,19 +293,19 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   border: 1px solid var(--border); border-left: 3px solid var(--tcolor);
   border-radius: 12px; padding: 2px 10px; font-size: 11px; cursor: pointer;
 }
-.graph-chip:hover { border-color: var(--accent); }
+.graph-chip:hover { border-color: #a974ff; box-shadow: 0 0 10px rgba(169,116,255,.25); }
 .graph-chip.off { opacity: .35; text-decoration: line-through; }
 .graph-stats { font-size: 11.5px; margin-left: auto; white-space: nowrap; }
 .graph-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .graph-svg-wrap {
   flex: 1 1 auto; min-width: 0; min-height: 0;
-  background: #0a0e13; border: 1px solid var(--border); border-radius: 10px;
-  overflow: hidden; position: relative; cursor: grab;
+  background: #0a0a0d; border: 1px solid #332d44; border-radius: 10px;
+  overflow: hidden; position: relative; cursor: grab; user-select: none;
 }
 .graph-svg-wrap svg { width: 100%; height: 100%; display: block; }
 #graph-detail {
   flex: 0 0 260px; width: 260px; min-height: 0; overflow-y: auto;
-  background: var(--bg-3); border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+  background: #111118; border: 1px solid #332d44; border-radius: 10px; padding: 10px;
 }
 .gx-detail-empty { color: var(--text-dim); font-size: 12px; font-style: italic; }
 .gx-detail-title { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; }
@@ -318,19 +318,53 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   background: rgba(255,255,255,.03); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; margin-bottom: 4px; cursor: pointer; font: inherit;
 }
-.gx-conn:hover { border-color: var(--accent); }
+.gx-conn:hover { border-color: #a974ff; }
 .gx-conn-rel { font-size: 10px; color: var(--text-dim); font-family: var(--mono); }
 .gx-conn-node { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.gx-edge { stroke: #2a3440; stroke-width: 1; }
-.gx-edge.sel { stroke: var(--accent); stroke-width: 1.6; }
+.gx-edge { stroke: #463a66; stroke-width: 1; }
+.gx-edge.sel { stroke: #a974ff; stroke-width: 1.6; filter: drop-shadow(0 0 4px rgba(169,116,255,.6)); }
 .gx-node { cursor: pointer; }
-.gx-node circle { transition: r .1s ease, filter .1s ease; }
-.gx-node:hover circle { filter: brightness(1.3); stroke: #fff; }
-.gx-node.sel circle { stroke: #fff; stroke-width: 2; }
-.gx-node.near circle { filter: brightness(1.15); }
-.gx-label { fill: var(--text-dim); font-size: 10px; pointer-events: none; paint-order: stroke; stroke: #0a0e13; stroke-width: 2px; }
-.gx-hint { fill: var(--text-dim); font-size: 11px; font-style: italic; }
+.gx-node circle { filter: drop-shadow(0 0 6px rgba(169,116,255,.35)); transition: r .1s ease, filter .1s ease; }
+.gx-node:hover circle { filter: brightness(1.25) drop-shadow(0 0 10px rgba(169,116,255,.6)); stroke: #fff; }
+.gx-node.sel circle { stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 14px rgba(169,116,255,.9)); }
+.gx-node.near circle { filter: brightness(1.1) drop-shadow(0 0 8px rgba(169,116,255,.5)); }
+.gx-label { fill: #cdbcf2; font-size: 10px; pointer-events: none; paint-order: stroke; stroke: #0a0a0d; stroke-width: 2px; }
+.gx-hint { fill: #9b93ab; font-size: 11px; font-style: italic; }
+
+/* collapsible graph-view overlay: minimize to a slim bar instead of covering the app */
+#graph-modal { transition: background .2s; }
+#graph-modal.minimized {
+  background: transparent; align-items: flex-end; justify-content: flex-end;
+  padding: 16px; pointer-events: none;
+}
+#graph-modal.minimized .modal-box.nb.graph {
+  width: auto; height: auto; max-width: 440px;
+  pointer-events: auto; box-shadow: 0 0 30px rgba(169,116,255,.35);
+}
+#graph-modal.minimized .modal-head { padding: 10px 14px; }
+#graph-modal.minimized .modal-head h3 { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#graph-modal.minimized .graph-body { display: none; }
+#graph-modal.minimized #graph-relayout,
+#graph-modal.minimized #graph-export { display: none; }
+
+/* lonewolf-style floating graph controls (+, −, reset) */
+.graph-controls {
+  position: absolute; bottom: 14px; left: 14px;
+  display: flex; gap: 6px; z-index: 5;
+}
+.graph-controls button {
+  width: 32px; height: 32px;
+  background: #111118; border: 1px solid #332d44; border-radius: 8px;
+  color: #cdbcf2; cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .2s;
+  font-family: inherit; line-height: 1;
+}
+.graph-controls button:hover {
+  border-color: #a974ff; color: #a974ff;
+  box-shadow: 0 0 10px rgba(169,116,255,.3);
+}
 
 
 /* ---------- modals ---------- */
@@ -443,20 +477,21 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .nb-tag { display: inline-block; font-size: 9.5px; background: rgba(53,196,182,.14); color: var(--accent); border-radius: 8px; padding: 0 6px; margin-left: 4px; vertical-align: middle; }
 .nbdesc { font-size: 11px; color: var(--text-dim); margin: 2px 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
-/* ---------- experiments ---------- */
+/* ---------- experiments (lonewolf graph theme) ---------- */
 .exp-views { display: flex; gap: 6px; margin: 8px 0 6px; }
 .expview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; padding: 3px 10px; cursor: pointer; }
-.expview-btn.active { color: var(--text); border-color: var(--accent); }
+.expview-btn.active { color: var(--text); border-color: #a974ff; background: rgba(169,116,255,.12); }
 .exp-metric { margin-bottom: 8px; }
 .exp-metric select { width: 100%; font-size: 12px; }
 .exp-view { min-height: 220px; }
-.exp-view svg { width: 100%; height: auto; display: block; background: var(--bg-3); border: 1px solid var(--border); border-radius: 8px; }
+.exp-view svg { width: 100%; height: auto; display: block; background: #0a0a0d; border: 1px solid #332d44; border-radius: 10px; }
+#expmain-timeline svg, #expmain-graph svg { height: 100%; width: 100%; }
 .exp-view .empty { padding: 18px 10px; color: var(--text-dim); font-size: 12px; text-align: center; }
 .exp-node { cursor: pointer; }
-.exp-node circle { stroke: var(--bg-2); stroke-width: 1.5; }
+.exp-node circle { stroke: #19132b; stroke-width: 1.5; }
 .exp-node text { font-size: 9px; fill: var(--text-dim); pointer-events: none; }
-.exp-node.selected circle { stroke: var(--accent); stroke-width: 3; }
-.exp-edge { stroke: var(--accent); opacity: .25; }
+.exp-node.selected circle { stroke: #fff; stroke-width: 3; filter: drop-shadow(0 0 12px rgba(169,116,255,.8)); }
+.exp-edge { stroke: #a974ff; opacity: .35; }
 .exp-detail { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 .exp-detail .ed-head { font-weight: 700; font-size: 13px; }
 .exp-detail .ed-meta { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 8px; }

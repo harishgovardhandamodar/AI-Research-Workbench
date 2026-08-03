@@ -316,6 +316,7 @@
       <div class="modal-head-actions">
         <button id="graph-relayout" class="btn subtle small" title="Recompute the layout">Relayout</button>
         <button id="graph-export" class="btn subtle small" title="Open the raw graph JSON">JSON</button>
+        <button id="graph-minimize" class="btn subtle small" title="Minimize">▁</button>
         <button class="btn subtle" id="graph-close" title="Close">✕</button>
       </div>
     </div>
@@ -356,7 +357,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v22";
+  window.FOX_VER = "v28";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
