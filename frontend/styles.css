@@ -63,7 +63,18 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 /* ---------- layout ---------- */
 #main { display: flex; flex: 1 1 auto; min-height: 0; }
 #chat-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
-#side-panel { flex: 0 0 360px; border-left: 1px solid var(--border); background: var(--bg-2); display: flex; flex-direction: column; }
+#side-panel {
+  flex: 0 0 360px; width: 360px;
+  border-left: 1px solid var(--border); background: var(--bg-2);
+  display: flex; flex-direction: column;
+  transition: flex-basis .25s ease, width .25s ease, opacity .25s ease;
+}
+#app.side-collapsed #side-panel {
+  flex-basis: 0; width: 0; border-left: none; opacity: 0; overflow: hidden;
+}
+#side-toggle { font-size: 13px; line-height: 1; }
+#app.side-collapsed #side-toggle::before { content: "❮"; }
+#app:not(.side-collapsed) #side-toggle::before { content: "❯"; }
 
 .scroll { overflow-y: auto; }
 #messages { flex: 1 1 auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 16px; }

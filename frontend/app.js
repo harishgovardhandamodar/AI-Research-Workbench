@@ -639,6 +639,14 @@ $("model-select").addEventListener("change", async (e) => {
   setTimeout(connect, 200);
 });
 $("settings-btn").addEventListener("click", openSettings);
+$("side-toggle").addEventListener("click", () => {
+  const collapsed = document.getElementById("app").classList.toggle("side-collapsed");
+  try { localStorage.setItem("fox.sidePanel", collapsed ? "0" : "1"); } catch (e) {}
+});
+try {
+  if (localStorage.getItem("fox.sidePanel") === "0")
+    document.getElementById("app").classList.add("side-collapsed");
+} catch (e) {}
 $("print-btn").addEventListener("click", () => {
   const h = $("print-header");
   h.innerHTML = `<h1>Fox — AI Science Workbench · chat transcript</h1>`
