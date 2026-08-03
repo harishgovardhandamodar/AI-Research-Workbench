@@ -478,6 +478,9 @@ FRESH_WORKFLOW_WORDS = [
     "different results", "force rerun", "force re-run", "fresh results",
 ]
 
+# Words that make the workflow COMPARE past runs instead of running a new one.
+COMPARE_WORKFLOW_WORDS = ["compare", "comparison", "comparing"]
+
 
 def fresh_requested(text: str) -> bool:
     """True when the prompt asks to force a fresh rerun with new results."""
@@ -485,10 +488,28 @@ def fresh_requested(text: str) -> bool:
     return any(w in low for w in FRESH_WORKFLOW_WORDS)
 
 
-async def run_privacy_workflow(rt: ProjectRuntime, emit, fresh: bool = False) -> str:
-    """Run the privacy workflow script and register its reports/figures as artifacts."""
+def compare_requested(text: str) -> bool:
+    """True when the prompt asks to compare results across workflow runs."""
+    low = (text or "").lower()
+    if not any(w in low for w in COMPARE_WORKFLOW_WORDS):
+        return False
+    # Require some run/result context to avoid false positives on everyday chat.
+    return any(w in low for w in ("run", "result", "privacy", "workflow",
+                                  "experiment", "seed", "comparison"))
+
+
+async def run_privacy_workflow(rt: ProjectRuntime, emit,
+                               fresh: bool = False, compare: bool = False) -> str:
+    """Run (or compare) the privacy workflow and register outputs as artifacts."""
     script = PRIVACY_WORKFLOW["script"]
-    args = [script, "--fresh"] if fresh else [script]
+    base_report_dir = ROOT / PRIVACY_WORKFLOW["report_dir"]
+    runs_file = PROJECTS_DIR.parent / "privacy_runs.json"   # persistent volume
+    out_dir = base_report_dir / "compare" if compare else base_report_dir
+    args = [script, "--runs-file", str(runs_file), "--out-dir", str(out_dir)]
+    if fresh:
+        args.append("--fresh")
+    if compare:
+        args.append("--compare")
     proc = await asyncio.create_subprocess_exec(
         sys.executable, *args, cwd=str(ROOT),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -501,7 +522,7 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit, fresh: bool = False) ->
     if err:
         summary += "\n[stderr]\n" + err.decode(errors="replace")[-2000:]
 
-    report_dir = ROOT / PRIVACY_WORKFLOW["report_dir"]
+    report_dir = out_dir
     artifact_names = []
     fig_links = []
     if report_dir.exists():
@@ -531,9 +552,9 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit, fresh: bool = False) ->
                     pass
 
     # Build a chat message that includes the run summary AND the full report
-    # (audit trail), with each figure embedded inline next to its stage section.
-    audit = (report_dir / "audit_trail.md")
-    report_md = audit.read_text() if audit.exists() else ""
+    # (audit trail or comparison), with figures embedded inline.
+    report_file = "compare_report.md" if compare else "audit_trail.md"
+    report_md = (report_dir / report_file).read_text() if (report_dir / report_file).exists() else ""
     summary_block = "\n".join(
         f"    {ln}" if ln.strip() else ln for ln in summary.splitlines())
 
@@ -546,29 +567,46 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit, fresh: bool = False) ->
             lambda m: f"![{m.group(1)}](/artifacts/{fig_by_name[m.group(1)]})",
             report_md)
 
-    lines = [
-        "## Privacy workflow — peer exploitation · red team · DP robustness",
-        "",
-        "The workflow ran **3 stages** on synthetic SWIFT data "
-        "(obfuscation-study generator) and produced the reports below, which are "
-        "also saved as artifacts.",
-    ]
-    if fresh:
+    if compare:
+        lines = [
+            "## Privacy workflow — run comparison",
+            "",
+            "Compared the **stored workflow runs** (run history is kept in the "
+            "project volume). The comparison report and figure below are also "
+            "saved as artifacts.",
+        ]
+        if report_md:
+            lines += ["", "### Comparison report", "", report_md]
         lines += [
             "",
-            "> **Fresh rerun** — this run used a new random seed, so the numbers, "
-            "figures and reports below are **new** and differ from previous runs.",
+            "> Tip: run the workflow a few more times (e.g. add \"rerun with "
+            "fresh results\") to build up more runs to compare.",
         ]
-    lines += [
-        "",
-        "### Run summary",
-        "",
-        "```text",
-        summary_block[:6000],
-        "```",
-    ]
-    if report_md:
-        lines += ["", "### Full report (audit trail)", "", report_md]
+    else:
+        lines = [
+            "## Privacy workflow — peer exploitation · red team · DP robustness",
+            "",
+            "The workflow ran **3 stages** on synthetic SWIFT data "
+            "(obfuscation-study generator) and produced the reports below, which "
+            "are also saved as artifacts.",
+        ]
+        if fresh:
+            lines += [
+                "",
+                "> **Fresh rerun** — this run used a new random seed, so the "
+                "numbers, figures and reports below are **new** and differ from "
+                "previous runs.",
+            ]
+        lines += [
+            "",
+            "### Run summary",
+            "",
+            "```text",
+            summary_block[:6000],
+            "```",
+        ]
+        if report_md:
+            lines += ["", "### Full report (audit trail)", "", report_md]
     lines += [
         "",
         "> Artifacts registered: " + ", ".join(artifact_names),
@@ -665,9 +703,10 @@ async def ws_chat(ws: WebSocket, name: str):
             try:
                 mid = rt.store.add_message("user", text)
                 await emit("user_message", {"id": mid, "content": text})
-                if match_workflow(text):
-                    result = await run_privacy_workflow(rt, emit,
-                                                        fresh=fresh_requested(text))
+                if match_workflow(text) or compare_requested(text):
+                    result = await run_privacy_workflow(
+                        rt, emit, fresh=fresh_requested(text),
+                        compare=compare_requested(text))
                     amid = rt.store.add_message("assistant", result)
                     await emit("assistant_message", {"id": amid, "content": result})
                     await emit("done", {})

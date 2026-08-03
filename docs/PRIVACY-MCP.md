@@ -164,6 +164,20 @@ reports (a "Fresh rerun" note is added to the chat message). Standalone:
 .venv/bin/python examples/privacy/run_peer_exploitation.py --seed 7  # specific seed
 ```
 
+**Run comparison.** Every run's key metrics are appended to a run-history file
+(`<workbench>/privacy_runs.json`, i.e. the persistent volume, so history
+survives container rebuilds). To compare runs, include a compare marker in the
+prompt — e.g. *"compare the results of the privacy runs"*. The backend then
+produces a **run comparison** (no new run): side-by-side Stage-1 linkage and
+Stage-3 DP-robustness tables across the two most recent runs, a comparison
+figure, and insights on sampling variance — all served in the chat and saved as
+artifacts. Standalone:
+
+```bash
+.venv/bin/python examples/privacy/run_peer_exploitation.py --compare \
+    --runs-file /path/to/privacy_runs.json
+```
+
 ## 5. Workbench integration guidance
 
 | Capability | How the workbench uses it |
