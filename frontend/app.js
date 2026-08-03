@@ -385,19 +385,49 @@ function showApproval(p) {
   state.pendingApproval = p;
   $("approval-reason").textContent = p.reason || "A shell command requires your permission.";
   $("approval-command").textContent = p.command;
-  $("approval-modal").classList.remove("hidden");
+  $("approval-temp").checked = false;
+  const modal = $("approval-modal");
+  modal.classList.remove("hidden");
   setBusyStatus("⏸ Waiting for your approval…");
+  // Popup alert so the ask is never silently missed.
+  try {
+    if ("Notification" in window) {
+      if (Notification.permission === "granted") {
+        new Notification("Fox needs your permission", { body: (p.command || "").slice(0, 120) });
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then((perm) => {
+          if (perm === "granted")
+            new Notification("Fox needs your permission", { body: (p.command || "").slice(0, 120) });
+        });
+      }
+    }
+  } catch (e) { /* notifications unavailable */ }
+  toast("⚠️ Permission required — approve or deny in the popup", 6000);
+  // Keep drawing attention until it is resolved.
+  if (state._approvalPulse) clearInterval(state._approvalPulse);
+  state._approvalPulse = setInterval(() => modal.classList.toggle("pulse"), 900);
+}
+
+function closeApproval() {
+  if (state._approvalPulse) { clearInterval(state._approvalPulse); state._approvalPulse = null; }
+  $("approval-modal").classList.add("hidden");
 }
 
 $("approval-allow").addEventListener("click", () => {
-  $("approval-modal").classList.add("hidden");
-  if (state.pendingApproval) send({ type: "approval", request_id: state.pendingApproval.request_id, decision: true });
+  const temporary = $("approval-temp").checked;
+  closeApproval();
+  if (state.pendingApproval)
+    send({ type: "approval", request_id: state.pendingApproval.request_id,
+           decision: true, temporary });
   state.pendingApproval = null;
+  setBusyStatus("");
 });
 $("approval-deny").addEventListener("click", () => {
-  $("approval-modal").classList.add("hidden");
-  if (state.pendingApproval) send({ type: "approval", request_id: state.pendingApproval.request_id, decision: false });
+  closeApproval();
+  if (state.pendingApproval)
+    send({ type: "approval", request_id: state.pendingApproval.request_id, decision: false });
   state.pendingApproval = null;
+  setBusyStatus("");
 });
 
 /* ============================ turn lifecycle ============================== */

@@ -253,13 +253,16 @@ class MCPRegistry:
                                 f"⏸ Waiting for your approval to run {sname}__{tool.name}…"})
                         except Exception:  # noqa: BLE001
                             pass
-                    ok = await approval.request(
+                    ok, temporary = await approval.request(
                         "mcp_tool", key,
                         f"MCP tool '{tool.name}' on server '{sname}' may modify data "
                         f"or launch compute. Approve?")
                     if not ok:
                         return "[denied by user]"
-                    permissions.record("mcp_tool", key, "allow")
+                    # A temporary approval is NOT remembered, so the next similar
+                    # request still prompts (the ask is never silenced).
+                    if not temporary:
+                        permissions.record("mcp_tool", key, "allow")
             try:
                 text, is_err = await conn.call_tool(tool.name, args)
             except Exception as e:  # noqa: BLE001

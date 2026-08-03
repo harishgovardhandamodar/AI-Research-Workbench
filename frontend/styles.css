@@ -238,6 +238,23 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   display: flex; align-items: center; justify-content: center;
 }
 .modal.hidden { display: none; }
+
+/* approval popup: prominent, pulsing, on top of everything */
+#approval-modal { z-index: 90; }
+.approval-popup {
+  border: 2px solid var(--warn);
+  box-shadow: 0 0 0 4px rgba(217,164,65,.18), 0 12px 40px rgba(0,0,0,.5);
+  max-width: 480px;
+}
+.approval-popup .modal-head { border-bottom-color: rgba(217,164,65,.4); }
+.approval-popup .modal-head h3 { color: var(--warn); }
+.approval-temp { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
+.approval-temp input { margin-right: 6px; }
+#approval-modal.pulse .modal-box { animation: approval-pulse 1s ease-in-out infinite; }
+@keyframes approval-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(217,164,65,.18), 0 12px 40px rgba(0,0,0,.5); }
+  50% { box-shadow: 0 0 0 14px rgba(217,164,65,.05), 0 0 0 4px rgba(217,164,65,.45), 0 12px 40px rgba(0,0,0,.6); }
+}
 .modal-box {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
   width: min(640px, 92vw); max-height: 90vh; display: flex; flex-direction: column;

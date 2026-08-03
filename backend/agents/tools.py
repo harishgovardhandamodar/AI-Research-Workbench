@@ -210,11 +210,12 @@ async def _run_shell(ctx: ToolContext, command: str, timeout: float = 30.0) -> s
     if decision == "ask":
         if ctx.approval is None:
             return "[denied] This command requires approval but no approval channel is available."
-        ok = await ctx.approval.request("run_shell", command,
-                                        "Shell command requires approval")
+        ok, temporary = await ctx.approval.request("run_shell", command,
+                                                   "Shell command requires approval")
         if not ok:
             return "[denied by user]"
-        ctx.permissions.record("run_shell", command, "allow")
+        if not temporary:
+            ctx.permissions.record("run_shell", command, "allow")
     # Run via a real shell so quoting, pipes and redirects work as the model expects.
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash", "-c", command,

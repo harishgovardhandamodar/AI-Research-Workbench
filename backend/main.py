@@ -1120,7 +1120,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 msg = await ws.receive_json()
                 mtype = msg.get("type")
                 if mtype == "approval":
-                    broker.resolve(msg.get("request_id", ""), bool(msg.get("decision")))
+                    broker.resolve(msg.get("request_id", ""), bool(msg.get("decision")),
+                                   bool(msg.get("temporary", False)))
                 elif mtype == "ping":
                     await emit("pong", {})
                 else:
