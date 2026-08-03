@@ -24,6 +24,7 @@ class Artifact:
         self.code = kw.get("code", "")
         self.env = kw.get("env", {})
         self.message_id = kw.get("message_id", "")
+        self.run_id = kw.get("run_id", "")
         self.created_at = kw.get("created_at", time.time())
         self.data_path = kw.get("data_path", "")
         self.data_type = kw.get("data_type", "text")
@@ -34,6 +35,7 @@ class Artifact:
             "id": self.id, "kind": self.kind, "name": self.name,
             "description": self.description, "code": self.code,
             "env": self.env, "message_id": self.message_id,
+            "run_id": self.run_id,
             "created_at": self.created_at, "data_path": self.data_path,
             "data_type": self.data_type, "size": self.size,
         }
@@ -60,9 +62,14 @@ class ArtifactStore:
             """CREATE TABLE IF NOT EXISTS artifacts (
                 id TEXT PRIMARY KEY,
                 kind TEXT, name TEXT, description TEXT, code TEXT,
-                env TEXT, message_id TEXT, created_at REAL,
+                env TEXT, message_id TEXT, run_id TEXT, created_at REAL,
                 data_path TEXT, data_type TEXT, size INTEGER)"""
         )
+        # Migration: older databases were created before run_id existed.
+        try:
+            self._conn.execute("ALTER TABLE artifacts ADD COLUMN run_id TEXT")
+        except sqlite3.OperationalError:
+            pass
         self._conn.commit()
 
     # -- writes -------------------------------------------------------------
@@ -81,15 +88,27 @@ class ArtifactStore:
             self._write_bytes(artifact, data, data_type)
         self._conn.execute(
             """INSERT INTO artifacts (id, kind, name, description, code, env,
-               message_id, created_at, data_path, data_type, size)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+               message_id, run_id, created_at, data_path, data_type, size)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (artifact.id, artifact.kind, artifact.name, artifact.description,
              artifact.code, json.dumps(artifact.env), artifact.message_id,
-             artifact.created_at, artifact.data_path, artifact.data_type,
-             artifact.size),
+             artifact.run_id, artifact.created_at, artifact.data_path,
+             artifact.data_type, artifact.size),
         )
         self._conn.commit()
         return artifact
+
+    def link_artifacts(self, artifact_ids: list, message_id: str = "",
+                       run_id: str = "") -> int:
+        """Attach conversation provenance to artifacts after a turn completes."""
+        if not artifact_ids:
+            return 0
+        rows = self._conn.executemany(
+            "UPDATE artifacts SET message_id=COALESCE(NULLIF(message_id,''), ?),"
+            " run_id=COALESCE(NULLIF(run_id,''), ?) WHERE id=?",
+            [(message_id, run_id, aid) for aid in artifact_ids])
+        self._conn.commit()
+        return rows.rowcount
 
     def update_description(self, artifact_id: str, description: str):
         self._conn.execute("UPDATE artifacts SET description=? WHERE id=?",
@@ -129,6 +148,7 @@ class ArtifactStore:
             id=row["id"], kind=row["kind"], name=row["name"],
             description=row["description"], code=row["code"],
             env=json.loads(row["env"] or "{}"), message_id=row["message_id"],
+            run_id=row["run_id"],
             created_at=row["created_at"], data_path=row["data_path"],
             data_type=row["data_type"], size=row["size"],
         )

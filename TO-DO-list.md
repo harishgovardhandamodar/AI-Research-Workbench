@@ -45,7 +45,7 @@ Branch: `agentic-experimentation` (base `8344264`).
   - New endpoint `GET /api/projects/{name}/runs` (+ `GET …/runs/{id}`).
   - Verify: run a chat turn → curl `/runs` shows the row with tool sequence.
 
-- [ ] **T3 · Link artifacts to runs/messages**
+- [x] **T3 · Link artifacts to runs/messages**
   - Thread `run_id`/`message_id` through `ToolContext` into `_run_python`,
     `_save_artifact`, `_notebook_artifact_cb` (replaces `message_id=""`).
   - Verify: produce an artifact via agent turn → artifact row has the ids.

@@ -751,7 +751,7 @@ def _nb_artifact_cb(rt: ProjectRuntime, emit):
 
 
 async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
-                              fresh: bool) -> str:
+                              fresh: bool, message_id: str = "") -> str:
     """Execute a notebook (fresh seed when requested) and summarize the results."""
     from .experiments import record_experiment
     from .notebooks import NotebookError
@@ -773,7 +773,7 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
         env = await rt.kernels.get_env()
         art = Artifact(kind="figure", name="notebook-figure",
                        description=f"Figure produced by notebook '{name}'",
-                       code=source, env=env, message_id="")
+                       code=source, env=env, message_id=message_id)
         rt.artifacts.add_artifact(art, data=base64.b64decode(fig_b64), data_type="png")
         collected.append({"name": art.name, "id": art.id})
         if emit:
@@ -1103,6 +1103,7 @@ async def ws_chat(ws: WebSocket, name: str):
             try:
                 user_tags = message_tags("user", text)
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
+                coordinator.ctx.message_id = str(mid)
                 await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
                 if match_workflow(text) or compare_requested(text):
                     compare = compare_requested(text)
@@ -1124,7 +1125,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     name, fresh = nb
                     await emit("status", {"message": f"Executing notebook {name}"
                                         + (" with a fresh seed…" if fresh else "…")})
-                    result = await run_notebook_intent(rt, emit, name, fresh)
+                    result = await run_notebook_intent(rt, emit, name, fresh,
+                                                        message_id=str(mid))
                     tags = ["notebook", "fresh rerun" if fresh else "run"]
                     amid = rt.store.add_message("assistant", result, {"tags": tags})
                     await emit("assistant_message", {"id": amid, "content": result,

@@ -167,6 +167,7 @@ class Coordinator:
         self._run_seq = []
         self._run_artifacts = []
         self._run_started = time.time()
+        self.ctx.run_id = ""
         status = "done"
         text = ""
         try:
@@ -259,7 +260,7 @@ class Coordinator:
             if m.get("role") == "user":
                 prompt = m.get("content", "")
                 break
-        self.record({
+        run_id = self.record({
             "prompt": prompt,
             "reply": text,
             "status": status,
@@ -268,6 +269,15 @@ class Coordinator:
             "tool_sequence": self._run_seq,
             "artifact_ids": self._run_artifacts,
         })
+        if run_id and self._run_artifacts:
+            self.ctx.run_id = str(run_id)
+            try:
+                self.ctx.artifacts.link_artifacts(
+                    self._run_artifacts,
+                    message_id=self.ctx.message_id,
+                    run_id=str(run_id))
+            except Exception:  # noqa: BLE001
+                pass
 
     @staticmethod
     def _fallback() -> str:
@@ -292,5 +302,5 @@ def _artifact_ids(name: str, result: str) -> list[str]:
         ids.append(m.group(1))
     m = re.search(r"Figures generated \(artifacts\):\s*([^\n]+)", result)
     if m:
-        ids.extend(re.findall(r"\b[a-z0-9]{8}\b", m.group(1)))
+        ids.extend(re.findall(r"\b[0-9a-f]{32}\b", m.group(1)))
     return ids
