@@ -64,7 +64,7 @@ Branch: `agentic-experimentation` (base `8344264`).
   - Reviewer emits **next-step suggestions** (not only issues).
   - Verify: set a goal, run twice, observe improvement message + suggestion.
 
-- [ ] **T6 · Automatic run report generation**
+- [x] **T6 · Automatic run report generation**
   - `POST /api/projects/{name}/runs/{id}/report` assembles prompt + decisions +
     artifacts + metrics into a markdown lab-notebook entry (LLM-assisted),
     saved as a `text` artifact; visible in chat.

@@ -423,6 +423,20 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .goal-chip .muted { font-size: 11px; }
 .goal-del { background: none; border: none; color: var(--text-dim); cursor: pointer; margin-left: auto; }
 
+/* ---------- recent runs / reports ---------- */
+.exp-runs { margin-bottom: 12px; }
+.exp-runs-head { display: flex; align-items: center; gap: 8px; }
+.exp-runs-title { font-weight: 700; font-size: 13px; }
+.exp-runs-head .spacer { flex: 1; }
+#runs-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.run-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+}
+.run-id { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
+.run-prompt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-meta { font-size: 11px; white-space: nowrap; }
+
 /* ---------- run comparison ---------- */
 .exp-compare { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .exp-compare-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

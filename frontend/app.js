@@ -886,7 +886,40 @@ async function loadExperiments() {
     state.agentRuns = rr.runs || [];
   } catch (e) { state.agentRuns = state.agentRuns || []; }
   populateExpCompare();
+  renderRuns();
   loadGoals();
+}
+
+function renderRuns() {
+  const el = $("runs-list");
+  if (!el) return;
+  const runs = state.agentRuns || [];
+  if (!runs.length) {
+    el.innerHTML = '<div class="empty">No agent runs yet in this project.</div>';
+    return;
+  }
+  el.innerHTML = "";
+  for (const r of runs.slice().reverse()) {
+    const d = document.createElement("div");
+    d.className = "run-row";
+    d.innerHTML = `<span class="run-id">#${r.id}</span>
+      <span class="run-prompt">${esc((r.prompt || "").slice(0, 80))}</span>
+      <span class="run-meta muted">${esc(r.status)}${r.metrics && Object.keys(r.metrics).length ? " · " + Object.keys(r.metrics).length + " metric(s)" : ""}</span>
+      <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
+    el.appendChild(d);
+  }
+  el.querySelectorAll(".run-report").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.textContent = "…";
+      try {
+        const r = await api(`/api/projects/${state.project}/runs/${b.dataset.id}/report`, { method: "POST" });
+        toast(`Report for run #${b.dataset.id} added to chat (artifact ${r.artifact_id.slice(0, 8)}).`);
+        await refreshState();
+      } catch (e) { toast("Failed to generate report: " + e.message); }
+      b.disabled = false;
+      b.textContent = "Report";
+    }));
 }
 
 async function loadGoals() {
@@ -1570,6 +1603,7 @@ $("exp-cmp-b").addEventListener("change", renderExpCompare);
 $("goal-add").addEventListener("click", addGoal);
 $("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
+$("runs-refresh").addEventListener("click", loadExperiments);
 
 function setExpMetric(v) {
   state.expMetric = v;

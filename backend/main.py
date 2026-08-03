@@ -518,6 +518,110 @@ async def project_run(name: str, rid: int):
     return {"run": run}
 
 
+async def build_run_report(rt: ProjectRuntime, run: dict) -> str:
+    """Assemble a lab-notebook markdown report for an agent run.
+
+    Deterministic sections (prompt, metrics, tool trace, artifacts, review) are
+    always present; an LLM executive summary is prepended when available.
+    """
+    lines = [
+        f"# Run #{run['id']} — report",
+        "",
+        f"- **Prompt**: {run.get('prompt') or '—'}",
+        f"- **Status**: {run.get('status')}",
+        f"- **Started**: {_fmt_ts(run.get('started_at'))}",
+        f"- **Finished**: {_fmt_ts(run.get('finished_at'))}",
+    ]
+    metrics = run.get("metrics") or {}
+    if metrics:
+        lines += ["", "## Metrics", "",
+                  "| metric | value |", "|---|---|"]
+        for k in sorted(metrics):
+            lines.append(f"| {k} | {metrics[k]:.6g} |")
+    seq = run.get("tool_sequence") or []
+    if seq:
+        lines += ["", "## Tool trace", ""]
+        for t in seq:
+            mark = "ok" if t.get("ok") else "FAILED"
+            lines.append(f"- `{t.get('name')}` ({mark}) — args: `{t.get('args') or ''}`")
+            lines.append(f"  - result: `{(t.get('result') or '').strip() or '(empty)'}`")
+    arts = run.get("artifact_ids") or []
+    if arts:
+        lines += ["", "## Artifacts", ""]
+        for aid in arts:
+            art = rt.artifacts.get(aid)
+            if art:
+                lines.append(f"- [{aid}]({art.url or f'/artifacts/{aid}'}) — {art.name} ({art.kind})")
+            else:
+                lines.append(f"- `{aid}` (not found)")
+    review = run.get("review") or {}
+    findings = review.get("findings") or []
+    suggestions = review.get("suggestions") or []
+    if findings or suggestions:
+        lines += ["", "## Review", ""]
+        for f in findings:
+            lines.append(f"- **{f.get('severity')}**: {f.get('message')}")
+        if suggestions:
+            lines += ["", "### Suggested next steps", ""]
+            for s in suggestions:
+                lines.append(f"- {s}")
+    base = "\n".join(lines)
+
+    # LLM-assisted executive summary (best effort).
+    try:
+        summary = await _summarize_run(rt, run, base)
+    except Exception:  # noqa: BLE001
+        summary = ""
+    if summary:
+        base = f"## Executive summary\n\n{summary}\n\n" + base
+    return base
+
+
+def _fmt_ts(ts) -> str:
+    if not ts:
+        return "—"
+    try:
+        return datetime.fromtimestamp(float(ts), timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (TypeError, ValueError, OSError):
+        return str(ts)
+
+
+async def _summarize_run(rt: ProjectRuntime, run: dict, report: str) -> str:
+    prompt = (
+        "You are writing the executive summary of a lab-notebook report. Given the "
+        "run facts below, write 3-5 concise sentences: what was tried, the key "
+        "metrics, and whether the result is good or needs improvement. No markdown "
+        "headings, just plain sentences.\n\n"
+        f"Prompt: {run.get('prompt', '')}\n\nReport:\n{report[:4000]}")
+    resp = await rt.llm.complete([{"role": "user", "content": prompt}],
+                                 temperature=0.2, tools=None)
+    text = (resp.get("content") or "").strip()
+    return text[:2000] if text else ""
+
+
+@app.post("/api/projects/{name}/runs/{rid}/report")
+async def project_run_report(name: str, rid: int):
+    """Generate a lab-notebook markdown report for a run and save it as an artifact."""
+    from .artifacts.store import Artifact
+    rt = get_runtime(name)
+    run = rt.store.get_run(rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    report = await build_run_report(rt, run)
+    env = {}
+    try:
+        env = await rt.kernels.get_env()
+    except Exception:  # noqa: BLE001
+        pass
+    art = Artifact(kind="text", name=f"run-{rid}-report",
+                   description=f"Auto-generated lab-notebook report for run #{rid}",
+                   code="# auto-generated report", env=env)
+    rt.artifacts.add_artifact(art, data=report.encode(), data_type="text")
+    mid = rt.store.add_message("assistant", report,
+                               {"tags": ["report", f"run #{rid}"]})
+    return {"report": report, "artifact_id": art.id, "message_id": mid}
+
+
 @app.get("/api/projects/{name}/goals")
 async def project_goals(name: str):
     return {"goals": get_runtime(name).store.list_goals()}
