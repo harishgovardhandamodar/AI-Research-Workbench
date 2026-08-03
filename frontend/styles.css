@@ -76,6 +76,21 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 #app.side-collapsed #side-toggle::before { content: "❮"; }
 #app:not(.side-collapsed) #side-toggle::before { content: "❯"; }
 
+/* main view switcher (Chat / Experiments) */
+.mainview-tabs { display: flex; gap: 4px; margin-right: 8px; }
+.mainview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 12px; padding: 4px 12px; cursor: pointer; }
+.mainview-btn.active { color: var(--text); border-color: var(--accent); background: rgba(53,196,182,.1); }
+
+/* expanded experiments panel (main view) */
+#exp-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; }
+#exp-panel.hidden { display: none; }
+.exp-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.exp-toolbar select { font-size: 12px; }
+.exp-hint { font-size: 11.5px; }
+.exp-main-chart { flex: 1 1 auto; min-height: 0; }
+.exp-main-chart svg { height: 100%; min-height: 320px; }
+.exp-main-detail { flex: 0 0 auto; max-height: 45vh; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 10px; }
+
 .scroll { overflow-y: auto; }
 #messages { flex: 1 1 auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 16px; }
 

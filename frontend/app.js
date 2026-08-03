@@ -751,21 +751,18 @@ async function loadExperiments() {
   } catch (e) { /* silent */ }
 }
 
-function expMetric() { return $("exp-metric") ? $("exp-metric").value : "linkage50"; }
-function expView() {
-  const b = document.querySelector(".expview-btn.active");
-  return b ? b.dataset.expview : "timeline";
-}
+function expMetric() { return state.expMetric || "linkage50"; }
 function expNodeValue(run, metric) {
   const v = run[metric];
   return (v == null || Number.isNaN(Number(v))) ? null : Number(v);
 }
 function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
 
-function buildExpSvg(opts) {
+function buildExpSvg(opts, metric, W) {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  const metric = expMetric();
-  const W = 640, H = 300, padL = 40, padR = 14, padT = 18, padB = 26;
+  metric = metric || expMetric();
+  W = W || 640;
+  const H = 300, padL = 40, padR = 14, padT = 18, padB = 26;
   const vals = nodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   if (!present.length) return '<div class="empty">No numeric values for this metric.</div>';
@@ -815,15 +812,31 @@ function buildExpSvg(opts) {
 function renderExperiments() {
   const runs = state.expRuns || [];
   const empty = '<div class="empty">No workflow runs yet. Trigger the privacy workflow in chat (or add &quot;rerun with fresh results&quot;) to build up a history.</div>';
-  const tl = $("exp-timeline"), gr = $("exp-graph");
-  if (tl) tl.innerHTML = runs.length ? buildExpSvg({ line: true, edges: false }) : empty;
-  if (gr) gr.innerHTML = runs.length ? buildExpSvg({ line: false, edges: true }) : empty;
+  const metric = expMetric();
+  const charts = [
+    ["exp-timeline", { line: true, edges: false }, metric, 640],
+    ["exp-graph", { line: false, edges: true }, metric, 640],
+    ["expmain-timeline", { line: true, edges: false }, metric, 1160],
+    ["expmain-graph", { line: false, edges: true }, metric, 1160],
+  ];
+  for (const [id, opts, m, w] of charts) {
+    const el = $(id);
+    if (el) el.innerHTML = runs.length ? buildExpSvg(opts, m, w) : empty;
+  }
   renderExpDetail();
 }
 
 function selectRun(id) {
   state.expSelected = id;
   renderExperiments();
+}
+
+function switchMainView(view) {
+  $("chat-panel").classList.toggle("hidden", view !== "chat");
+  $("exp-panel").classList.toggle("hidden", view !== "experiments");
+  document.querySelectorAll(".mainview-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mainview === view));
+  if (view === "experiments") loadExperiments();
 }
 
 function similarRuns(id) {
@@ -848,7 +861,9 @@ function renderExpDetail() {
   const idx = runs.findIndex((r) => r.id === state.expSelected);
   const run = idx >= 0 ? runs[idx] : null;
   if (!run) {
-    if (el) el.innerHTML = '<div class="empty">Select a run node to see its summary, findings and related runs.</div>';
+    const msg = '<div class="empty">Select a run node to see its summary, findings and related runs.</div>';
+    if (el) el.innerHTML = msg;
+    if ($("expmain-detail")) $("expmain-detail").innerHTML = msg;
     return;
   }
   const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
@@ -889,7 +904,9 @@ function renderExpDetail() {
       h += `<div class="ed-sim"><a class="ed-sim-link" data-id="${esc(s.id)}">Run #${s.index + 1} (seed ${s.seed})</a> — similarity <b>${((s.similarity || 0) * 100).toFixed(0)}%</b> · overlap <b>${((s.overlap || 0) * 100).toFixed(0)}%</b></div>`;
     }
   }
-  el.innerHTML = h;
+  if (el) el.innerHTML = h;
+  const elMain = $("expmain-detail");
+  if (elMain && elMain !== el) elMain.innerHTML = h;
 }
 
 async function openArtifactById(id) {
@@ -900,29 +917,50 @@ async function openArtifactById(id) {
   } catch (e) { toast("Artifact not found"); }
 }
 
-["exp-timeline", "exp-graph"].forEach((id) => {
+["exp-timeline", "exp-graph", "expmain-timeline", "expmain-graph"].forEach((id) => {
   $(id).addEventListener("click", (e) => {
     const n = e.target.closest(".exp-node");
     if (n) selectRun(n.dataset.id);
   });
 });
-$("exp-detail").addEventListener("click", (e) => {
-  const sim = e.target.closest(".ed-sim-link");
-  if (sim) { selectRun(sim.dataset.id); return; }
-  const art = e.target.closest(".ed-art");
-  if (art) openArtifactById(art.dataset.artId);
-});
-$("exp-refresh").addEventListener("click", loadExperiments);
-$("exp-metric").addEventListener("change", renderExperiments);
-document.querySelectorAll(".expview-btn").forEach((b) => {
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".expview-btn").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    $("exp-timeline").classList.toggle("hidden", b.dataset.expview !== "timeline");
-    $("exp-graph").classList.toggle("hidden", b.dataset.expview !== "graph");
-    renderExperiments();
+["exp-detail", "expmain-detail"].forEach((id) => {
+  $(id).addEventListener("click", (e) => {
+    const sim = e.target.closest(".ed-sim-link");
+    if (sim) { selectRun(sim.dataset.id); return; }
+    const art = e.target.closest(".ed-art");
+    if (art) openArtifactById(art.dataset.artId);
   });
 });
+$("exp-refresh").addEventListener("click", loadExperiments);
+$("exp-refresh-main").addEventListener("click", loadExperiments);
+
+function setExpMetric(v) {
+  state.expMetric = v;
+  if ($("exp-metric")) $("exp-metric").value = v;
+  if ($("exp-metric-main")) $("exp-metric-main").value = v;
+  renderExperiments();
+}
+$("exp-metric").addEventListener("change", (e) => setExpMetric(e.target.value));
+$("exp-metric-main").addEventListener("change", (e) => setExpMetric(e.target.value));
+
+function bindExpView(scope) {
+  const root = scope === "main" ? "#exp-panel" : "#side-panel";
+  const tl = scope === "main" ? "expmain-timeline" : "exp-timeline";
+  const gr = scope === "main" ? "expmain-graph" : "exp-graph";
+  document.querySelectorAll(root + " .expview-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(root + " .expview-btn").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      $(tl).classList.toggle("hidden", b.dataset.expview !== "timeline");
+      $(gr).classList.toggle("hidden", b.dataset.expview !== "graph");
+    });
+  });
+}
+bindExpView("side");
+bindExpView("main");
+
+$("mainview-chat").addEventListener("click", () => switchMainView("chat"));
+$("mainview-experiments").addEventListener("click", () => switchMainView("experiments"));
 
 /* ============================ notebooks =================================== */
 
