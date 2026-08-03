@@ -135,6 +135,13 @@ function setConn(kind) {
   el.title = kind === "ok" ? "Connected" : kind === "busy" ? "Working…" : "Disconnected";
 }
 
+function setBusyStatus(txt) {
+  const el = $("busy-status");
+  if (!el) return;
+  el.textContent = txt || "";
+  el.classList.toggle("working", !!txt);
+}
+
 function send(obj) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(obj));
 }
@@ -585,17 +592,21 @@ function onError(msg) {
   onTurnDone();
 }
 
-async function sendChat() {
+async function sendChat(textOverride, intent) {
   const input = $("input");
-  const text = input.value.trim();
+  const text = textOverride !== undefined ? textOverride : input.value.trim();
   if (!text || state.busy) return;
-  input.value = "";
-  autoResize(input);
+  if (textOverride !== undefined) {
+    input.value = "";
+    autoResize(input);
+  }
   state.busy = true;
   $("send-btn").disabled = true;
   input.disabled = true;
   setConn("busy");
-  send({ type: "chat", content: text });
+  const payload = { type: "chat", content: text };
+  if (intent) payload.intent = intent;
+  send(payload);
 }
 
 /* ============================ settings =================================== */
@@ -867,6 +878,9 @@ function autoResize(ta) {
 /* ============================ wire up ==================================== */
 
 $("send-btn").addEventListener("click", sendChat);
+document.querySelectorAll(".quick").forEach((b) =>
+  b.addEventListener("click", () =>
+    sendChat(b.dataset.text || "", b.dataset.intent || "")));
 // Clicking a figure rendered inside a chat message opens its artifact modal.
 $("messages").addEventListener("click", (e) => {
   const img = e.target.closest("img.chat-fig");

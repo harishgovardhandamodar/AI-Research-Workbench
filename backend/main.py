@@ -1580,21 +1580,36 @@ async def ws_chat(ws: WebSocket, name: str):
                                   review=r.get("review")),
                               max_iters=rt.max_iters, mcp=mcp_registry)
 
-    async def handle_turn(text: str):
+    async def handle_turn(text: str, intent: str = ""):
         async with rt.lock:
             try:
                 user_tags = message_tags("user", text)
+                # Explicit intents (from the UI quick-action buttons) route
+                # deterministically instead of relying on keyword matching.
+                workflow_mode = compare_mode = fresh_mode = False
+                if intent == "privacy_workflow":
+                    workflow_mode = True
+                    user_tags = ["privacy workflow"]
+                elif intent == "privacy_workflow_fresh":
+                    workflow_mode = fresh_mode = True
+                    user_tags = ["privacy workflow", "fresh rerun"]
+                elif intent == "privacy_compare":
+                    workflow_mode = compare_mode = True
+                    user_tags = ["privacy workflow", "compare runs"]
+                else:
+                    workflow_mode = bool(match_workflow(text) or compare_requested(text))
+                    compare_mode = compare_requested(text)
+                    fresh_mode = fresh_requested(text)
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
                 coordinator.ctx.message_id = str(mid)
                 await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
-                if match_workflow(text) or compare_requested(text):
-                    compare = compare_requested(text)
+                if workflow_mode:
                     await emit("status", {"message":
-                        ("Comparing previous workflow runs…" if compare else
+                        ("Comparing previous workflow runs…" if compare_mode else
                          "Running the privacy workflow — peer exploitation · "
                          "red team · DP robustness…")})
                     result = await run_privacy_workflow(
-                        rt, emit, fresh=fresh_requested(text), compare=compare)
+                        rt, emit, fresh=fresh_mode, compare=compare_mode)
                     amid = rt.store.add_message(
                         "assistant", result,
                         {"tags": message_tags("assistant", result)})
@@ -1684,7 +1699,7 @@ async def ws_chat(ws: WebSocket, name: str):
             if msg.get("type") == "chat":
                 text = (msg.get("content") or "").strip()
                 if text:
-                    await handle_turn(text)
+                    await handle_turn(text, intent=msg.get("intent") or "")
     except WebSocketDisconnect:
         pass
     finally:

@@ -101,7 +101,7 @@ Branch: `agentic-experimentation` (base `8344264`).
   `POST …/fork` (session forking).
 - [x] **T16 · Persistent knowledge graph** — auto-export arXiv graph per paper.
 - [x] **T17 · Persistent R kernel** (or document limitation in UI).
-- [ ] **T18 · Replace brittle keyword intents** with an LLM intent classifier or
+- [x] **T18 · Replace brittle keyword intents** with an LLM intent classifier or
   explicit UI buttons.
 
 ---

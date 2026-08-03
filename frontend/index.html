@@ -124,6 +124,14 @@
       </div>
       <div id="messages" class="scroll"></div>
       <div id="busy-status" class="busy-status" title="Current activity"></div>
+      <div id="quick-actions" class="quick-actions">
+        <button class="btn subtle small quick" data-intent="privacy_workflow"
+                data-text="Run the privacy workflow">🛡 Privacy workflow</button>
+        <button class="btn subtle small quick" data-intent="privacy_workflow_fresh"
+                data-text="Run the privacy workflow with a fresh seed">↻ Fresh rerun</button>
+        <button class="btn subtle small quick" data-intent="privacy_compare"
+                data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
+      </div>
       <div id="composer">
         <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
@@ -324,7 +332,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v20";
+  window.FOX_VER = "v21";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
