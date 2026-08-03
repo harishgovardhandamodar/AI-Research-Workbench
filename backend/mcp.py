@@ -54,6 +54,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "graphrag",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/graphrag_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 

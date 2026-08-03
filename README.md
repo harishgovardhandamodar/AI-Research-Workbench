@@ -121,6 +121,11 @@ Claude, Cursor or VS Code could use.
   notes, experiment spec, result comparison, a provenance-linked replication
   report, and a queryable **knowledge graph** (Paper/Author/Method/Dataset/
   Metric/Experiment/Claim) that can be merged across papers (`arxiv__*` tools).
+- A built-in **`mcp_servers/graphrag_tools.py`** server adds lightweight
+  **GraphRAG**: `graphrag__graphrag_retrieve` scores nodes against a query,
+  expands their neighbourhood over the knowledge graphs, and returns an
+  LLM-ready subgraph context; `graphrag__graphrag_answer_prompt` turns it into a
+  provenance-citing answer prompt.
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may
