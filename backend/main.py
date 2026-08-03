@@ -24,6 +24,7 @@ from .agents.coordinator import Coordinator
 from .agents.reviewer import Reviewer
 from .agents.tools import ToolContext
 from .artifacts.store import Artifact, ArtifactStore
+from .experiments import build_graph, load_experiments
 from .kernels.manager import KernelManager
 from .llm import DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TOOL_BASE_URL, LLMClient, LLMError
 from .mcp import DEFAULT_SERVERS, MCPRegistry
@@ -276,6 +277,20 @@ async def list_models():
         return JSONResponse({"error": str(e)}, status_code=503)
 
 
+# --------------------------------------------------- experiments / run history
+
+@app.get("/api/experiments")
+async def get_experiments():
+    """List all privacy-workflow runs (timestamps, settings, metrics, artifacts)."""
+    return {"experiments": load_experiments()}
+
+
+@app.get("/api/experiments/graph")
+async def get_experiments_graph():
+    """Graph view: one node per run + similarity/overlap edges between runs."""
+    return build_graph()
+
+
 # --------------------------------------------------------- REST: projects ---
 
 @app.get("/api/projects")
@@ -343,6 +358,15 @@ async def artifact_file(artifact_id: str):
                 art.data_type if art else "text", "application/octet-stream")
             return FileResponse(rt.artifacts.artifacts_dir / Path(art.data_path).name,
                                 media_type=media)
+    return JSONResponse({"error": "not found"}, status_code=404)
+
+
+@app.get("/api/artifacts/{artifact_id}/meta")
+async def artifact_meta(artifact_id: str):
+    for rt in runtimes.values():
+        art = rt.artifacts.get(artifact_id)
+        if art is not None:
+            return {"artifact": art.to_dict()}
     return JSONResponse({"error": "not found"}, status_code=404)
 
 
@@ -524,6 +548,7 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
 
     report_dir = out_dir
     artifact_names = []
+    artifact_refs = []
     fig_links = []
     if report_dir.exists():
         try:
@@ -545,11 +570,23 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
             else:
                 continue
             artifact_names.append(art.name)
+            artifact_refs.append({"name": art.name, "id": art.id})
             if emit:
                 try:
                     await emit("artifact", {"artifact": art.to_dict()})
                 except Exception:  # noqa: BLE001
                     pass
+
+    # Attach the produced artifact names to the run's history record so the
+    # Experiments tab can link each run to its reports/figures.
+    if not compare and runs_file.exists():
+        try:
+            runs = json.loads(runs_file.read_text())
+            if runs and isinstance(runs, list):
+                runs[-1]["artifacts"] = artifact_refs
+                runs_file.write_text(json.dumps(runs, indent=2))
+        except (json.JSONDecodeError, OSError):
+            pass
 
     # Build a chat message that includes the run summary AND the full report
     # (audit trail or comparison), with figures embedded inline.

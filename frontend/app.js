@@ -148,7 +148,7 @@ function handleEvent(type, p) {
     case "approval_request": showApproval(p); break;
     case "review_start": setReviewStatus("Reviewing latest turn…"); break;
     case "review": renderReview(p.findings || []); break;
-    case "done": onTurnDone(); break;
+    case "done": onTurnDone(); loadExperiments(); break;
     case "error": onError(p.message); break;
   }
 }
@@ -735,6 +735,192 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".tabpane").forEach((x) => x.classList.remove("active"));
     t.classList.add("active");
     $("tab-" + t.dataset.tab).classList.add("active");
+    if (t.dataset.tab === "experiments") loadExperiments();
+  });
+});
+
+/* ============================ experiments ================================= */
+
+async function loadExperiments() {
+  try {
+    const r = await api("/api/experiments");
+    state.expRuns = r.experiments || [];
+    const g = await api("/api/experiments/graph");
+    state.expGraph = g;
+    renderExperiments();
+  } catch (e) { /* silent */ }
+}
+
+function expMetric() { return $("exp-metric") ? $("exp-metric").value : "linkage50"; }
+function expView() {
+  const b = document.querySelector(".expview-btn.active");
+  return b ? b.dataset.expview : "timeline";
+}
+function expNodeValue(run, metric) {
+  const v = run[metric];
+  return (v == null || Number.isNaN(Number(v))) ? null : Number(v);
+}
+function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
+
+function buildExpSvg(opts) {
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const metric = expMetric();
+  const W = 640, H = 300, padL = 40, padR = 14, padT = 18, padB = 26;
+  const vals = nodes.map((n) => expNodeValue(n, metric));
+  const present = vals.filter((v) => v != null);
+  if (!present.length) return '<div class="empty">No numeric values for this metric.</div>';
+  const min = Math.min(...present), max = Math.max(...present), span = (max - min) || 1;
+  const xs = nodes.map((_, i) => nodes.length > 1
+    ? padL + i * (W - padL - padR) / (nodes.length - 1) : W / 2);
+  const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
+
+  let g = "";
+  for (let k = 0; k <= 4; k++) {
+    const v = min + span * k / 4, yy = y(v);
+    g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#232b36" stroke-width="0.5"></line>`;
+    g += `<text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#8b97a5">${_fmtAxis(v)}</text>`;
+  }
+
+  let line = "";
+  if (opts.line) {
+    const pts = vals.map((v, i) => v == null ? null : `${xs[i]},${y(v)}`).filter(Boolean).join(" ");
+    if (pts) line = `<polyline points="${pts}" fill="none" stroke="#35c4b6" stroke-width="1.5" opacity="0.7"></polyline>`;
+  }
+
+  let edges = "";
+  if (opts.edges && state.expGraph) {
+    const byId = {}; nodes.forEach((n, i) => { byId[n.id] = i; });
+    for (const e of state.expGraph.edges || []) {
+      const a = byId[e.source], b = byId[e.target];
+      if (a == null || b == null || vals[a] == null || vals[b] == null) continue;
+      const sim = e.similarity || 0;
+      if (sim < 0.35 && !(e.overlap > 0.5)) continue;
+      edges += `<line class="exp-edge" x1="${xs[a]}" y1="${y(vals[a])}" x2="${xs[b]}" `
+        + `y2="${y(vals[b])}" stroke-width="${(0.5 + sim * 2.5).toFixed(2)}"></line>`;
+    }
+  }
+
+  let nodeSvg = "";
+  nodes.forEach((n, i) => {
+    if (vals[i] == null) return;
+    const color = n.fresh ? "#d9a441" : "#4f8cff";
+    const sel = state.expSelected === n.id ? " selected" : "";
+    nodeSvg += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
+      + `<circle r="7" fill="${color}"></circle><text y="-11" text-anchor="middle">#${i + 1}</text></g>`;
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}">${g}${line}${edges}${nodeSvg}</svg>`;
+}
+
+function renderExperiments() {
+  const runs = state.expRuns || [];
+  const empty = '<div class="empty">No workflow runs yet. Trigger the privacy workflow in chat (or add &quot;rerun with fresh results&quot;) to build up a history.</div>';
+  const tl = $("exp-timeline"), gr = $("exp-graph");
+  if (tl) tl.innerHTML = runs.length ? buildExpSvg({ line: true, edges: false }) : empty;
+  if (gr) gr.innerHTML = runs.length ? buildExpSvg({ line: false, edges: true }) : empty;
+  renderExpDetail();
+}
+
+function selectRun(id) {
+  state.expSelected = id;
+  renderExperiments();
+}
+
+function similarRuns(id) {
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const byId = {}; nodes.forEach((n) => { byId[n.id] = n; });
+  const out = [];
+  for (const e of (state.expGraph && state.expGraph.edges) || []) {
+    let other = null;
+    if (e.source === id) other = e.target;
+    else if (e.target === id) other = e.source;
+    if (!other) continue;
+    const n = byId[other];
+    if (n) out.push({ id: n.id, index: n.index, seed: n.seed,
+                      similarity: e.similarity, overlap: e.overlap });
+  }
+  return out.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 3);
+}
+
+function renderExpDetail() {
+  const el = $("exp-detail");
+  const runs = state.expRuns || [];
+  const idx = runs.findIndex((r) => r.id === state.expSelected);
+  const run = idx >= 0 ? runs[idx] : null;
+  if (!run) {
+    if (el) el.innerHTML = '<div class="empty">Select a run node to see its summary, findings and related runs.</div>';
+    return;
+  }
+  const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
+  const last1 = s1[s1.length - 1] || {}, first3 = s3[0] || {};
+  const set = run.settings || {};
+  const badge = run.fresh ? '<span class="exp-badge fresh">fresh</span>'
+                          : '<span class="exp-badge det">deterministic</span>';
+  const time = new Date(run.timestamp).toLocaleString();
+  const pct = (v) => (v == null ? "—" : (Number(v) * 100).toFixed(1) + "%");
+
+  let h = `<div class="ed-head">Run #${idx + 1} · seed ${run.seed} ${badge}</div>`;
+  h += `<div class="ed-meta">${time}</div>`;
+  h += `<div class="ed-sec">Settings</div><table>
+    <tr><th>Population</th><td>${set.population_size ?? "—"}</td></tr>
+    <tr><th>Victim sample</th><td>${set.victim_size ?? "—"}</td></tr>
+    <tr><th>Coverage</th><td>${(set.coverage_levels || []).join(", ") || "—"}</td></tr>
+    <tr><th>ε levels</th><td>${(set.dp_epsilons || []).join(", ") || "—"}</td></tr>
+  </table>`;
+  h += `<div class="ed-sec">Key metrics</div><table>
+    <tr><th>Linkage @50% coverage</th><td>${pct(last1.linkage_success)}</td></tr>
+    <tr><th>Plausibility @50%</th><td>${last1.attack_plausibility != null ? last1.attack_plausibility.toFixed(2) + " (" + (last1.plausibility_verdict || "?") + ")" : "—"}</td></tr>
+    <tr><th>Unique records</th><td>${s2.unique_pct != null ? s2.unique_pct.toFixed(1) + "%" : "—"}</td></tr>
+    <tr><th>Extreme+unique corner cases</th><td>${s2.extreme_unique_corner_cases ?? "—"}</td></tr>
+    <tr><th>Re-identification risk</th><td>${s2.reid_risk ?? "—"}</td></tr>
+    <tr><th>Membership advantage</th><td>${s2.membership_advantage ?? "—"}</td></tr>
+    <tr><th>DP attacker RMSE @ε=0.1</th><td>${first3.attacker_pred_rmse != null ? first3.attacker_pred_rmse.toFixed(2) : "—"}</td></tr>
+  </table>`;
+  if (s2.message) h += `<div class="ed-sec">Findings</div><div class="ed-find">${esc(s2.message)}</div>`;
+  h += `<div class="ed-sec">Artifacts</div>`;
+  for (const a of run.artifacts || []) {
+    const obj = typeof a === "object" ? a : { name: a, id: null };
+    h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+  }
+  const sims = similarRuns(run.id);
+  if (sims.length) {
+    h += `<div class="ed-sec">Similar / overlapping runs</div>`;
+    for (const s of sims) {
+      h += `<div class="ed-sim"><a class="ed-sim-link" data-id="${esc(s.id)}">Run #${s.index + 1} (seed ${s.seed})</a> — similarity <b>${((s.similarity || 0) * 100).toFixed(0)}%</b> · overlap <b>${((s.overlap || 0) * 100).toFixed(0)}%</b></div>`;
+    }
+  }
+  el.innerHTML = h;
+}
+
+async function openArtifactById(id) {
+  if (!id) return;
+  try {
+    const r = await api(`/api/artifacts/${encodeURIComponent(id)}/meta`);
+    openArtifact(r.artifact);
+  } catch (e) { toast("Artifact not found"); }
+}
+
+["exp-timeline", "exp-graph"].forEach((id) => {
+  $(id).addEventListener("click", (e) => {
+    const n = e.target.closest(".exp-node");
+    if (n) selectRun(n.dataset.id);
+  });
+});
+$("exp-detail").addEventListener("click", (e) => {
+  const sim = e.target.closest(".ed-sim-link");
+  if (sim) { selectRun(sim.dataset.id); return; }
+  const art = e.target.closest(".ed-art");
+  if (art) openArtifactById(art.dataset.artId);
+});
+$("exp-refresh").addEventListener("click", loadExperiments);
+$("exp-metric").addEventListener("change", renderExperiments);
+document.querySelectorAll(".expview-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".expview-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    $("exp-timeline").classList.toggle("hidden", b.dataset.expview !== "timeline");
+    $("exp-graph").classList.toggle("hidden", b.dataset.expview !== "graph");
+    renderExperiments();
   });
 });
 
@@ -1014,5 +1200,6 @@ $("notebook-modal").addEventListener("click", (e) => {
   $("model-select").value = state.config?.llm?.model || "";
   await refreshModels();
   await refreshState();
+  loadExperiments();
   connect();
 })();

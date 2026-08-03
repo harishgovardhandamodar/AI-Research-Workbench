@@ -178,6 +178,24 @@ artifacts. Standalone:
     --runs-file /path/to/privacy_runs.json
 ```
 
+**Experiment tracking + timeline/graph UI.** Each run record stores timestamps,
+settings (population/victim sizes, coverage, ε levels), metrics ("exposure"),
+and its artifact ids. The **Experiments tab** (in the side panel, parallel to
+chat) renders this history:
+
+- **Timeline view** — runs over time as a line/scatter chart, colored
+  deterministic vs fresh; pick the metric (linkage, plausibility, unique
+  records, DP RMSE) from a selector.
+- **Graph view** — the same nodes plus **similarity/overlap edges** between
+  runs (computed from the linkage curves and shared findings), edge thickness ∝
+  similarity, so you can see which experiments cluster.
+- **Click a node** → a detail panel with the run summary: settings, key
+  metrics, findings, its artifacts (click to open), and the top **similar /
+  overlapping runs** with similarity % — so you can trace how experiments
+  evolved.
+
+Data comes from `GET /api/experiments` and `GET /api/experiments/graph`.
+
 ## 5. Workbench integration guidance
 
 | Capability | How the workbench uses it |
