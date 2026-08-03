@@ -1,0 +1,36 @@
+services:
+  fox:
+    build: .
+    container_name: fox-workbench
+    ports:
+      - "8765:8765"
+    environment:
+      # Reach Ollama / hive gateway running on the Docker host.
+      # If you use the bundled `ollama` service instead, set these to
+      # http://ollama:11434/v1 (and http://ollama:11434/v1 for tools too).
+      FOX_BASE_URL: ${FOX_BASE_URL:-http://host.docker.internal:8081/v1}
+      FOX_TOOL_BASE_URL: ${FOX_TOOL_BASE_URL:-http://host.docker.internal:11434/v1}
+      FOX_MODEL: ${FOX_MODEL:-qwen3.6:latest}
+    extra_hosts:
+      # Lets "host.docker.internal" resolve to the host on Linux.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Persistent data: projects (SQLite + artifacts), kernels, config.
+      - fox_data:/app/workbench
+    restart: unless-stopped
+
+  # Optional: run Ollama itself as a container instead of using the host one.
+  # Enable with:  docker compose --profile ollama up
+  ollama:
+    image: ollama/ollama:latest
+    container_name: fox-ollama
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  fox_data:
+  ollama_data:

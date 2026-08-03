@@ -214,11 +214,19 @@
 <div id="toast" class="hidden"></div>
 
 <script>
-  document.getElementById("fox-css").href = (window.FOX_BASE || "") + "/styles.css";
+  // Cache-busting version for the static assets (bump when you change the UI).
+  window.FOX_VER = "v3";
+  document.getElementById("fox-css").href =
+    (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
-<script src="" id="fox-js"></script>
 <script>
-  document.getElementById("fox-js").src = (window.FOX_BASE || "") + "/app.js";
+  // Loading app.js via a fresh element (rather than setting src on an empty-src
+  // <script> tag) reliably triggers the fetch in every browser.
+  (function () {
+    var s = document.createElement("script");
+    s.src = (window.FOX_BASE || "") + "/app.js?" + window.FOX_VER;
+    document.body.appendChild(s);
+  })();
 </script>
 </body>
 </html>

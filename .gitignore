@@ -5,3 +5,7 @@ workbench/
 *.egg-info/
 examples/experiments/*.png
 examples/experiments/*.pdb
+examples/privacy/*.png
+examples/privacy/*.csv
+examples/privacy/reports/
+examples/obfuscation/obfuscation_report.md

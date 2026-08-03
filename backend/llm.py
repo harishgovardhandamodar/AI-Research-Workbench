@@ -13,13 +13,16 @@ cluster routes to.
 from __future__ import annotations
 
 import json
+import os
 from typing import AsyncIterator, Optional
 
 from openai import AsyncOpenAI
 
-DEFAULT_BASE_URL = "http://localhost:8081/v1"
-DEFAULT_TOOL_BASE_URL = "http://127.0.0.1:11434/v1"
-DEFAULT_MODEL = "qwen3.6:latest"
+# Endpoints are overridable via env vars (the Docker image uses
+# host.docker.internal to reach Ollama/gateway running on the host).
+DEFAULT_BASE_URL = os.environ.get("FOX_BASE_URL", "http://localhost:8081/v1")
+DEFAULT_TOOL_BASE_URL = os.environ.get("FOX_TOOL_BASE_URL", "http://127.0.0.1:11434/v1")
+DEFAULT_MODEL = os.environ.get("FOX_MODEL", "qwen3.6:latest")
 DEFAULT_MAX_ITERS = 12
 
 

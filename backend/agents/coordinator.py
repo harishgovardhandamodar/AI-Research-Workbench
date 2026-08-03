@@ -45,6 +45,42 @@ experiments live in examples/experiments/ (01_... 02_... 03_...). Run them with
 run_python by exec'ing the file, e.g. exec(open("examples/experiments/01_simple_decay_fit.py").read()).
 For experiments the user wants to keep as notebooks, use create_notebook and
 run_notebook so the results are stored inside the .ipynb file.
+
+Data-obfuscation experiments: the SWIFT obfuscation study is bundled under
+examples/obfuscation/ (data generator, obfuscation library, and 9 threat
+scenarios). Import it in the kernel with
+  import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd()))
+  from examples.obfuscation.swift_data import generate_swift
+  from examples.obfuscation import experiments as exp
+  df = generate_swift(2000, seed=42); report = exp.run_all(df)
+The notebooks examples/notebooks/18_obfuscation_techniques.ipynb and
+19_obfuscation_threat_scenarios.ipynb demonstrate the techniques and scenarios;
+run them with run_notebook. To obfuscate the user's own uploaded data, load it
+with pandas and use examples.obfuscation.obfuscate (apply_masking, tokenize,
+k_anonymize, noisy_aggregate, sanitize_metadata, fuzzy_bucket).
+
+Privacy: the "privacy" MCP server provides privacy__<tool> tools (PII detection,
+dataframe privacy assessment, membership-inference / re-identification
+evaluation, red-team checklists, Laplace/Gaussian differential privacy with
+budget tracking and (ε,δ) guarantee summaries, and schema-preserving synthetic
+data generation + quality reports). When handling potentially sensitive
+scientific data: 1) start with privacy__detect_pii_in_text and
+privacy__assess_dataframe_privacy; 2) if the user wants to share/publish, run
+privacy__privacy_redteam_checklist and privacy__reidentification_scenario;
+3) prefer synthetic data (privacy__generate_synthetic_tabular) or DP aggregates
+(privacy__apply_laplace_dp) over releasing microdata; 4) track privacy budget
+with privacy__dp_privacy_budget_report and surface the (ε,δ) guarantee from
+privacy__dp_guarantee_summary; 5) attach each assessment as an artifact.
+Example notebooks: examples/notebooks/20_privacy_assessment.ipynb,
+21_differential_privacy.ipynb, 22_synthetic_data.ipynb; runnable example:
+examples/privacy/run_privacy_eval.py.
+
+Privacy workflow: if the researcher asks to exploit privacy as a peer in the
+distribution / run corner-case red-team analysis / apply DP and check robustness
+/ document the process as an audit trail, the backend auto-runs
+examples/privacy/run_peer_exploitation.py (deterministic, no LLM needed) and
+registers its reports + figures as artifacts. You can also run it yourself with
+run_python by exec'ing that file, then summarize the stage 1-3 findings.
 """
 
 

@@ -209,13 +209,13 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 #mcp-server-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 
 /* ---------- notebooks ---------- */
-.modal-box.nb { width: min(860px, 96vw); height: 88vh; }
+.modal-box.nb { width: calc(100vw - 24px); height: calc(100vh - 24px); }
 .modal-head-actions { display: flex; gap: 6px; align-items: center; }
-.nb-cells { flex: 1 1 auto; overflow-y: auto; padding: 10px 0; display: flex; flex-direction: column; gap: 12px; }
+.nb-cells { flex: 1 1 auto; overflow-y: auto; padding: 12px 18px; display: flex; flex-direction: column; gap: 14px; width: 100%; }
 .nb-status { flex: 0 0 auto; padding: 8px 4px 0; font-size: 12px; color: var(--text-dim); min-height: 18px; }
 .nb-status.err { color: var(--danger); }
 
-.nb-cell { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); }
+.nb-cell { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); flex: 0 0 auto; min-width: 0; }
 .nb-cell:hover { border-color: #2e3a48; }
 .nb-cell-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--border); }
 .nb-cell-tag { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
@@ -232,7 +232,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .nb-markdown code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
 .nb-markdown pre { background: #0a0e13; border-radius: 6px; padding: 8px; overflow-x: auto; font-family: var(--mono); font-size: 12px; }
 
-.nb-source { width: 100%; min-height: 42px; resize: vertical; background: #0a0e13; color: var(--text); border: none; border-radius: 0 0 8px 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
+.nb-source { width: 100%; min-height: 42px; max-height: 480px; overflow-y: auto; resize: none; background: #0a0e13; color: var(--text); border: none; border-radius: 0 0 8px 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
 .nb-source:focus { outline: 1px solid var(--accent); }
 
 .nb-outputs { border-top: 1px solid var(--border); background: #0d1117; }

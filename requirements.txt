@@ -3,3 +3,5 @@ uvicorn[standard]>=0.29
 openai>=1.30
 websockets>=12.0
 python-multipart>=0.0.9
+mcp
+faker

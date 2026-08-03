@@ -616,6 +616,186 @@ NOTEBOOKS = {
             "                      ['Sobel magnitude', 'threshold 0.4', 'threshold 0.8']):\n"
             "    ax.imshow(im, cmap='gray'); ax.set_title(t); ax.axis('off')"),
     ],
+
+    # ------------------------------------------------ OBFUSCATION ------------
+    "18_obfuscation_techniques": [
+        (M, "# Data obfuscation techniques on SWIFT transaction data\n\nGenerate "
+            "synthetic SWIFT records, then apply each obfuscation technique from "
+            "the obfuscation study: field-level masking, tokenization, fuzzy "
+            "range blurring, noisy aggregation, metadata sanitization and "
+            "k-anonymity. Every figure becomes a workbench artifact."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
+            "from examples.obfuscation.swift_data import generate_swift\n"
+            "from examples.obfuscation import obfuscate as obf\n\n"
+            "df = generate_swift(2000, seed=42)\n"
+            "print(df.shape)\n"
+            "df[['sender_iban', 'sender_bic_swift_code', 'sender_institution_name',\n"
+            "    'sender_city', 'transaction_amount_usd']].head(3)"),
+        (C, "masked = obf.apply_masking(df, mask=['sender_iban', 'sender_bic_swift_code',\n"
+            "                                        'sender_institution_name', 'sender_city'])\n"
+            "masked[['sender_iban', 'sender_bic_swift_code',\n"
+            "        'sender_institution_name', 'sender_city']].head(3)"),
+        (C, "tok = obf.tokenize(df, columns=['sender_iban', 'receiver_iban', 'sender_bic_swift_code'])\n"
+            "print('IBAN -> token:', df['sender_iban'][0], '->', tok['sender_iban'][0])\n"
+            "print('Amount exact:', df['transaction_amount_usd'][0],\n"
+            "      '-> fuzzy:', obf.fuzzy_bucket(df['transaction_amount_usd'][0], width=5000))\n\n"
+            "anon, risk = obf.k_anonymize(df, ['booking_date', 'sender_city', 'transaction_amount_usd'], k=5)\n"
+            "print(f'Rows still in k<5 quasi-id classes after k-anonymity: {risk:.1%}')"),
+        (C, "import matplotlib.pyplot as plt\n"
+            "rows = df.head(6)\n"
+            "x = range(len(rows))\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.8))\n"
+            "axes[0].bar([i-0.2 for i in x], rows['sender_iban'].str.len(), width=0.4, label='original', color='#e05b5b')\n"
+            "axes[0].bar([i+0.2 for i in x], obf.apply_masking(df, mask=['sender_iban']).head(6)['sender_iban'].str.len(),\n"
+            "            width=0.4, label='masked', color='#35c4b6')\n"
+            "axes[0].set_ylabel('IBAN length (chars)'); axes[0].set_title('Masking preserves structure')\n"
+            "axes[0].legend()\n"
+            "axes[1].bar(['exact', 'fuzzy $5K'], [1.0, 1/8], color=['#e05b5b', '#35c4b6'])\n"
+            "axes[1].set_yscale('log'); axes[1].set_ylabel('guessing probability')\n"
+            "axes[1].set_title('Fuzzy ranges crush KBA guessing odds')"),
+    ],
+
+    "19_obfuscation_threat_scenarios": [
+        (M, "# The 8 obfuscation threat scenarios\n\nRun all adversarial scenarios "
+            "from the obfuscation study on synthetic SWIFT data — BEC/fraud, "
+            "insider threat, supply-chain leakage, sanctions evasion, corporate "
+            "espionage, test-environment exposure, account takeover and "
+            "re-identification — and compare the risk before vs after each "
+            "obfuscation control."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
+            "from examples.obfuscation.swift_data import generate_swift\n"
+            "from examples.obfuscation import experiments as exp\n\n"
+            "df = generate_swift(2000, seed=42)\n"
+            "print(f'{len(df):,} synthetic SWIFT records ready')"),
+        (C, "print(exp.experiment1_bec_fraud(df))"),
+        (C, "print(exp.experiment2_insider_threat(df))\n"
+            "print(exp.experiment3_supply_chain(df))"),
+        (C, "print(exp.experiment4_sanctions_evasion(df))\n"
+            "print(exp.experiment5_corporate_espionage(df))\n"
+            "print(exp.experiment6_test_environment(df))"),
+        (C, "print(exp.experiment7_ato_security(df))\n"
+            "print(exp.experiment8_reidentification(df))\n"
+            "print(exp.experiment9_counterparty(df))"),
+        (C, "report = exp.run_all(df)\n"
+            "open('examples/obfuscation/obfuscation_report.md', 'w').write(report)\n"
+            "print('Wrote examples/obfuscation/obfuscation_report.md with', len(report), 'chars')"),
+    ],
+
+    # ------------------------------------------------- PRIVACY MCP TOOLS -----
+    "20_privacy_assessment": [
+        (M, "# Privacy assessment & red-teaming (privacy MCP tools)\n\nBuild a "
+            "small clinical cohort and run the privacy server's detection, "
+            "assessment, membership-inference and re-identification tools — the "
+            "same functions the agent calls as `privacy__*` MCP tools."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
+            "from examples.privacy.clinical_cohort import build_cohort\n"
+            "from mcp_servers import privacy_tools as pt\n\n"
+            "cohort = build_cohort(200, seed=7)\n"
+            "cohort.to_csv('examples/privacy/clinical_cohort.csv', index=False)\n"
+            "print(cohort.shape)"),
+        (C, "print(pt.detect_pii_in_text(\n"
+            "    'Contact d.smith@example.org or +1 555-010-1234. Card 4111-1111-1111-1111. '\n"
+            "    'SSN 123-45-6789.'))"),
+        (C, "print(pt.assess_dataframe_privacy('examples/privacy/clinical_cohort.csv'))"),
+        (C, "print(pt.privacy_redteam_checklist('clinical cohort', has_model=False, public_release=True))\n"
+            "import numpy as np\n"
+            "rng = np.random.default_rng(7)\n"
+            "preds = np.concatenate([rng.uniform(0.6, 0.99, 400), rng.uniform(0.01, 0.4, 400)])\n"
+            "labels = [True]*400 + [False]*400\n"
+            "print(pt.membership_inference_eval(preds.tolist(), labels, 0.5))"),
+        (C, "eq = cohort.groupby(['age', 'zip_prefix', 'condition']).size().values\n"
+            "print(pt.reidentification_scenario(['age', 'zip_prefix', 'condition'], 50000, eq.tolist()))\n\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, ax = plt.subplots(figsize=(6.4, 3.6))\n"
+            "ax.hist(eq, bins=30, color='#4f8cff', edgecolor='#161c24')\n"
+            "ax.axvline(1, color='#e05b5b', ls='--', label=f\"{(eq == 1).mean()*100:.0f}% singletons\")\n"
+            "ax.set_yscale('log'); ax.set_xlabel('equivalence class size'); ax.set_ylabel('classes')\n"
+            "ax.legend(); ax.set_title('Re-identification risk — small cohort')"),
+    ],
+
+    "21_differential_privacy": [
+        (M, "# Differential privacy with the privacy MCP tools\n\nApply Laplace / "
+            "Gaussian mechanisms to real aggregate queries, track the privacy "
+            "budget, and read off the (ε, δ) guarantee."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
+            "import pandas as pd\n"
+            "from mcp_servers import privacy_tools as pt\n\n"
+            "# Ensure the cohort CSV exists (generated by 20_privacy_assessment).\n"
+            "if not Path('examples/privacy/clinical_cohort.csv').exists():\n"
+            "    from examples.privacy.clinical_cohort import build_cohort\n"
+            "    build_cohort(200, seed=7).to_csv('examples/privacy/clinical_cohort.csv', index=False)\n"
+            "cohort = pd.read_csv('examples/privacy/clinical_cohort.csv')\n"
+            "counts = cohort.groupby(cohort['admission_date'].str[:7]).size().sort_index()\n"
+            "print(counts)"),
+        (C, "import json\n"
+            "dp = json.loads(pt.apply_laplace_dp(counts.tolist(), epsilon=0.5, sensitivity=1.0, seed=7))\n"
+            "print('scale =', dp['scale'])\n"
+            "print('noisy =', [round(v, 1) for v in dp['noisy_values']])\n"
+            "print('guarantee =', dp['privacy_guarantee'])\n"
+            "print(pt.dp_guarantee_summary(0.5, 1e-6))"),
+        (C, "print(pt.dp_privacy_budget_report([\n"
+            "    {'epsilon': 0.5, 'delta': 0.0, 'description': 'admission histogram'},\n"
+            "    {'epsilon': 0.3, 'delta': 0.0, 'description': 'mean visit amount'},\n"
+            "    {'epsilon': 0.2, 'delta': 0.0, 'description': 'per-condition counts'},\n"
+            "]))\n\n"
+            "print('Total ε budget spent: 1.0 of a recommended 1.0 max.')"),
+        (C, "import numpy as np\nimport matplotlib.pyplot as plt\n"
+            "dp = json.loads(pt.apply_laplace_dp(counts.tolist(), epsilon=0.5, sensitivity=1.0, seed=7))\n"
+            "x = np.arange(len(counts))\n"
+            "fig, ax = plt.subplots(figsize=(8, 3.8))\n"
+            "ax.bar(x - 0.2, counts.values, width=0.4, label='original', color='#e05b5b')\n"
+            "ax.bar(x + 0.2, dp['noisy_values'], width=0.4, label='Laplace ε=0.5', color='#35c4b6')\n"
+            "ax.set_xticks(x); ax.set_xticklabels(counts.index, rotation=45, fontsize=8)\n"
+            "ax.set_ylabel('admissions / month'); ax.legend()\n"
+            "ax.set_title('Original vs differentially-private histogram')"),
+    ],
+
+    "22_synthetic_data": [
+        (M, "# Synthetic data from the privacy MCP tools\n\nGenerate a "
+            "schema-preserving synthetic version of the clinical cohort, then "
+            "compare utility (means, spreads, distributions) against the real "
+            "data before sharing."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
+            "from mcp_servers import privacy_tools as pt\n\n"
+            "# Ensure the cohort CSV exists (generated by 20_privacy_assessment).\n"
+            "if not Path('examples/privacy/clinical_cohort.csv').exists():\n"
+            "    from examples.privacy.clinical_cohort import build_cohort\n"
+            "    build_cohort(200, seed=7).to_csv('examples/privacy/clinical_cohort.csv', index=False)\n"
+            "print(pt.generate_synthetic_tabular(\n"
+            "    'examples/privacy/clinical_cohort.csv', num_rows=1000, method='smoothed', seed=7))"),
+        (C, "print(pt.synthetic_data_quality_report(\n"
+            "    'examples/privacy/clinical_cohort.csv',\n"
+            "    'examples/privacy/synthetic_clinical_cohort_1000.csv'))"),
+        (C, "import pandas as pd\nimport matplotlib.pyplot as plt\n"
+            "real = pd.read_csv('examples/privacy/clinical_cohort.csv')\n"
+            "synth = pd.read_csv('examples/privacy/synthetic_clinical_cohort_1000.csv')\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))\n"
+            "for ax, col in zip(axes, ['age', 'visit_amount_usd']):\n"
+            "    ax.hist(real[col], bins=25, alpha=0.6, label='real', color='#4f8cff')\n"
+            "    ax.hist(synth[col], bins=25, alpha=0.6, label='synthetic', color='#35c4b6')\n"
+            "    ax.set_xlabel(col); ax.set_ylabel('count'); ax.legend()\n"
+            "axes[0].set_title('Age — real vs synthetic')\n"
+            "axes[1].set_title('Visit amount — real vs synthetic')"),
+    ],
+
+    "23_privacy_peer_workflow": [
+        (M, "# Privacy workflow — peer exploitation · red team · DP robustness\n\n"
+            "This is the end-to-end pipeline triggered by the researcher's privacy "
+            "workflow prompt. Stage 1 models an attacker who is a *peer in the "
+            "distribution* (holding their own data from the same population at "
+            "different coverage levels); Stage 2 hunts corner cases with the "
+            "red-team MCP tools; Stage 3 releases the exploited aggregates under "
+            "Laplace DP and re-runs the attacks to measure robustness. A full "
+            "audit trail is written to examples/privacy/reports/."),
+        (C, "import sys\nfrom pathlib import Path\n"
+            "sys.path.insert(0, str(Path.cwd()))\n\n"
+            "exec(open('examples/privacy/run_peer_exploitation.py').read())"),
+    ],
 }
 
 

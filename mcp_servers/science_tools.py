@@ -17,7 +17,7 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 mcp = MCPServer("fox-science-tools", version="0.1.0")
-RO = ToolAnnotations(readOnlyHint=True)
+RO = ToolAnnotations(read_only_hint=True)
 
 
 def _aa_mass(seq: str) -> float:

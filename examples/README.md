@@ -39,9 +39,103 @@ written back *into the notebook*.
 | `15_large_metabolomics_pipeline` | large | metabolomics | 3 |
 | `16_large_double_pendulum` | large | physics / chaos | 2 |
 | `17_large_image_convolution` | large | image processing | 2 |
+| `18_obfuscation_techniques` | mid | data privacy / obfuscation | 1 |
+| `19_obfuscation_threat_scenarios` | mid | data privacy / threat modeling | 6 |
+| `20_privacy_assessment` | mid | data privacy / red-teaming | 1 |
+| `21_differential_privacy` | mid | data privacy / differential privacy | 1 |
+| `22_synthetic_data` | mid | data privacy / synthetic data | 1 |
 
 32 figures across 54 executable cells. Regenerate all of them with
 `python examples/build_notebooks.py`.
+
+## Data-obfuscation experiments (`obfuscation/`)
+
+The SWIFT data-obfuscation study (from `~/WorkBook/obfuscation-study`) is bundled
+as an importable package so you can run the threat scenarios or obfuscate data
+directly from the workbench kernel:
+
+- `swift_data.py` — `generate_swift(n_rows, seed)` produces synthetic SWIFT
+  transaction records (IBANs, BICs, bank names, countries, amounts).
+- `obfuscate.py` — reusable library: `apply_masking`, `tokenize`, `fuzzy_bucket`,
+  `noisy_aggregate`, `k_anonymize`, `sanitize_metadata`, and the high-level
+  `obfuscate_dataframe(df, {"mask": ..., "tokenize": ..., "k_anonymize": ...})`.
+- `experiments.py` — the 8 threat scenarios (BEC/fraud, insider threat,
+  supply-chain leakage, sanctions evasion, corporate espionage, test-environment
+  exposure, ATO via security questions, re-identification) plus a counterparty
+  reconstruction supplement. Each returns metrics, prints results and draws a
+  figure (auto-captured as a workbench artifact). `run_all(df)` returns a
+  markdown report.
+
+```bash
+# standalone (writes examples/obfuscation/obfuscation_report.md)
+.venv/bin/python examples/obfuscation/experiments.py
+```
+
+In the workbench kernel:
+
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.cwd()))
+from examples.obfuscation.swift_data import generate_swift
+from examples.obfuscation import experiments as exp
+
+df = generate_swift(2000, seed=42)
+report = exp.run_all(df)          # prints summary, returns markdown
+```
+
+Obfuscate your own uploaded data (any CSV with matching column names):
+
+```python
+from examples.obfuscation import obfuscate as obf
+import pandas as pd
+mine = pd.read_csv("my_data.csv")
+safe = obf.obfuscate_dataframe(mine, {"mask": True, "tokenize": ["sender_iban"]})
+anon, risk = obf.k_anonymize(mine, ["booking_date", "sender_city"], k=5)
+```
+
+Notebooks `18_obfuscation_techniques` and `19_obfuscation_threat_scenarios` walk
+through the techniques and all nine scenarios inside the workbench UI.
+
+## Privacy red-team / DP / synthetic-data experiments (`privacy/`)
+
+The workbench ships a **privacy MCP server** (`mcp_servers/privacy_tools.py`,
+registered as the `privacy` MCP server) covering four areas:
+
+- **Detection & assessment** — `privacy__detect_pii_in_text`,
+  `privacy__assess_dataframe_privacy`
+- **Red-teaming** — `privacy__membership_inference_eval`,
+  `privacy__reidentification_scenario`, `privacy__privacy_redteam_checklist`
+- **Differential privacy** — `privacy__apply_laplace_dp`,
+  `privacy__apply_gaussian_dp`, `privacy__dp_privacy_budget_report`,
+  `privacy__dp_guarantee_summary` (ε-gauge / budget-bar visualization data)
+- **Synthetic data** — `privacy__generate_synthetic_tabular`,
+  `privacy__synthetic_data_quality_report`
+
+Everything is local-first. The heavy optional libraries (presidio, sdv, opendp)
+are used when installed; otherwise built-in implementations (regex PII scan,
+native Laplace/Gaussian mechanisms, schema-preserving generation) provide the
+same capability.
+
+```bash
+# end-to-end red-team + DP + synthetic-data evaluation (writes CSVs + 3 figures)
+.venv/bin/python examples/privacy/run_privacy_eval.py
+```
+
+Chat prompts for the agent (which call the tools via MCP):
+
+> "Run privacy__assess_dataframe_privacy on examples/privacy/clinical_cohort.csv
+> and then privacy__privacy_redteam_checklist for public release. Summarize the
+> re-identification risk."
+> "Aggregate the admission counts from the clinical cohort with
+> privacy__apply_laplace_dp (ε=0.5), track the budget with
+> privacy__dp_privacy_budget_report, and save the ε-gauge figure as an artifact."
+> "Generate a synthetic version of the cohort with
+> privacy__generate_synthetic_tabular and compare utility with
+> privacy__synthetic_data_quality_report."
+
+Notebooks `20_privacy_assessment`, `21_differential_privacy` and
+`22_synthetic_data` walk through the four capability areas inside the UI.
 
 ## Run standalone (no agent needed)
 

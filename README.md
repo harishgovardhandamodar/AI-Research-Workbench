@@ -58,6 +58,43 @@ python3 -m venv .venv
 Open http://127.0.0.1:8765, pick a model (Settings → Test connection), and chat.
 Everything is stored under `workbench/projects/<name>/` (SQLite + artifacts).
 
+## Run with Docker (persistent data)
+
+Builds the workbench into a container. Projects, artifacts and config live in the
+named volume `fox_data` (mounted at `/app/workbench`), so your data survives
+container restarts and rebuilds.
+
+```bash
+docker compose up -d --build
+# open http://127.0.0.1:8765
+```
+
+By default the container talks to Ollama / the hive gateway running on the **host**
+via `host.docker.internal` (Linux uses `extra_hosts` → `host-gateway`). Override with
+environment variables:
+
+```bash
+FOX_BASE_URL=http://host.docker.internal:8081/v1 \
+FOX_TOOL_BASE_URL=http://host.docker.internal:11434/v1 \
+FOX_MODEL=qwen3.6:latest \
+docker compose up -d --build
+```
+
+Optionally run Ollama itself as a container (instead of the host one):
+
+```bash
+docker compose --profile ollama up -d --build
+# then point the workbench at it (Settings → LLM) using http://ollama:11434/v1
+```
+
+Other useful commands:
+
+```bash
+docker compose logs -f fox      # follow logs
+docker compose down             # stop (data is kept in the volume)
+docker compose down -v          # stop AND delete all persistent data
+```
+
 ## Model Context Protocol (MCP) support
 
 The workbench is an **MCP Host**: it discovers tools from local (`stdio`) and remote
@@ -69,6 +106,13 @@ Claude, Cursor or VS Code could use.
 - A built-in **`mcp_servers/science_tools.py`** server ships tools for sequence
   GC content, peptide mass, Kyte–Doolittle hydrophobicity, an offline UniProt
   mock connector, and Welch's t-test. Run it standalone or use it from the workbench.
+- A built-in **`mcp_servers/privacy_tools.py`** server ships local-first privacy
+  tooling: PII detection, dataframe privacy assessment, red-team / membership-
+  inference / re-identification evaluation, differential privacy (Laplace /
+  Gaussian, budget tracking, ε-gauge) and synthetic-data generation. See
+  `docs/PRIVACY-MCP.md`. A privacy workflow (peer-in-distribution exploitation →
+  red-team corner cases → DP robustness → audit trail) auto-runs when you ask
+  for it in chat — reports and figures land in the Artifacts panel.
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may
@@ -78,10 +122,16 @@ Claude, Cursor or VS Code could use.
 .venv/bin/pip install mcp        # optional; enables MCP support
 ```
 
-Demo prompt:
+Demo prompts:
 
 > "Use the MCP science tools to compute the GC content of ATGCCGTAATG and look up
 > UniProt P04637."
+
+> "Run privacy__assess_dataframe_privacy on the clinical cohort, then apply
+> privacy__apply_laplace_dp to the admission counts with ε=0.5."
+
+> "Exploit privacy as a peer in the distribution, run red-team corner cases,
+> apply DP and check robustness, and document the whole process as an audit trail."
 
 ## Jupyter integration (run as an addon inside Jupyter)
 

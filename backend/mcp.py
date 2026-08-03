@@ -30,6 +30,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "privacy",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/privacy_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
@@ -194,7 +202,6 @@ class MCPRegistry:
         trusted = bool(self._servers.get(sname, {}).get("trusted", False))
         annotations = getattr(tool, "annotations", None)
         read_only = bool(getattr(annotations, "read_only_hint", None)) if annotations else False
-
         async def caller(**args) -> str:
             permissions = getattr(ctx, "permissions", None)
             approval = getattr(ctx, "approval", None)

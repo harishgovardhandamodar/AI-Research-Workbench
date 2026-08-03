@@ -530,6 +530,7 @@ async function refreshState() {
     renderReview(state._lastFindings || []);
     renderGrants(r.grants || []);
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
+  refreshNotebooks();
 }
 
 function renderMessages(msgs) {
@@ -743,6 +744,9 @@ async function openNotebook(name) {
     $("nb-title").textContent = name + ".ipynb";
     renderNotebookCells();
     $("notebook-modal").classList.remove("hidden");
+    // Sizes only resolve once the modal is visible (hidden elements have no layout).
+    requestAnimationFrame(() =>
+      document.querySelectorAll(".nb-source").forEach(autoSizeNbSource));
     setNbStatus("");
   } catch (e) { toast(e.message, 4000); }
 }
@@ -784,12 +788,20 @@ function buildNbCell(cell, idx) {
     renderNbOutputs(outputs, cell.outputs || []);
     div.appendChild(outputs);
     head.querySelector(".nb-run").addEventListener("click", () => runNbCell(idx));
+    // Auto-grow the cell so all of its code is visible (up to a cap).
+    autoSizeNbSource(ta);
+    ta.addEventListener("input", () => autoSizeNbSource(ta));
   }
   head.querySelector(".nb-del").addEventListener("click", () => {
     currentNotebook.nb.cells.splice(idx, 1);
     renderNotebookCells();
   });
   return div;
+}
+
+function autoSizeNbSource(ta) {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 480) + "px";
 }
 
 function renderNbOutputs(container, outputs) {
@@ -830,6 +842,21 @@ function syncNbSources() {
   });
 }
 
+function updateNbCellInPlace(idx, newCell) {
+  // Update a single cell's outputs/status without re-rendering, so the
+  // auto-sized source textarea keeps its height (dynamic insertion).
+  const el = document.querySelectorAll("#nb-cells .nb-cell")[idx];
+  if (!el || !newCell) return;
+  const meta = newCell.metadata?.fox || {};
+  const num = el.querySelector(".nb-cellnum");
+  if (num) {
+    num.className = "nb-cellnum " + (meta.ok ? "done" : (meta.ok === false ? "fail" : ""));
+    num.textContent = newCell.execution_count ? "[" + newCell.execution_count + "]" : "";
+  }
+  const out = el.querySelector(".nb-outputs");
+  if (out) renderNbOutputs(out, newCell.outputs || []);
+}
+
 async function runNbCell(idx) {
   syncNbSources();
   setNbStatus("Running cell " + idx + "…");
@@ -838,7 +865,7 @@ async function runNbCell(idx) {
       `/api/projects/${state.project}/notebooks/${encodeURIComponent(currentNotebook.name)}/execute`,
       { method: "POST", body: JSON.stringify({ cells: String(idx) }) });
     currentNotebook.nb = res.notebook;
-    renderNotebookCells();
+    updateNbCellInPlace(idx, res.notebook.cells[idx]);
     const r0 = res.report[0];
     setNbStatus("Cell " + idx + (r0 && r0.ok ? " ran ok" : " failed"), !(r0 && r0.ok));
     afterNbRun();
@@ -853,7 +880,7 @@ async function runAllNb() {
       `/api/projects/${state.project}/notebooks/${encodeURIComponent(currentNotebook.name)}/execute`,
       { method: "POST", body: JSON.stringify({ cells: "all" }) });
     currentNotebook.nb = res.notebook;
-    renderNotebookCells();
+    for (const r of res.report) updateNbCellInPlace(r.index, res.notebook.cells[r.index]);
     const fails = res.report.filter((r) => !r.ok).length;
     setNbStatus("Ran " + res.report.length + " code cell(s)" + (fails ? " — " + fails + " failed" : ""));
     afterNbRun();

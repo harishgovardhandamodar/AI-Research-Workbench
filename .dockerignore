@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+workbench/
+*.egg-info/
+.git/
+.gitignore
+docs/
+examples/experiments/*.png
+examples/experiments/*.pdb
