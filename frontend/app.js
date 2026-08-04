@@ -1503,6 +1503,7 @@ async function loadExperiments() {
     state.expList = rr.experiments || [];
     renderExpList();
   } catch (e) { state.expList = state.expList || []; }
+  await loadExpRankings();
   try {
     const rr = await api(`/api/projects/${state.project}/runs`);
     state.agentRuns = rr.runs || [];
@@ -1519,6 +1520,49 @@ async function loadExperiments() {
   populateExpCompare();
   renderRuns();
   loadGoals();
+}
+
+async function loadExpRankings() {
+  const exps = state.expList || [];
+  state.expRanking = state.expRanking || {};
+  await Promise.all(exps.map(async (e) => {
+    try {
+      const r = await api(`/api/projects/${state.project}/experiments/${e.id}/ranking`);
+      state.expRanking[e.id] = r.ranking || null;
+    } catch (err) { state.expRanking[e.id] = null; }
+  }));
+  renderExpRankings();
+}
+
+function renderExpRankings() {
+  const el = $("exp-list");
+  if (!el) return;
+  (state.expList || []).forEach((e) => {
+    const rank = state.expRanking && state.expRanking[e.id];
+    if (!rank) return;
+    const host = el.querySelector(`.exp-card[data-id="${e.id}"] .exp-rank-host`);
+    if (!host) return;
+    const rows = rank.rows || [];
+    const head = rank.metric
+      ? `<summary class="exp-rank-sum">Leaderboard — <b>${esc(rank.metric.replace(/_/g, " "))}</b> ${rank.higher_better ? "↑" : "↓"} (best ${_fmtNum(rank.best)})</summary>`
+      : `<summary class="exp-rank-sum">Leaderboard — no numeric metric yet</summary>`;
+    if (!rows.length) {
+      host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body empty">No runs report the metric "${esc(rank.metric)}".</div></details>`;
+      return;
+    }
+    let html = `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric.replace(/_/g, " "))}</th><th>Δ best</th></tr></thead><tbody>`;
+    for (const row of rows) {
+      const medal = row.rank === 1 ? " 🏆" : "";
+      html += `<tr${row.rank === 1 ? ' class="rank-top"' : ""}>
+        <td class="rank-pos">${row.rank}${medal}</td>
+        <td>${esc(row.label || "#" + row.run_id)}</td>
+        <td>${_fmtNum(row.metric)}</td>
+        <td class="muted">${row.rank === 1 ? "—" : (row.delta_best >= 0 ? "+" : "") + _fmtNum(row.delta_best)}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+    host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body">${html}</div></details>`;
+  });
 }
 
 function renderRuns() {
@@ -1616,6 +1660,7 @@ function renderExpList() {
   for (const e of exps) {
     const card = document.createElement("div");
     card.className = "exp-card";
+    card.dataset.id = e.id;
     const goal = e.goal_metric
       ? `<span class="muted">goal ${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"} ${e.goal_target != null ? _fmtNum(e.goal_target) : "—"}</span>`
       : "";
@@ -1632,7 +1677,8 @@ function renderExpList() {
       </div>
       ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
       ${goal}
-      ${planHtml}`;
+      ${planHtml}
+      <div class="exp-rank-host"></div>`;
     el.appendChild(card);
   }
   el.querySelectorAll(".exp-improve").forEach((b) =>

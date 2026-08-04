@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..artifacts.store import Artifact
-from ..experiments import build_graph, compare_runs, unify_record
+from ..experiments import build_graph, compare_runs, rank_runs, unify_record
 from ..llm import LLMError
 from ..state import get_runtime
 
@@ -94,6 +94,24 @@ async def link_run_to_experiment(name: str, eid: int, body: dict):
         raise HTTPException(status_code=404, detail="run not found")
     store.set_run_experiment(int(rid), eid, body.get("config"))
     return {"run": store.get_run(int(rid))}
+
+
+@router.get("/api/projects/{name}/experiments/{eid}/ranking")
+async def project_experiment_ranking(name: str, eid: int,
+                                     metric: str = "", limit: int = 50):
+    """Leaderboard: rank an experiment's runs by a metric (default: its goal
+    metric), higher_better-aware, with delta-vs-best per run."""
+    rt = get_runtime(name)
+    store = rt.store
+    exp = store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    m = metric or (exp.get("goal_metric") or "")
+    if not m:
+        return {"ranking": rank_runs([], ""), "experiment": exp}
+    higher = bool(exp.get("higher_better", True))
+    return {"ranking": rank_runs(store.experiment_runs(eid), m, higher, limit),
+            "experiment": exp}
 
 
 async def build_run_report(rt, run: dict) -> str:

@@ -277,3 +277,42 @@ def build_graph(records: list[dict], artifact_store=None) -> dict:
                     "overlap": round(ov, 3),
                 })
     return {"nodes": nodes, "edges": edges}
+
+
+# -------------------------------------------------------------- leaderboard ----
+
+def rank_runs(runs: list[dict], metric: str, higher_better: bool = True,
+              limit: int = 50) -> dict:
+    """Rank runs by a numeric metric (multi-run leaderboard) for the UI.
+
+    Returns {"metric", "higher_better", "best", "rows": [...]} where each row is
+    {rank, run_id, label, config, metric, delta_best, pct_best}. Runs that do not
+    carry the metric are skipped.
+    """
+    rows = []
+    for r in runs:
+        m = (r.get("metrics") or {}).get(metric)
+        if m is None:
+            continue
+        try:
+            m = float(m)
+        except (TypeError, ValueError):
+            continue
+        rows.append({
+            "run_id": r.get("id"),
+            "label": r.get("label") or "",
+            "config": r.get("config") or {},
+            "metric": m,
+            "prompt": r.get("prompt") or "",
+        })
+    if not rows:
+        return {"metric": metric, "higher_better": higher_better,
+                "best": None, "rows": []}
+    rows.sort(key=lambda x: x["metric"], reverse=higher_better)
+    best = rows[0]["metric"]
+    for i, row in enumerate(rows, start=1):
+        row["rank"] = i
+        row["delta_best"] = row["metric"] - best
+        row["pct_best"] = ((row["metric"] - best) / best * 100) if best else 0.0
+    return {"metric": metric, "higher_better": higher_better,
+            "best": best, "rows": rows[:limit]}
