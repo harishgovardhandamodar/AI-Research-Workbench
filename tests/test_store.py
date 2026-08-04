@@ -90,6 +90,19 @@ class TestStore(unittest.TestCase):
         self.assertIsNone(self.store.get_run(rid)["experiment_id"])
         self.assertEqual(self.store.experiment_runs(eid), [])
 
+    def test_run_label_roundtrip(self):
+        rid = self.store.add_run("p", "r", "done", 1.0, 2.0,
+                                 label="eps=1.0", config={"eps": 1.0})
+        run = self.store.get_run(rid)
+        self.assertEqual(run["label"], "eps=1.0")
+        self.assertEqual(run["config"], {"eps": 1.0})
+        # set_run_experiment can carry a label too
+        eid = self.store.create_experiment("v", "h", "acc", 0.9, True)
+        self.store.set_run_experiment(rid, eid, {"eps": 2.0}, "eps=2.0")
+        run = self.store.get_run(rid)
+        self.assertEqual(run["label"], "eps=2.0")
+        self.assertEqual(run["experiment_id"], eid)
+
     def test_approval_log_roundtrip(self):
         self.store.log_approval("run_shell", "ls", "allow", True)
         self.store.log_approval("run_shell", "rm -rf /", "deny", False)

@@ -125,7 +125,12 @@ async def build_run_report(rt, run: dict) -> str:
         if suggestions:
             lines += ["", "### Suggested next steps", ""]
             for s in suggestions:
-                lines.append(f"- {s}")
+                if isinstance(s, dict):
+                    title = s.get("title") or s.get("action") or "suggestion"
+                    lines.append(f"- **{title}**" +
+                                 (f": {s['action']}" if s.get("action") and s["action"] != title else ""))
+                else:
+                    lines.append(f"- {s}")
     base = "\n".join(lines)
 
     # LLM-assisted executive summary (best effort).

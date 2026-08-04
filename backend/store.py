@@ -80,7 +80,7 @@ class ProjectStore:
                 prompt TEXT, reply TEXT, status TEXT,
                 started_at REAL, finished_at REAL,
                 tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT,
-                experiment_id INTEGER, config TEXT)"""
+                experiment_id INTEGER, config TEXT, label TEXT)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS experiments (
@@ -112,6 +112,11 @@ class ProjectStore:
             pass
         try:
             c.execute("ALTER TABLE runs ADD COLUMN config TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate per-run variant labels.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN label TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -226,24 +231,25 @@ class ProjectStore:
                 metrics: dict | None = None,
                 review: dict | None = None,
                 experiment_id: int | None = None,
-                config: dict | None = None) -> int:
+                config: dict | None = None,
+                label: str | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail)."""
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
-            " tool_sequence, artifact_ids, metrics, review, experiment_id, config)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " tool_sequence, artifact_ids, metrics, review, experiment_id, config, label)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
              json.dumps(metrics or {}), json.dumps(review or {}),
-             experiment_id, json.dumps(config or {})))
+             experiment_id, json.dumps(config or {}), label or None))
         self._conn.commit()
         return cur.lastrowid
 
     def set_run_experiment(self, rid: int, experiment_id: int | None,
-                           config: dict | None = None):
+                           config: dict | None = None, label: str | None = None):
         self._conn.execute(
-            "UPDATE runs SET experiment_id=?, config=? WHERE id=?",
-            (experiment_id, json.dumps(config or {}), rid))
+            "UPDATE runs SET experiment_id=?, config=?, label=? WHERE id=?",
+            (experiment_id, json.dumps(config or {}), label or None, rid))
         self._conn.commit()
 
     def list_runs(self, limit: int = 50) -> list[dict]:
@@ -274,7 +280,8 @@ class ProjectStore:
                 "metrics": _jload(r["metrics"], {}),
                 "review": _jload(r["review"], {}),
                 "experiment_id": r["experiment_id"],
-                "config": _jload(r["config"], {})}
+                "config": _jload(r["config"], {}),
+                "label": r["label"]}
 
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",

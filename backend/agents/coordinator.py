@@ -35,6 +35,10 @@ Working style:
   create_experiment (hypothesis + goal metric/target + baseline config), then run
   variants. Inside run_python code, call report_metric("name", value) for each
   headline number so every run records structured, comparable metrics.
+- For each config point you evaluate, delimit it explicitly: call start_run
+  (variant label + config) before running that variant's code and finish_run
+  (optional notes) after, so every variant is recorded with its own label, config
+  and metrics and can be compared against the baseline.
 - Use run_shell only when necessary; prefer the Python kernel. Shell commands that
   touch the network or are destructive will ask the user for permission.
 - Tools that come from external MCP servers are named like <server>__<tool> (e.g.
@@ -283,8 +287,13 @@ class Coordinator:
                     structured = getattr(self.ctx, "last_metrics", None) or {}
                     if structured:
                         self._run_metrics.update(structured)
+                        if self.ctx.variant:
+                            self.ctx.variant.setdefault("metrics", {}).update(structured)
                         self.ctx.last_metrics = None
-                    self._run_metrics.update(_extract_metrics(result))
+                    if name not in ("start_run", "finish_run", "create_experiment"):
+                        # Only compute tools feed the regex metric fallback, so
+                        # bookkeeping output (e.g. a config dump) isn't misread.
+                        self._run_metrics.update(_extract_metrics(result))
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.get("id", ""),
@@ -311,6 +320,12 @@ class Coordinator:
             if m.get("role") == "user":
                 prompt = m.get("content", "")
                 break
+        # The run's identity: the most recently finished variant wins, otherwise a
+        # variant still open at turn end, otherwise the experiment baseline.
+        variant = (self.ctx.finished_variants or [None])[-1] or self.ctx.variant
+        variant_metrics = dict(variant.get("metrics") or {}) if variant else {}
+        metrics = dict(self._run_metrics)
+        metrics.update(variant_metrics)
         run_id = self.record({
             "prompt": prompt,
             "reply": text,
@@ -319,9 +334,11 @@ class Coordinator:
             "finished_at": time.time(),
             "tool_sequence": self._run_seq,
             "artifact_ids": self._run_artifacts,
-            "metrics": self._run_metrics,
+            "metrics": metrics,
             "experiment_id": int(self.ctx.experiment_id) if str(self.ctx.experiment_id).isdigit() else None,
-            "config": self.ctx.experiment_config,
+            "config": (variant.get("config") if variant else None)
+                      or self.ctx.experiment_config,
+            "label": (variant.get("label") if variant else None),
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)

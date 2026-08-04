@@ -536,7 +536,22 @@ function renderReview(findings, suggestions) {
     for (const s of ss) {
       const d = document.createElement("div");
       d.className = "finding suggestion";
-      d.innerHTML = `<span class="sev">→</span>${esc(s)}`;
+      const title = (typeof s === "object" && s && s.title) ? s.title
+        : (typeof s === "string" ? s : "");
+      const prompt = (typeof s === "object" && s && s.prompt)
+        ? s.prompt : (typeof s === "string" ? s : "");
+      const action = (typeof s === "object" && s && s.action)
+        ? s.action : "";
+      d.innerHTML = `<span class="sev">→</span><span class="sug-body">${esc(title)}` +
+        (action && action !== title ? `<span class="sug-action">${esc(action)}</span>` : "") +
+        `</span>`;
+      if (prompt) {
+        const btn = document.createElement("button");
+        btn.className = "btn subtle small sug-run";
+        btn.textContent = "Apply & rerun";
+        btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion"));
+        d.appendChild(btn);
+      }
       c.appendChild(d);
     }
   }
@@ -1519,8 +1534,9 @@ function renderRuns() {
     if (nf) meta.push(nf + " finding(s)");
     if (ns) meta.push(ns + " suggestion(s)");
     d.className = "run-row";
+    const lbl = r.label ? `<span class="run-label">${esc(r.label)}</span> ` : "";
     d.innerHTML = `<span class="run-id">#${r.id}</span>
-      <span class="run-prompt">${esc((r.prompt || "").slice(0, 80))}</span>
+      <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
       <span class="run-meta muted">${esc(meta.join(" · "))}</span>
       <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
     el.appendChild(d);

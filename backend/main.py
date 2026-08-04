@@ -489,7 +489,8 @@ async def ws_chat(ws: WebSocket, name: str):
                                   metrics=r.get("metrics"),
                                   review=r.get("review"),
                                   experiment_id=r.get("experiment_id") or None,
-                                  config=r.get("config")),
+                                  config=r.get("config"),
+                                  label=r.get("label")),
                               max_iters=rt.max_iters, mcp=mcp_registry)
 
     async def handle_turn(text: str, intent: str = ""):
@@ -508,6 +509,10 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "privacy_compare":
                     workflow_mode = compare_mode = True
                     user_tags = ["privacy workflow", "compare runs"]
+                elif intent == "rerun_suggestion":
+                    # "Apply & rerun" from a reviewer suggestion: send the
+                    # suggestion's prompt to the agent as a fresh turn.
+                    user_tags = ["rerun suggestion"]
                 else:
                     workflow_mode = bool(match_workflow(text) or compare_requested(text))
                     compare_mode = compare_requested(text)

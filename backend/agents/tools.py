@@ -42,6 +42,8 @@ class ToolContext:
     experiment_id: str = ""
     experiment_config: dict | None = None
     last_metrics: dict | None = None
+    variant: dict | None = None
+    finished_variants: list = dataclasses.field(default_factory=list)
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -182,6 +184,45 @@ TOOL_SCHEMAS: list[dict] = [
                     "config": {"type": "object", "description": "Baseline config (hyperparameters/parameters) for the first run"},
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_run",
+            "description": (
+                "Start an explicit run variant of the current experiment. Call this "
+                "before running the code for a single configuration point so that run "
+                "gets its own label and config, making it comparable against other "
+                "variants (and the baseline). A baseline run is started automatically "
+                "with the experiment's config; use start_run to mark a specific variant "
+                "instead. Pair with finish_run once the variant's code has run."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "Short variant label, e.g. 'eps=1.0', 'batch-64', 'baseline'"},
+                    "config": {"type": "object", "description": "This variant's config (hyperparameters/parameters)"},
+                },
+                "required": ["label"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_run",
+            "description": (
+                "Finish the run variant started by start_run. Records the metrics "
+                "reported via report_metric during the variant's code and any notes, "
+                "and closes the variant so the next start_run begins a fresh one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "notes": {"type": "string", "description": "Optional free-text notes on this variant's result"},
+                },
             },
         },
     },
@@ -388,6 +429,41 @@ async def _create_experiment(ctx: ToolContext, name: str, hypothesis: str = "",
 async def _list_vars(ctx: ToolContext) -> str:
     vars_ = await ctx.kernels.python.list_variables()
     return json.dumps(vars_, indent=2) if vars_ else "(kernel has no user variables)"
+
+
+async def _start_run(ctx: ToolContext, label: str, config: dict | None = None) -> str:
+    label = (label or "").strip()
+    if not label:
+        return "[error] a variant label is required (e.g. 'baseline', 'eps=1.0')"
+    if ctx.variant is not None:
+        return ("[error] a variant run is already active: " +
+                f"{ctx.variant.get('label') or '(unlabeled)'}. "
+                "Call finish_run first to close it before starting a new one.")
+    ctx.variant = {"label": label, "config": dict(config or {}), "metrics": {},
+                   "notes": ""}
+    lines = [f"Started variant run: {label}"]
+    if ctx.variant["config"]:
+        lines.append("Config: " + json.dumps(ctx.variant["config"]))
+    lines.append("Run the variant's code now, then call finish_run.")
+    return "\n".join(lines)
+
+
+async def _finish_run(ctx: ToolContext, notes: str = "") -> str:
+    v = ctx.variant
+    if v is None:
+        return ("[error] no variant run is active. Call start_run with a label "
+                "before running the variant's code.")
+    v["notes"] = (notes or "").strip()
+    metrics = dict(v.get("metrics") or {})
+    lines = [f"Finished variant run: {v.get('label') or '(unlabeled)'}"]
+    if metrics:
+        lines.append("Metrics: " + json.dumps(metrics))
+    if v["notes"]:
+        lines.append("Notes: " + v["notes"])
+    lines.append("The run will be recorded under this variant's label/config.")
+    ctx.finished_variants.append(v)
+    ctx.variant = None
+    return "\n".join(lines)
 
 
 async def _notebook_metrics(ctx: ToolContext) -> dict:
@@ -604,6 +680,8 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
             goal_target=None, higher_better=True, config=None:
             _create_experiment(ctx, name, hypothesis, goal_metric, goal_target,
                                higher_better, config),
+        "start_run": lambda label, config=None: _start_run(ctx, label, config),
+        "finish_run": lambda notes="": _finish_run(ctx, notes),
         "editor__list_files": lambda path=".": _editor_list_files(ctx, path),
         "editor__read_file": lambda path: _editor_read_file(ctx, path),
         "editor__edit_file": lambda path, old, new: _editor_edit_file(ctx, path, old, new),
