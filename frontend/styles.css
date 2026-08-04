@@ -251,6 +251,52 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .repo-actions .btn { padding: 2px 9px; font-size: 11px; }
 .repo-status { font-size: 11px; color: var(--text-dim); }
 .repo-status.err { color: var(--danger); }
+
+/* ---------- chat-window experiment navigation ---------- */
+.exp-context {
+  flex: 0 0 auto; margin: 6px 12px 0; padding: 8px 10px;
+  border: 1px solid #a974ff55; border-radius: 10px;
+  background: linear-gradient(180deg, #17121f, #131018);
+  font-size: 12px;
+}
+.ec-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ec-select {
+  font-size: 12.5px; font-weight: 700; color: var(--text);
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 6px; max-width: 220px; cursor: pointer;
+}
+.ec-select:hover { border-color: var(--accent); }
+.ec-name { font-weight: 700; }
+.ec-goal-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+}
+.ec-goal { font-size: 11px; white-space: nowrap; }
+.ec-best { font-size: 11px; white-space: nowrap; }
+.ec-progress {
+  flex: 1; height: 5px; border-radius: 3px; background: var(--bg-2);
+  overflow: hidden; min-width: 60px;
+}
+.ec-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #4f8cff, #a974ff);
+  transition: width .4s ease;
+}
+.ec-runs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.ec-run-chip {
+  font-size: 10.5px; font-family: var(--mono);
+  background: rgba(79,140,255,.10); color: var(--accent-2);
+  border: 1px solid rgba(79,140,255,.3); border-radius: 10px;
+  padding: 1px 7px; cursor: pointer;
+}
+.ec-run-chip:hover { border-color: var(--accent); background: rgba(79,140,255,.2); }
+.msg-exp {
+  font-size: 10px; background: rgba(169,116,255,.12); color: #c9aaff;
+  border: 1px solid rgba(169,116,255,.35); border-radius: 10px;
+  padding: 1px 7px; cursor: pointer; text-transform: none; letter-spacing: 0;
+}
+.msg-exp:hover { border-color: #a974ff; background: rgba(169,116,255,.22); }
+@keyframes exp-flash { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px #a974ff66, 0 0 18px #a974ff44; } }
+.msg.exp-flash { animation: exp-flash 1.4s ease; border-radius: 10px; }
 .msg-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
 .m-tag { font-size: 10px; padding: 1px 8px; border-radius: 10px; background: rgba(79,140,255,.15); color: var(--accent-2); border: 1px solid rgba(79,140,255,.35); }
 .msg.user .m-tag { background: rgba(224,91,91,.12); color: #ffb4b4; border-color: rgba(224,91,91,.35); }

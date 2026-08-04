@@ -84,10 +84,12 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
 
     for i in range(1, iterations + 1):
         mid = store.add_message("user", current_prompt,
-                                {"tags": ["improve loop", f"iteration {i}"]})
+                                {"tags": ["improve loop", f"iteration {i}"],
+                                 "experiment_id": experiment_id})
         coordinator.ctx.message_id = str(mid)
         await emit("user_message", {"id": mid, "content": current_prompt,
                                     "tags": ["improve loop"],
+                                    "experiment_id": experiment_id,
                                     "created_at": _created(store, mid)})
         await emit("status", {"message": f"Improve loop — iteration {i}/{iterations}…"})
 
@@ -98,9 +100,12 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
             await emit("notice", {"message": f"Improve loop {stopped_reason}"})
             break
         text = result.get("text", "")
-        amid = store.add_message("assistant", text, {"tags": ["improve loop"]})
+        amid = store.add_message("assistant", text,
+                                 {"tags": ["improve loop"],
+                                  "experiment_id": experiment_id})
         await emit("assistant_message", {"id": amid, "content": text,
                                          "tags": ["improve loop"],
+                                         "experiment_id": experiment_id,
                                          "created_at": _created(store, amid)})
 
         runs = store.list_runs()
@@ -160,9 +165,11 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     summary = _loop_summary(exp, history, best_val, best_id, goal_reached,
                             goal_metric, goal_target, higher, stopped_reason)
     store.add_message("assistant", summary,
-                      {"tags": ["improve loop", "summary"]})
+                      {"tags": ["improve loop", "summary"],
+                       "experiment_id": experiment_id})
     await emit("assistant_message", {"id": -1, "content": summary,
-                                     "tags": ["improve loop summary"]})
+                                     "tags": ["improve loop summary"],
+                                     "experiment_id": experiment_id})
     return {"summary": summary, "iterations": history,
             "goal_reached": goal_reached, "best": best_val,
             "stopped_reason": stopped_reason}

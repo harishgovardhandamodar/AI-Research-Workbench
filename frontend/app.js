@@ -207,9 +207,9 @@ function send(obj) {
 
 function handleEvent(type, p) {
   switch (type) {
-    case "user_message": renderUserMessage(p.content, p.tags, p.created_at); break;
+    case "user_message": renderUserMessage(p.content, p.tags, p.created_at, p.experiment_id); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -300,9 +300,10 @@ function msgContainer(role, tags, ts) {
   return { div, body };
 }
 
-function renderUserMessage(content, tags, ts) {
-  const { body } = msgContainer("user", tags, ts);
-  body.textContent = content;
+function renderUserMessage(content, tags, ts, expId) {
+  const el = msgContainer("user", tags, ts);
+  el.body.textContent = content;
+  tagMessageExperiment(el, expId);
   scrollBottom();
 }
 
@@ -322,13 +323,14 @@ function streamDelta(text) {
   scrollBottom();
 }
 
-function finalizeAssistant(content, tags, ts) {
+function finalizeAssistant(content, tags, ts, expId) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
     el.body.innerHTML = renderMarkdown(el.raw);
     enhanceCodeBlocks(el.body);
     maybeAttachRepoButtons(el, tags);
+    tagMessageExperiment(el, expId);
     if (ts) {
       const t = el.div.querySelector(".msg-time");
       if (t) t.textContent = fmtClock(ts);
@@ -962,6 +964,9 @@ async function switchProject(name) {
   state.artifacts = [];
   $("messages").innerHTML = "";
   curAssistantEl = null;
+  state.expDetail = {};
+  state.expRanking = {};
+  state.activeExperiment = null;
   await refreshState();
   connect();
 }
@@ -975,6 +980,7 @@ async function refreshState() {
     renderKernel(r.variables, r.env);
     renderReview(state._lastFindings || [], state._lastSuggestions || []);
     renderGrants(r.grants || []);
+    refreshExpContext();
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
   refreshNotebooks();
   loadWorkflow();
@@ -1496,14 +1502,16 @@ function renderMessages(msgs) {
     }
     const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const { body } = msgContainer("user", mtags, m.created_at);
-      body.textContent = m.content;
+      const el = msgContainer("user", mtags, m.created_at);
+      el.body.textContent = m.content;
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       turnUser = m.id;
     } else if (m.role === "assistant") {
       const el = msgContainer("assistant", mtags, m.created_at);
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       // Re-attach figures produced during this turn (artifacts are linked to the
       // turn's user message id) to the final assistant reply of the turn, so
       // charts survive refreshState() re-renders after execution.
@@ -1594,6 +1602,14 @@ $("messages").addEventListener("click", (e) => {
   const msg = btn.closest(".msg");
   const body = msg && msg.querySelector(".msg-body");
   copyText(body ? body.innerText : "");
+});
+// Clicking an experiment chip on a message focuses that experiment.
+$("messages").addEventListener("click", (e) => {
+  const chip = e.target.closest(".msg-exp");
+  if (!chip) return;
+  const eid = parseInt(chip.dataset.eid, 10);
+  if (!eid) return;
+  focusExperiment(eid);
 });
 $("new-project-btn").addEventListener("click", async () => {
   const name = prompt("New project name:");
@@ -1811,6 +1827,7 @@ async function loadExperiments() {
   populateExpCompare();
   renderRuns();
   loadGoals();
+  refreshExpContext();
 }
 
 async function loadExpRankings() {
@@ -1855,6 +1872,221 @@ function renderExpRankings() {
     host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body">${html}</div></details>`;
   });
 }
+
+/* ============ chat-window experiment navigation (context bar) ============= */
+
+function expName(eid) {
+  const e = (state.expList || []).find((x) => String(x.id) === String(eid));
+  return e ? e.name : (eid != null ? "#" + eid : "");
+}
+
+async function loadExpDetail(eid) {
+  if (state.expDetail && state.expDetail[eid]) return state.expDetail[eid];
+  try {
+    const r = await api(`/api/projects/${state.project}/experiments/${eid}`);
+    state.expDetail = state.expDetail || {};
+    state.expDetail[eid] = r.experiment || {};
+    return state.expDetail[eid];
+  } catch (e) { return { id: eid }; }
+}
+
+function detectActiveExperiment() {
+  const exps = state.expList || [];
+  if (!exps.length) { state.activeExperiment = null; return null; }
+  // Prefer the experiment most recently referenced in the chat (message meta).
+  const msgs = $("messages");
+  if (msgs) {
+    const refs = msgs.querySelectorAll(".msg[data-exp-id]");
+    for (let i = refs.length - 1; i >= 0; i--) {
+      const eid = parseInt(refs[i].dataset.expId, 10);
+      if (eid && exps.some((x) => x.id === eid)) {
+        state.activeExperiment = eid;
+        return eid;
+      }
+    }
+  }
+  // Otherwise the busiest experiment (most runs), tie-break by newest.
+  const pick = exps.slice().sort((a, b) =>
+    (b.runs - a.runs) || (b.id - a.id))[0];
+  state.activeExperiment = pick.id;
+  return pick.id;
+}
+
+async function refreshExpContext() {
+  if (!state.expList || !state.expList.length) {
+    state.activeExperiment = null;
+    $("exp-context").classList.add("hidden");
+    return;
+  }
+  const eid = detectActiveExperiment();
+  await renderExpContext();
+  if (eid == null) $("exp-context").classList.add("hidden");
+}
+
+function ecBestRun(exp, runs) {
+  if (!exp || !exp.goal_metric || !runs || !runs.length) return null;
+  const higher = exp.higher_better !== false;
+  let best = null;
+  for (const r of runs) {
+    const m = r.metrics && r.metrics[exp.goal_metric];
+    if (m == null) continue;
+    if (best === null || (higher ? m > best.v : m < best.v)) best = { v: m, run: r };
+  }
+  return best;
+}
+
+function ecProgress(exp, best) {
+  if (!exp || !exp.goal_metric || exp.goal_target == null || !best) return 0;
+  const target = Number(exp.goal_target);
+  if (!target) return 0;
+  const higher = exp.higher_better !== false;
+  const ratio = higher ? best.v / target : target / best.v;
+  return Math.max(0, Math.min(100, ratio * 100));
+}
+
+async function renderExpContext() {
+  const ctx = $("exp-context");
+  if (!ctx) return;
+  const exps = state.expList || [];
+  if (!exps.length) { ctx.classList.add("hidden"); return; }
+  const sel = $("ec-select");
+  sel.innerHTML = exps.map((e) =>
+    `<option value="${e.id}"${e.id === state.activeExperiment ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  const eid = state.activeExperiment != null ? state.activeExperiment : (exps[0].id);
+  const detail = await loadExpDetail(eid);
+  const exp = detail.id != null ? detail : exps.find((e) => e.id === eid);
+  const runs = detail.runs || [];
+  const best = ecBestRun(exp, runs);
+
+  $("ec-status").textContent = (exp && exp.status) || "active";
+  $("ec-status").className = "exp-badge " +
+    ((exp && exp.status === "completed") ? "ok" : (exp && exp.status === "cancelled") ? "warn" : "det");
+
+  const goal = exp && exp.goal_metric
+    ? `goal ${exp.goal_metric} ${exp.higher_better !== false ? "↑" : "↓"} ${exp.goal_target != null ? _fmtNum(exp.goal_target) : "—"}`
+    : "no goal metric";
+  $("ec-goal").textContent = goal;
+
+  const bestTxt = best
+    ? `best ${_fmtNum(best.v)}${best.run.id != null ? " (run #" + best.run.id + ")" : ""}`
+    : "no runs yet";
+  $("ec-best").textContent = bestTxt;
+  $("ec-fill").style.width = ecProgress(exp, best) + "%";
+
+  // Run chips: click to jump to the improve-loop summary for this experiment.
+  const rc = $("ec-runs");
+  rc.innerHTML = "";
+  if (runs.length) {
+    runs.slice().reverse().forEach((r) => {
+      const chip = document.createElement("button");
+      chip.className = "ec-run-chip";
+      const m = exp && exp.goal_metric ? (r.metrics && r.metrics[exp.goal_metric]) : null;
+      chip.textContent = `#${r.id}${r.label ? " " + r.label : ""}` +
+        (m != null ? " " + _fmtNum(m) : "");
+      chip.title = "Jump to this run's message";
+      chip.dataset.runId = r.id;
+      chip.addEventListener("click", () => jumpToExpMessage(eid, r.id));
+      rc.appendChild(chip);
+    });
+  } else {
+    rc.innerHTML = '<span class="muted">No runs yet — ask the agent to improve it, or create a run.</span>';
+  }
+  ctx.classList.remove("hidden");
+}
+
+function tagMessageExperiment(el, expId) {
+  if (!el || expId == null) return;
+  el.div.dataset.expId = expId;
+  const label = el.div.querySelector(".msg-label");
+  if (!label || label.querySelector(".msg-exp")) return;
+  const chip = document.createElement("button");
+  chip.className = "msg-exp";
+  chip.textContent = "⚗ " + expName(expId);
+  chip.title = "Focus this experiment";
+  chip.dataset.eid = expId;
+  label.insertBefore(chip, label.firstChild);
+}
+
+function expMessages(eid) {
+  const msgs = $("messages");
+  if (!msgs) return [];
+  const all = Array.from(msgs.querySelectorAll(".msg"));
+  return all.filter((el) => String(el.dataset.expId) === String(eid));
+}
+
+function jumpToExpMessage(eid, runId) {
+  let targets = expMessages(eid);
+  if (runId != null) {
+    const tagged = targets.find((el) =>
+      el.textContent.indexOf("run #" + runId) >= 0 || el.textContent.indexOf("#" + runId) >= 0);
+    if (tagged) targets = [tagged];
+  }
+  if (!targets.length) {
+    focusExperiment(eid);
+    return;
+  }
+  const el = targets[targets.length - 1];
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.classList.add("exp-flash");
+  setTimeout(() => el.classList.remove("exp-flash"), 1600);
+}
+
+function jumpExpMessage(dir) {
+  const eid = state.activeExperiment;
+  if (eid == null) return;
+  const msgs = expMessages(eid);
+  if (!msgs.length) return;
+  const view = $("messages");
+  const midY = view ? view.getBoundingClientRect().top + view.clientHeight / 2 : 0;
+  let pick = dir < 0 ? msgs[0] : msgs[msgs.length - 1];
+  let bestDist = Infinity;
+  for (const el of msgs) {
+    const d = el.getBoundingClientRect().top - midY;
+    if (dir < 0 ? (d < 0 && midY - el.getBoundingClientRect().bottom < bestDist)
+                : (d > 0 && d < bestDist)) {
+      pick = el;
+      bestDist = dir < 0 ? midY - el.getBoundingClientRect().bottom : d;
+    }
+  }
+  pick.scrollIntoView({ behavior: "smooth", block: "start" });
+  pick.classList.add("exp-flash");
+  setTimeout(() => pick.classList.remove("exp-flash"), 1600);
+}
+
+async function focusExperiment(eid) {
+  state.activeExperiment = eid;
+  await renderExpContext();
+}
+
+async function ecManagementAction(kind) {
+  const btn = kind === "commit" ? $("ec-commit") : $("ec-push");
+  const orig = btn.textContent;
+  btn.textContent = kind === "commit" ? "Committing…" : "Pushing…";
+  btn.disabled = true;
+  try {
+    const endpoint = kind === "commit" ? "commit" : "push";
+    const r = await api(`/api/projects/${state.project}/management/${endpoint}`, {
+      method: "POST", body: JSON.stringify({}),
+    });
+    toast(r.ok ? (kind === "commit" ? "Committed ✓" : "Pushed ✓") : (r.message || "failed"), 4000);
+  } catch (e) {
+    toast("Failed: " + e.message, 4000);
+  }
+  btn.textContent = orig;
+  btn.disabled = false;
+}
+
+$("ec-select").addEventListener("change", (e) => focusExperiment(parseInt(e.target.value, 10)));
+$("ec-prev").addEventListener("click", () => jumpExpMessage(-1));
+$("ec-next").addEventListener("click", () => jumpExpMessage(1));
+$("ec-improve").addEventListener("click", () => {
+  const eid = state.activeExperiment;
+  if (eid == null) return;
+  const name = expName(eid);
+  sendChat(`Improve the experiment "${name}" toward its goal.`, "improve_loop", { experiment_id: eid });
+});
+$("ec-commit").addEventListener("click", () => ecManagementAction("commit"));
+$("ec-push").addEventListener("click", () => ecManagementAction("push"));
 
 function renderRuns() {
   const el = $("runs-list");

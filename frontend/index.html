@@ -167,6 +167,27 @@
         <div class="workflow-bar"><div id="workflow-fill" class="workflow-fill" style="width:0%"></div></div>
         <div id="workflow-stages" class="workflow-stages"></div>
       </div>
+
+      <!-- Experiment context bar: navigate / act on the active experiment -->
+      <div id="exp-context" class="exp-context hidden">
+        <div class="ec-head">
+          <select id="ec-select" class="ec-select" title="Switch experiment"></select>
+          <span id="ec-status" class="exp-badge det">active</span>
+          <span class="spacer"></span>
+          <button id="ec-prev" class="btn subtle small" title="Previous experiment message">◀</button>
+          <button id="ec-next" class="btn subtle small" title="Next experiment message">▶</button>
+          <button id="ec-improve" class="btn subtle small" title="Run the improve loop for this experiment">Improve</button>
+          <button id="ec-commit" class="btn subtle small" title="Commit experiment artifacts to the management repo">Commit</button>
+          <button id="ec-push" class="btn subtle small" title="Push the management repo to GitHub">Push</button>
+        </div>
+        <div class="ec-goal-row">
+          <span id="ec-goal" class="ec-goal muted">goal —</span>
+          <div class="ec-progress"><div id="ec-fill" class="ec-fill" style="width:0%"></div></div>
+          <span id="ec-best" class="ec-best">best —</span>
+        </div>
+        <div id="ec-runs" class="ec-runs"></div>
+      </div>
+
       <div id="messages" class="scroll"></div>
       <div id="busy-status" class="busy-status" title="Current activity"></div>
       <div id="quick-actions" class="quick-actions">
@@ -436,7 +457,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v42";
+  window.FOX_VER = "v43";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
