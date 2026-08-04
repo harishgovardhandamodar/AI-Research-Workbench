@@ -1,17 +1,18 @@
 """The 8 obfuscation threat scenarios from Obfuscation-Instructions.md, runnable
-on synthetic SWIFT data inside the Fox workbench.
+on synthetic credit-card transaction data inside the Fox workbench.
 
 Ported and generalised from the study
-(`~/WorkBook/obfuscation-study/experiments/obfuscation_experiments.py`). Each
-experiment models one adversarial scenario, measures the risk on *unmasked*
-data, applies the matching obfuscation technique and reports the risk reduction.
-Every experiment returns a dict of metrics and renders a matplotlib figure
+(`~/WorkBook/obfuscation-study/experiments/obfuscation_experiments.py`) and
+adapted to credit-card records. Each experiment models one
+adversarial scenario, measures the risk on *unmasked* data, applies the
+matching obfuscation technique and reports the risk reduction. Every
+experiment returns a dict of metrics and renders a matplotlib figure
 (automatically captured as a workbench artifact).
 
-    from examples.obfuscation.swift_data import generate_swift
+    from examples.obfuscation.credit_card_data import generate_credit_card
     from examples.obfuscation import experiments as exp
 
-    df = generate_swift(2000, seed=42)
+    df = generate_credit_card(2000, seed=42)
     report = exp.run_all(df)          # prints summary, returns markdown
     open("obfuscation_report.md", "w").write(report)   # (kernel cwd == repo root)
 
@@ -43,7 +44,7 @@ try:  # imported as part of the examples.obfuscation package
         fuzzy_bucket,
         k_anonymize,
         mask_amount,
-        mask_iban,
+        mask_card,
         noisy_aggregate,
         sanitize_metadata,
         tokenize,
@@ -58,7 +59,7 @@ except ImportError:  # run as a plain script
         fuzzy_bucket,
         k_anonymize,
         mask_amount,
-        mask_iban,
+        mask_card,
         noisy_aggregate,
         sanitize_metadata,
         tokenize,
@@ -78,9 +79,9 @@ def _rng(seed: int = SEED) -> random.Random:
 # ------------------------------------------------------------- experiment 1 ---
 
 def experiment1_bec_fraud(df, n=50):
-    """BEC / fraud: exact names + amounts + BIC/IBAN enable spear-phishing."""
+    """BEC / fraud: exact names + card numbers + BINs enable spear-phishing."""
     sample = df.sample(min(n, len(df)), random_state=SEED)
-    vuln, safe = 10.0, 4.0  # unmasked: name+BIC+IBAN exact; masked: residual
+    vuln, safe = 10.0, 4.0  # unmasked: name+card+BIN exact; masked: residual
     reduction = (1 - safe / vuln) * 100
 
     fig, ax = plt.subplots(figsize=(6.2, 4.0))
@@ -101,14 +102,14 @@ def experiment1_bec_fraud(df, n=50):
     print(f"  Risk reduction      : {reduction:.0f}%")
     print("\n  Sample — masked view:")
     for _, row in sample.head(3).iterrows():
-        print("    Sender   : {}  IBAN={}  BIC={}".format(
-            row["sender_institution_name"], mask_iban(row["sender_iban"]),
-            row["sender_bic_swift_code"]))
-        print("    Receiver : BIC={}  Amount={}".format(
-            row["receiver_bic_swift_code"], mask_amount(row["transaction_amount_usd"])))
+        print("    Cardholder: {}  Card={}  BIN={}".format(
+            row["cardholder_name"], mask_card(row["card_number"]),
+            row["card_bin"]))
+        print("    Merchant  : Acq={}  Amount={}".format(
+            row["acquirer_code"], mask_amount(row["transaction_amount_usd"])))
 
     return {"title": "1. Targeted BEC / Fraud",
-            "technique": "dynamic masking (name/IBAN/BIC/amount)",
+            "technique": "dynamic masking (name/card/BIN/amount)",
             "risk_unmasked": vuln, "risk_masked": safe,
             "reduction_pct": round(reduction, 0)}
 
@@ -165,11 +166,11 @@ def experiment3_supply_chain(df, n=200):
 
     def sensitivity(row):
         units = 0.0
-        for c in ["sender_iban", "receiver_iban",
-                  "sender_bic_swift_code", "receiver_bic_swift_code"]:
+        for c in ["card_number", "merchant_account",
+                  "card_bin", "acquirer_code"]:
             if row[c]: units += 0.5
-        for c in ["sender_institution_name", "receiver_bank_name",
-                  "sender_address", "receiver_address"]:
+        for c in ["cardholder_name", "merchant_name",
+                  "cardholder_address", "merchant_address"]:
             if row[c]: units += 0.8
         return units
 
@@ -195,8 +196,8 @@ def experiment3_supply_chain(df, n=200):
     print(f"  Tokenized export avg risk : {avg_tok:.1f} sensitive units/row")
     print(f"  Risk reduction            : {reduction:.0f}%")
     r0 = sample.iloc[0]
-    print("\n  Before: IBAN={}  BIC={}  AMT={:,.2f}".format(
-        r0["sender_iban"], r0["sender_bic_swift_code"], r0["transaction_amount_usd"]))
+    print("\n  Before: Card={}  BIN={}  AMT={:,.2f}".format(
+        r0["card_number"], r0["card_bin"], r0["transaction_amount_usd"]))
 
     return {"title": "3. Supply Chain / Third-Party Data Leakage",
             "technique": "non-reversible tokenization",
@@ -212,15 +213,16 @@ def experiment4_sanctions_evasion(df, n=500):
     sample = df.sample(min(n, len(df)), random_state=SEED)
 
     def quasi_count(row):
-        return sum(1 for v in [row["sender_address"], row["sender_country_code"],
-                               row["sender_city"], row["purpose_code"],
-                               row.get("correspondent_bank_bic", "")] if str(v).strip())
+        return sum(1 for v in [row["cardholder_address"],
+                               row["cardholder_country_code"],
+                               row["cardholder_city"], row["purpose_code"],
+                               row.get("acquirer_bic", "")] if str(v).strip())
 
     before = sample.apply(quasi_count, axis=1)
     recoverable = int((before >= 4).sum()) / len(sample) * 100
     sanitized = sanitize_metadata(sample)
     # After full sanitization, only coarse non-PII fields remain.
-    safe_fields = ["sender_country_code", "purpose_code", "sender_city"]
+    safe_fields = ["cardholder_country_code", "purpose_code", "cardholder_city"]
     after = sanitized.apply(lambda r: sum(1 for c in safe_fields
                                           if str(r[c]).strip() and "REDACTED" not in str(r[c])),
                             axis=1)
@@ -257,11 +259,11 @@ def experiment4_sanctions_evasion(df, n=500):
 def experiment5_corporate_espionage(df, n=5000, noise=0.25):
     """Corporate espionage: true volumes vs noisy (+/-25%) aggregation."""
     sample = df.sample(min(n, len(df)), random_state=SEED)
-    true_vol = sample.groupby("sender_country_code")["transaction_amount_usd"].sum()
+    true_vol = sample.groupby("cardholder_country_code")["transaction_amount_usd"].sum()
     true_top = true_vol.sort_values(ascending=False).head(6)
-    noisy = noisy_aggregate(sample, ["sender_country_code"],
+    noisy = noisy_aggregate(sample, ["cardholder_country_code"],
                             "transaction_amount_usd", noise=noise, seed=SEED)
-    noisy_top = noisy.set_index("sender_country_code").loc[true_top.index]
+    noisy_top = noisy.set_index("cardholder_country_code").loc[true_top.index]
 
     mae = abs(noisy_top["sum_perturbed"] - true_top).mean()
     rel_err = (mae / true_top.mean()).item() * 100
@@ -302,12 +304,12 @@ def experiment6_test_environment(df, n=1000):
 
     def clone_sens(row, masked=False):
         units = 0.0
-        for c in ["sender_iban", "receiver_iban", "sender_bic_swift_code",
-                  "receiver_bic_swift_code", "correspondent_bank_bic"]:
+        for c in ["card_number", "merchant_account", "card_bin",
+                  "acquirer_code", "acquirer_bic"]:
             if row[c]:
                 units += 0.5 if not masked else 0.05
-        for c in ["sender_institution_name", "receiver_bank_name",
-                  "sender_address", "receiver_address"]:
+        for c in ["cardholder_name", "merchant_name",
+                  "cardholder_address", "merchant_address"]:
             if row[c]:
                 units += 1.0 if not masked else 0.1
         return units
@@ -316,9 +318,9 @@ def experiment6_test_environment(df, n=1000):
     obf = sample.apply(lambda r: clone_sens(r, masked=True), axis=1).mean()
     reduction = (1 - obf / prod) * 100
 
-    masked = apply_masking(sample, mask=["sender_iban"])
-    orig_lens = sample["sender_iban"].str.len().mean()
-    masked_lens = masked["sender_iban"].str.len().mean()
+    masked = apply_masking(sample, mask=["card_number"])
+    orig_lens = sample["card_number"].str.len().mean()
+    masked_lens = masked["card_number"].str.len().mean()
 
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.8))
     axes[0].bar(["Prod clone", "Masked clone"], [prod, obf],
@@ -329,7 +331,7 @@ def experiment6_test_environment(df, n=1000):
         axes[0].text(i, v + prod * 0.02, f"{v:.1f}", ha="center", fontweight="bold")
     axes[1].bar(["Original", "Masked"], [orig_lens, masked_lens],
                 color=[_AMBER, _TEAL], **_STYLE)
-    axes[1].set_ylabel("IBAN length (chars)")
+    axes[1].set_ylabel("Card number length (chars)")
     axes[1].set_title("Structural preservation")
     for i, v in enumerate([orig_lens, masked_lens]):
         axes[1].text(i, v + 0.3, f"{v:.0f}", ha="center", fontweight="bold")
@@ -341,14 +343,14 @@ def experiment6_test_environment(df, n=1000):
     print(f"  Prod clone sensitivity   : {prod:.2f} units/row")
     print(f"  Masked clone sensitivity : {obf:.2f} units/row")
     print(f"  Risk reduction           : {reduction:.0f}%")
-    print(f"  IBAN length preserved    : {orig_lens:.0f} -> {masked_lens:.0f} chars")
+    print(f"  Card length preserved    : {orig_lens:.0f} -> {masked_lens:.0f} chars")
 
     return {"title": "6. Test Environment Data Exposure",
             "technique": "field-level masking (structural preservation)",
             "prod_clone_sensitivity": round(prod, 2),
             "masked_clone_sensitivity": round(obf, 2),
             "reduction_pct": round(reduction, 0),
-            "iban_length_preserved": round(orig_lens, 0) == round(masked_lens, 0)}
+            "card_length_preserved": round(orig_lens, 0) == round(masked_lens, 0)}
 
 
 # ------------------------------------------------------------- experiment 7 ---
@@ -397,7 +399,7 @@ def experiment7_ato_security(df, n=200, bucket_width=5000.0):
 def experiment8_reidentification(df, n=2000, k=5):
     """Re-identification: quasi-identifiers before vs k-anonymity after."""
     sample = df.sample(min(n, len(df)), random_state=SEED)
-    quasi = ["booking_date", "sender_city", "transaction_amount_usd"]
+    quasi = ["transaction_date", "cardholder_city", "transaction_amount_usd"]
 
     def ident_risk(frame):
         counts = frame.groupby(quasi, dropna=False).size()
@@ -439,8 +441,8 @@ def experiment8_reidentification(df, n=2000, k=5):
 def experiment9_counterparty(df, n=5000):
     """Counterparty reconstruction: top corridors unmasked vs masked volumes."""
     sample = df.sample(min(n, len(df)), random_state=SEED)
-    corridors = (sample["sender_country_code"] + "->"
-                 + sample["receiver_country_code"])
+    corridors = (sample["cardholder_country_code"] + "->"
+                 + sample["merchant_country_code"])
     vols = sample.groupby(corridors)["transaction_amount_usd"].sum().sort_values(
         ascending=False).head(5)
     noisy = vols * [random.Random(SEED + i).uniform(0.7, 1.3) for i in range(len(vols))]
@@ -502,7 +504,7 @@ def run_all(df) -> str:
 
     print("\n" + "=" * 62)
     print("SUMMARY — Obfuscation threat scenarios on "
-          f"{len(df):,} synthetic SWIFT records")
+          f"{len(df):,} synthetic credit-card transaction records")
     print("=" * 62)
     print(f"{'Scenario':<42}{'Technique':<40}{'Reduction':>10}")
     print("-" * 92)
@@ -513,8 +515,8 @@ def run_all(df) -> str:
               f"{(str(red) + '%') if red is not None else 'n/a':>10}")
 
     lines = ["# Data Obfuscation Experiments — Threat Scenario Report", "",
-             f"Dataset: **{len(df):,} synthetic SWIFT records** "
-             "(generated by `examples/obfuscation/swift_data.py`).", ""]
+             f"Dataset: **{len(df):,} synthetic credit-card transaction records** "
+             "(generated by `examples/obfuscation/credit_card_data.py`).", ""]
     for r in results:
         lines.append(f"## {r.get('title', '?')}")
         lines.append("")
@@ -535,9 +537,9 @@ if __name__ == "__main__":
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-    from examples.obfuscation.swift_data import generate_swift
+    from examples.obfuscation.credit_card_data import generate_credit_card
 
-    df = generate_swift(n_rows=2000, seed=SEED)
+    df = generate_credit_card(n_rows=2000, seed=SEED)
     report = run_all(df)
     with open("examples/obfuscation/obfuscation_report.md", "w") as fh:
         fh.write(report)
