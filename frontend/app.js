@@ -331,18 +331,22 @@ function msgSetCreate(userMsg, open) {
   div.appendChild(body);
   wrap.appendChild(div);
   head.addEventListener("click", () => div.classList.toggle("collapsed"));
+  const setState = { preview: "" };
   const update = () => {
     const info = setTitleFor(userMsg);
     const it = info.iteration ? " · iteration " + info.iteration : "";
     const dt = info.ts ? " · " + new Date(info.ts * 1000).toLocaleString() : "";
+    const prev = setState.preview
+      ? `<span class="mset-prev">» ${esc(setState.preview)}</span>` : "";
     head.innerHTML = `<span class="caret">▸</span>`
       + `<span class="mset-title">${esc(info.title)}</span>`
       + (it ? `<span class="mset-iter">${esc(it)}</span>` : "")
+      + prev
       + `<span class="spacer"></span>`
       + `<span class="mset-time">${esc(dt)}</span>`;
   };
   update();
-  return { div, body, update };
+  return { div, body, setState, update };
 }
 
 function expandSetOf(el) {
@@ -1570,59 +1574,65 @@ attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520)
 function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
+  const userIdx = [];
+  msgs.forEach((m, i) => { if (m.role === "user") userIdx.push(i); });
+  const openIdx = new Set(userIdx.slice(-2));
   let lastDay = "";
   let turnUser = "";
   let currentSet = null;
   for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i];
-    const mtags = (m.meta && m.meta.tags) || [];
-    if (m.role === "user") {
-      const hasLaterUser = msgs.slice(i + 1).some((x) => x.role === "user");
-      const day = fmtDay(m.created_at);
-      if (day && day !== lastDay) {
-        const sep = document.createElement("div");
-        sep.className = "day-sep";
-        sep.textContent = day;
-        wrap.appendChild(sep);
-        lastDay = day;
+    try {
+      const m = msgs[i];
+      const mtags = (m.meta && m.meta.tags) || [];
+      if (m.role === "user") {
+        const day = fmtDay(m.created_at);
+        if (day && day !== lastDay) {
+          const sep = document.createElement("div");
+          sep.className = "day-sep";
+          sep.textContent = day;
+          wrap.appendChild(sep);
+          lastDay = day;
+        }
+        currentSet = msgSetCreate(m, openIdx.has(i));
+        const el = msgContainer("user", mtags, m.created_at, currentSet.body);
+        el.body.textContent = m.content;
+        tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+        turnUser = m.id;
+        continue;
       }
-      currentSet = msgSetCreate(m, !hasLaterUser);
-      const el = msgContainer("user", mtags, m.created_at, currentSet.body);
-      el.body.textContent = m.content;
-      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
-      turnUser = m.id;
-      continue;
-    }
-    if (!currentSet) {
-      // Assistant/tool content before any user message: open an implicit set.
-      currentSet = msgSetCreate(null, true);
-    }
-    if (m.role === "assistant") {
-      // Drop empty bubbles (intermediate tool-call rows carry no text; the
-      // tool cards below represent the steps).
-      if (!(m.content || "").trim()) continue;
-      const el = msgContainer("assistant", mtags, m.created_at, currentSet.body);
-      el.body.innerHTML = renderMarkdown(m.content);
-      enhanceCodeBlocks(el.body);
-      maybeAttachRepoButtons(el, mtags);
-      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
-      // Re-attach figures produced during this turn to the final assistant
-      // reply of the turn, so charts survive refreshState() re-renders.
-      const next = msgs[i + 1];
-      const isFinal = !next || next.role === "user";
-      if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
-    } else if (m.role === "tool") {
-      const meta = m.meta || {};
-      const card = document.createElement("div");
-      card.className = "toolcard";
-      card.innerHTML = `
-        <div class="toolcard-head">
-          <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
-          <span class="tstatus ok">persisted</span>
-        </div>
-        <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
-      card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
-      currentSet.body.appendChild(card);
+      if (!currentSet) currentSet = msgSetCreate(null, true);
+      if (m.role === "assistant") {
+        // Drop empty bubbles (intermediate tool-call rows carry no text; the
+        // tool cards below represent the steps).
+        if (!(m.content || "").trim()) continue;
+        currentSet.setState.preview = String(m.content).replace(/\s+/g, " ").slice(0, 70);
+        currentSet.update();
+        const el = msgContainer("assistant", mtags, m.created_at, currentSet.body);
+        el.body.innerHTML = renderMarkdown(m.content);
+        enhanceCodeBlocks(el.body);
+        maybeAttachRepoButtons(el, mtags);
+        tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+        // Re-attach figures produced during this turn to the final assistant
+        // reply of the turn, so charts survive refreshState() re-renders.
+        const next = msgs[i + 1];
+        const isFinal = !next || next.role === "user";
+        if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
+      } else if (m.role === "tool") {
+        const meta = m.meta || {};
+        const card = document.createElement("div");
+        card.className = "toolcard";
+        card.innerHTML = `
+          <div class="toolcard-head">
+            <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
+            <span class="tstatus ok">persisted</span>
+          </div>
+          <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
+        card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
+        currentSet.body.appendChild(card);
+      }
+    } catch (e) {
+      // A single malformed message must not blank the whole conversation.
+      console.error("renderMessages: skipping message", msgs[i] && msgs[i].id, e);
     }
   }
   scrollBottom();
