@@ -36,6 +36,9 @@ async def set_config(body: dict):
         CONFIG["llm"].update(cfg["llm"])
     if "agent" in cfg:
         CONFIG["agent"].update(cfg["agent"])
+    if "kaggle" in cfg:
+        CONFIG["kaggle"].update({k: v for k, v in cfg["kaggle"].items()
+                                 if k in ("username", "key")})
     if "mcp" in cfg and "servers" in cfg["mcp"]:
         CONFIG["mcp"]["servers"] = cfg["mcp"]["servers"]
         await rebuild_mcp()

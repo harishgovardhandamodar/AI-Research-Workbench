@@ -777,12 +777,15 @@ function lastUserMsg() {
 /* ============================ settings =================================== */
 
 function openSettings() {
-  const c = state.config || { llm: {}, agent: {}, mcp: {} };
+  const c = state.config || { llm: {}, agent: {}, mcp: {}, kaggle: {} };
   $("cfg-base-url").value = c.llm.base_url || "";
   $("cfg-tool-url").value = c.llm.tool_base_url || "";
   $("cfg-model").value = c.llm.model || "";
   $("cfg-temp").value = c.llm.temperature ?? 0.2;
   $("cfg-reviewer").checked = c.agent?.reviewer_enabled !== false;
+  const kg = c.kaggle || {};
+  $("cfg-kaggle-user").value = kg.username || "";
+  $("cfg-kaggle-key").value = kg.key || "";
   const dl = $("model-list");
   dl.innerHTML = (state.models || []).map((m) => `<option value="${esc(m.id)}">`).join("");
   state.mcpServers = (c.mcp?.servers || []).map((s) => ({ ...s }));
@@ -838,6 +841,10 @@ async function saveSettings() {
     },
     agent: { reviewer_enabled: $("cfg-reviewer").checked },
     mcp: { servers: state.mcpServers || [] },
+    kaggle: {
+      username: $("cfg-kaggle-user").value.trim(),
+      key: $("cfg-kaggle-key").value.trim(),
+    },
   };
   try {
     const r = await api("/api/config", { method: "POST", body: JSON.stringify({ config: cfg }) });
@@ -962,6 +969,55 @@ async function deleteFile(name) {
     renderFiles(r.files || []);
     toast(`Deleted ${name}`);
   } catch (e) { toast("Delete failed: " + e.message, 4000); }
+}
+
+/* ---- Kaggle dataset import ---- */
+
+function kaggleStatus(msg, kind) {
+  const el = $("kaggle-status");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("kaggle-err", kind === "err");
+  el.classList.toggle("kaggle-ok", kind === "ok");
+}
+
+function toggleKaggleForm() {
+  const f = $("kaggle-form");
+  const open = f.classList.toggle("hidden");
+  if (open) {
+    const cfg = state.config || {};
+    const kg = cfg.kaggle || {};
+    if (!(kg.username && kg.key)) {
+      kaggleStatus("Set Kaggle credentials in Settings first.", "err");
+    } else {
+      kaggleStatus("");
+    }
+    $("kaggle-slug").focus();
+  }
+}
+
+async function importKaggle() {
+  const slug = ($("kaggle-slug").value || "").trim();
+  if (!slug) { kaggleStatus("Enter a dataset slug like 'owner/dataset'.", "err"); return; }
+  const btn = $("kaggle-import");
+  btn.disabled = true;
+  kaggleStatus(`Downloading ${slug}…`, "ok");
+  try {
+    const r = await api(`/api/projects/${state.project}/kaggle/import`, {
+      method: "POST",
+      body: JSON.stringify({ dataset: slug }),
+    });
+    const n = (r.files || []).length;
+    kaggleStatus(`Imported ${r.dataset} — ${n} file(s) in ${r.dir}.`, "ok");
+    $("kaggle-form").classList.add("hidden");
+    $("kaggle-slug").value = "";
+    await loadFiles();
+    toast(`Imported ${n} file(s) from Kaggle. Ask Fox to analyze data/${slug.split("/")[1]}…`);
+  } catch (e) {
+    kaggleStatus("Import failed: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function renderGraphs(graphs) {
@@ -1602,6 +1658,11 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 $("file-upload-btn").addEventListener("click", uploadFiles);
 $("files-refresh").addEventListener("click", loadFiles);
+$("kaggle-toggle").addEventListener("click", toggleKaggleForm);
+$("kaggle-import").addEventListener("click", importKaggle);
+$("kaggle-slug").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); importKaggle(); }
+});
 
 /* ============================ experiments ================================= */
 

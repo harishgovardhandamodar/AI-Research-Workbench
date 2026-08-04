@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "agent": {"max_iters": 20, "reviewer_enabled": True},
     "mcp": {"servers": DEFAULT_SERVERS},
     "editor": editor_cfg.editor_config(),
+    "kaggle": {"username": "", "key": ""},
 }
 
 
@@ -37,6 +38,7 @@ def load_config() -> dict:
             cfg["llm"].update(saved.get("llm", {}))
             cfg["agent"].update(saved.get("agent", {}))
             cfg["editor"].update(saved.get("editor", {}))
+            cfg["kaggle"].update(saved.get("kaggle", {}))
             if "servers" in saved.get("mcp", {}):
                 # Keep user's servers but always surface the bundled default
                 # servers (e.g. newly-added "privacy") unless overridden by name.

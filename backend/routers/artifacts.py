@@ -1,8 +1,9 @@
-"""Artifact + project-file routes: listing, download, metadata, delete, and
-upload."""
+"""Artifact + project-file routes: listing, download, metadata, delete, upload,
+and Kaggle dataset import."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..artifacts.store import Artifact
+from ..kaggle import KaggleError, has_credentials, import_dataset, validate_slug
 from ..paths import PROJECTS_DIR
 from ..state import get_runtime, runtimes
 
@@ -117,17 +119,33 @@ def _safe_filename(name: str) -> str:
     return base
 
 
+def _safe_relpath(name: str) -> Path:
+    """A project-relative path that stays inside the project dir."""
+    p = Path(name or "")
+    if not p.parts or p.is_absolute() or ".." in p.parts:
+        raise HTTPException(status_code=400, detail="invalid path")
+    return p
+
+
 def _list_project_files(name: str) -> list[dict]:
+    """Top-level project files plus files under data/ (Kaggle imports).
+
+    Other subfolders (artifacts/, knowledge_graphs/, notebooks/) stay hidden from
+    the picker; each returned name is project-relative for download URLs.
+    """
     rt = get_runtime(name)
     out = []
-    for p in sorted(rt.dir.iterdir()):
+    for p in sorted(rt.dir.rglob("*")):
         if not p.is_file() or p.name in _IGNORED_FILES:
             continue
+        rel = p.relative_to(rt.dir).as_posix()
+        if "/" in rel and not rel.startswith("data/"):
+            continue
         out.append({
-            "name": p.name,
+            "name": rel,
             "size": p.stat().st_size,
             "modified": p.stat().st_mtime,
-            "url": f"/api/projects/{name}/files/{p.name}",
+            "url": f"/api/projects/{name}/files/{rel}",
         })
     return out
 
@@ -149,21 +167,51 @@ async def project_files_upload(name: str, upload: UploadFile = File(...)):
     return {"files": _list_project_files(name)}
 
 
-@router.get("/api/projects/{name}/files/{filename}")
+@router.get("/api/projects/{name}/files/{filename:path}")
 async def project_file_download(name: str, filename: str):
     rt = get_runtime(name)
-    dest = rt.dir / _safe_filename(filename)
+    rel = _safe_relpath(filename)
+    dest = rt.dir / rel
     if not dest.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     media = "application/octet-stream"
     return FileResponse(dest, media_type=media, filename=dest.name)
 
 
-@router.delete("/api/projects/{name}/files/{filename}")
+@router.delete("/api/projects/{name}/files/{filename:path}")
 async def project_file_delete(name: str, filename: str):
     rt = get_runtime(name)
-    dest = rt.dir / _safe_filename(filename)
+    rel = _safe_relpath(filename)
+    dest = rt.dir / rel
     if not dest.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     dest.unlink()
     return {"files": _list_project_files(name)}
+
+
+@router.post("/api/projects/{name}/kaggle/import")
+async def project_kaggle_import(name: str, body: dict):
+    """Import a public Kaggle dataset ('owner/dataset') into this project's
+    data/ dir. Needs Kaggle credentials configured in Settings."""
+    rt = get_runtime(name)
+    slug = (body.get("dataset") or "").strip()
+    if not slug:
+        raise HTTPException(status_code=400,
+                            detail="dataset slug required, e.g. 'owner/dataset'")
+    try:
+        validate_slug(slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not has_credentials():
+        raise HTTPException(
+            status_code=400,
+            detail="Kaggle credentials are not configured. Add your Kaggle "
+                   "username and API key in Settings (or set KAGGLE_USERNAME / "
+                   "KAGGLE_KEY).")
+    try:
+        result = await asyncio.to_thread(import_dataset, rt, slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KaggleError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    return result

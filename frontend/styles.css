@@ -644,6 +644,10 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .file-name:hover { text-decoration: underline; }
 .file-size { font-size: 11px; white-space: nowrap; }
 .file-del { color: var(--text-dim); }
+.kaggle-form { display: flex; gap: 6px; padding: 4px 0; }
+.kaggle-status { font-size: 11px; line-height: 1.4; }
+.kaggle-status.kaggle-err { color: var(--danger); }
+.kaggle-status.kaggle-ok { color: var(--ok); }
 
 /* ---------- run comparison ---------- */
 .exp-compare { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }

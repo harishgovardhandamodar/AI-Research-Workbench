@@ -226,6 +226,14 @@
           <input id="file-input" type="file" class="file-input" />
           <button id="file-upload-btn" class="btn subtle small">Upload</button>
         </div>
+        <div class="pane-toolbar">
+          <button id="kaggle-toggle" class="btn subtle small" title="Download a public Kaggle dataset into this project">Import from Kaggle</button>
+          <span id="kaggle-status" class="muted kaggle-status"></span>
+        </div>
+        <div id="kaggle-form" class="hidden kaggle-form">
+          <input id="kaggle-slug" placeholder="owner/dataset  (e.g. alexisbcook/titanic)" class="file-input" />
+          <button id="kaggle-import" class="btn subtle small">Import</button>
+        </div>
         <div id="file-list" class="vlist"></div>
         <div class="pane-toolbar"><span class="pane-title">Knowledge graphs</span></div>
         <div id="graph-list" class="vlist"></div>
@@ -291,6 +299,13 @@
       <label>Temperature</label>
       <input id="cfg-temp" type="number" step="0.05" min="0" max="2">
       <label class="check"><input id="cfg-reviewer" type="checkbox"> Run background reviewer after each turn</label>
+      <div class="form-section">
+        <span class="plabel">Kaggle API (for dataset imports)</span>
+        <label>Username (or KAGGLE_USERNAME env)</label>
+        <input id="cfg-kaggle-user" autocomplete="off">
+        <label>API key (or KAGGLE_KEY env)</label>
+        <input id="cfg-kaggle-key" type="password" autocomplete="off">
+      </div>
       <div class="modal-actions">
         <button id="cfg-test" class="btn subtle">Test connection</button>
         <span id="cfg-status"></span>
@@ -404,7 +419,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v37";
+  window.FOX_VER = "v38";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
