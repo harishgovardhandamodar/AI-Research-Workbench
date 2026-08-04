@@ -38,6 +38,32 @@ class TestWorkflowFinish(unittest.IsolatedAsyncioTestCase):
         for s in snap["stages"]:
             self.assertNotIn(s["state"], ("pending", "running"))
 
+    async def test_run_tools_resume_pipeline_across_turns(self):
+        # A follow-up turn that only runs python (finetuning) must resume the
+        # finished arXiv pipeline so the "run" stage shows live progress.
+        wt, events = await self._tracker()
+        await wt.start("arXiv replication")
+        for sid in ("ingest", "extract", "notes", "summarize", "experiment"):
+            await wt.update_stage(sid, "done")
+        await wt.finish()
+        self.assertEqual(wt.snapshot()["status"], "done")
+
+        # New turn: only run_python tools (no arxiv__ tool).
+        await wt.on_tool_start("run_python")
+        snap = wt.snapshot()
+        self.assertEqual(snap["status"], "running")
+        states = {s["id"]: s["state"] for s in snap["stages"]}
+        self.assertEqual(states["run"], "running")
+        await wt.on_tool_end("run_python", True)
+        states = {s["id"]: s["state"] for s in wt.snapshot()["stages"]}
+        self.assertEqual(states["run"], "done")
+        await wt.finish()  # end of the finetuning turn
+
+        # A fresh arXiv run still resets the pipeline from scratch.
+        await wt.start("arXiv replication")
+        states = {s["id"]: s["state"] for s in wt.snapshot()["stages"]}
+        self.assertEqual(states["ingest"], "pending")
+
     async def test_failed_stage_keeps_pending_stages_and_marks_pipeline_failed(self):
         wt, events = await self._tracker()
         await wt.start("arXiv replication")

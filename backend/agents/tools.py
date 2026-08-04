@@ -13,8 +13,10 @@ import dataclasses
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .. import editor as editor_cfg
 from ..artifacts.store import Artifact, ArtifactStore
 from ..experiments import record_experiment
 from ..kernels.manager import KernelManager
@@ -37,6 +39,11 @@ class ToolContext:
     workflow: "WorkflowTracker | None" = None
     message_id: str = ""
     run_id: str = ""
+    experiment_id: str = ""
+    experiment_config: dict | None = None
+    last_metrics: dict | None = None
+    variant: dict | None = None
+    finished_variants: list = dataclasses.field(default_factory=list)
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -156,6 +163,142 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_experiment",
+            "description": (
+                "Create a structured experiment: a family of runs grouped around one "
+                "research question with a hypothesis, optional goal metric/target, and "
+                "config variations. Call this BEFORE running the experiment so runs are "
+                "attached to it and can be compared across variants."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short experiment name, e.g. 'DP vs synthetic on income'"},
+                    "hypothesis": {"type": "string", "description": "One-sentence hypothesis the experiment tests"},
+                    "goal_metric": {"type": "string", "description": "Headline metric name, e.g. 'accuracy'"},
+                    "goal_target": {"type": "number", "description": "Target value for the goal metric"},
+                    "higher_better": {"type": "boolean", "description": "Whether larger goal_metric is better", "default": True},
+                    "config": {"type": "object", "description": "Baseline config (hyperparameters/parameters) for the first run"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_run",
+            "description": (
+                "Start an explicit run variant of the current experiment. Call this "
+                "before running the code for a single configuration point so that run "
+                "gets its own label and config, making it comparable against other "
+                "variants (and the baseline). A baseline run is started automatically "
+                "with the experiment's config; use start_run to mark a specific variant "
+                "instead. Pair with finish_run once the variant's code has run."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "Short variant label, e.g. 'eps=1.0', 'batch-64', 'baseline'"},
+                    "config": {"type": "object", "description": "This variant's config (hyperparameters/parameters)"},
+                },
+                "required": ["label"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_run",
+            "description": (
+                "Finish the run variant started by start_run. Records the metrics "
+                "reported via report_metric during the variant's code and any notes, "
+                "and closes the variant so the next start_run begins a fresh one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "notes": {"type": "string", "description": "Optional free-text notes on this variant's result"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__list_files",
+            "description": (
+                "List the files in this project's workspace (the folder the in-browser "
+                "VS Code editor shows): artifacts, notebooks, knowledge_graphs, project "
+                "files. Use before reading/editing so paths are exact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "Relative folder to list (default '.')"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__read_file",
+            "description": (
+                "Read a generated-content file (report, notebook, knowledge-graph JSON, "
+                "project file) in the VS Code workspace. Returns the text (capped)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path, e.g. 'artifacts/1_report.md'"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__edit_file",
+            "description": (
+                "Apply a text replacement to a file in the VS Code workspace so generated "
+                "content can be fixed/improved in place. The exact `old` text must appear "
+                "exactly once. Writes require user approval."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path of the file to edit"},
+                    "old": {"type": "string", "description": "Exact existing text to replace"},
+                    "new": {"type": "string", "description": "Replacement text"},
+                },
+                "required": ["path", "old", "new"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "editor__open",
+            "description": (
+                "Open the in-browser VS Code editor at this project's workspace (optionally "
+                "on a specific file), e.g. to let the user review or continue editing "
+                "generated content by hand."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "Optional relative file/folder to focus, e.g. 'artifacts/1_report.md'"},
+                },
+            },
+        },
+    },
 ]
 
 
@@ -166,11 +309,15 @@ def get_tool_schemas() -> list[dict]:
 async def _run_python(ctx: ToolContext, code: str) -> str:
     env = await ctx.kernels.get_env()
     resp = await ctx.kernels.python.run_code(code)
+    ctx.last_metrics = resp.get("metrics") or {}
     parts = []
     if resp.get("output"):
         parts.append(resp["output"].rstrip())
     if resp.get("error"):
         parts.append(f"[error] {resp['error']}")
+    metrics = ctx.last_metrics
+    if metrics:
+        parts.append("[metrics] " + json.dumps(metrics))
     artifact_ids = []
     for i, fig in enumerate(resp.get("figures") or [], start=1):
         data = base64.b64decode(fig)
@@ -253,9 +400,70 @@ async def _save_artifact(ctx: ToolContext, name: str, description: str,
     return f"Saved artifact {art.id} ({kind}: {name})"
 
 
+async def _create_experiment(ctx: ToolContext, name: str, hypothesis: str = "",
+                             goal_metric: str = "", goal_target: float | None = None,
+                             higher_better: bool = True,
+                             config: dict | None = None) -> str:
+    name = (name or "").strip()
+    if not name:
+        return "[error] experiment name is required"
+    try:
+        eid = ctx.store.create_experiment(
+            name, hypothesis or "", goal_metric or "",
+            float(goal_target) if goal_target is not None else None, bool(higher_better))
+    except Exception as e:  # noqa: BLE001
+        return f"[error] could not create experiment: {e}"
+    ctx.experiment_id = str(eid)
+    ctx.experiment_config = dict(config or {})
+    line = (f"Experiment #{eid} created: {name!r} (runs will be attached to it).\n"
+            f"Hypothesis: {hypothesis or '(none)'}\n"
+            f"Goal: {goal_metric or '(none)'}"
+            + (f" target={goal_target}, higher_better={higher_better}" if goal_target is not None else ""))
+    if ctx.experiment_config:
+        line += "\nConfig: " + json.dumps(ctx.experiment_config)
+    line += ("\nUse report_metric('" + (goal_metric or "my_metric")
+             + "', value) inside run_python code so each run records its headline metric.")
+    return line
+
+
 async def _list_vars(ctx: ToolContext) -> str:
     vars_ = await ctx.kernels.python.list_variables()
     return json.dumps(vars_, indent=2) if vars_ else "(kernel has no user variables)"
+
+
+async def _start_run(ctx: ToolContext, label: str, config: dict | None = None) -> str:
+    label = (label or "").strip()
+    if not label:
+        return "[error] a variant label is required (e.g. 'baseline', 'eps=1.0')"
+    if ctx.variant is not None:
+        return ("[error] a variant run is already active: " +
+                f"{ctx.variant.get('label') or '(unlabeled)'}. "
+                "Call finish_run first to close it before starting a new one.")
+    ctx.variant = {"label": label, "config": dict(config or {}), "metrics": {},
+                   "notes": ""}
+    lines = [f"Started variant run: {label}"]
+    if ctx.variant["config"]:
+        lines.append("Config: " + json.dumps(ctx.variant["config"]))
+    lines.append("Run the variant's code now, then call finish_run.")
+    return "\n".join(lines)
+
+
+async def _finish_run(ctx: ToolContext, notes: str = "") -> str:
+    v = ctx.variant
+    if v is None:
+        return ("[error] no variant run is active. Call start_run with a label "
+                "before running the variant's code.")
+    v["notes"] = (notes or "").strip()
+    metrics = dict(v.get("metrics") or {})
+    lines = [f"Finished variant run: {v.get('label') or '(unlabeled)'}"]
+    if metrics:
+        lines.append("Metrics: " + json.dumps(metrics))
+    if v["notes"]:
+        lines.append("Notes: " + v["notes"])
+    lines.append("The run will be recorded under this variant's label/config.")
+    ctx.finished_variants.append(v)
+    ctx.variant = None
+    return "\n".join(lines)
 
 
 async def _notebook_metrics(ctx: ToolContext) -> dict:
@@ -357,6 +565,107 @@ async def _create_notebook(ctx: ToolContext, name: str, code: str) -> str:
             f"a title cell and one code cell. Run it with the run_notebook tool.")
 
 
+# ------------------------------------------------------------- editor tools --
+# The in-browser VS Code (code-server) works on the same volume as the workbench
+# projects, so the agent's editor__* tools operate on the same generated content
+# the user sees in the Editor tab.
+
+def _editor_root(ctx: ToolContext) -> Path:
+    return Path(ctx.artifacts.project_dir)
+
+
+def _editor_safe(ctx: ToolContext, rel: str) -> Path | None:
+    root = _editor_root(ctx).resolve()
+    p = (root / rel).resolve()
+    if p != root and root not in p.parents:
+        return None
+    return p
+
+
+async def _editor_list_files(ctx: ToolContext, path: str = ".") -> str:
+    base = _editor_safe(ctx, path)
+    if base is None or not base.is_dir():
+        return f"[error] not a valid workspace folder: {path}"
+    skip = {"workbench.db", "workbench.db-wal", "workbench.db-shm"}
+    lines = []
+    for p in sorted(base.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.name in skip:
+            continue
+        rel = p.relative_to(_editor_root(ctx))
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        lines.append(f"{rel} ({size} B)")
+    if not lines:
+        return "(workspace has no files yet)"
+    head = f"Workspace files under '{path}' ({len(lines)}):"
+    return "\n".join([head] + lines)[:50_000]
+
+
+async def _editor_read_file(ctx: ToolContext, path: str) -> str:
+    p = _editor_safe(ctx, path)
+    if p is None or not p.is_file():
+        return f"[error] file not found in workspace: {path}"
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"[error] could not read {path}: {e}"
+    if len(text) > 40_000:
+        text = text[:40_000] + "\n…[truncated]"
+    return f"--- {path} ---\n{text}"
+
+
+async def _editor_edit_file(ctx: ToolContext, path: str, old: str, new: str) -> str:
+    p = _editor_safe(ctx, path)
+    if p is None or not p.is_file():
+        return f"[error] file not found in workspace: {path}"
+    decision = ctx.permissions.check("editor_edit_file", path)
+    if decision == "deny":
+        return "[denied] Editing this file is blocked by the permission policy."
+    if decision == "ask":
+        if ctx.approval is None:
+            return "[denied] This edit requires approval but no approval channel is available."
+        ok, temporary = await ctx.approval.request(
+            "editor_edit_file", path, f"Apply an edit to {path} in the VS Code workspace")
+        if not ok:
+            return "[denied by user]"
+        if not temporary:
+            ctx.permissions.record("editor_edit_file", path, "allow")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as e:
+        return f"[error] could not read {path}: {e}"
+    count = text.count(old)
+    if count == 0:
+        return f"[error] the `old` text was not found in {path} (0 matches)."
+    if count > 1:
+        return f"[error] the `old` text matches {count} times; make it more specific."
+    try:
+        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+    except OSError as e:
+        return f"[error] could not write {path}: {e}"
+    return (f"Edited {path}: replaced 1 occurrence "
+            f"(removed {len(old)} chars, added {len(new)} chars). "
+            f"The change is visible in the Editor tab.")
+
+
+async def _editor_open(ctx: ToolContext, path: str | None = None) -> str:
+    base = editor_cfg.editor_url().rstrip("/")
+    folder = editor_cfg.editor_folder()
+    url = f"{base}/?folder={folder}"
+    if path:
+        safe = _editor_safe(ctx, path)
+        if safe is None or not safe.exists():
+            return f"[error] file not found in workspace: {path}"
+        url = f"{base}/?folder={folder}#{path}"
+    return (f"Open the in-browser VS Code editor to edit generated content: {url}\n"
+            f"(Also available via the 'Editor' tab in the top bar. If it shows a login, "
+            f"the code-server password is the one set by CODE_SERVER_PASSWORD.)")
+
+
 def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
     return {
         "run_python": lambda code: _run_python(ctx, code),
@@ -367,4 +676,14 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "list_kernel_variables": lambda: _list_vars(ctx),
         "run_notebook": lambda notebook, cells="all": _run_notebook(ctx, notebook, cells),
         "create_notebook": lambda name, code="": _create_notebook(ctx, name, code),
+        "create_experiment": lambda name, hypothesis="", goal_metric="",
+            goal_target=None, higher_better=True, config=None:
+            _create_experiment(ctx, name, hypothesis, goal_metric, goal_target,
+                               higher_better, config),
+        "start_run": lambda label, config=None: _start_run(ctx, label, config),
+        "finish_run": lambda notes="": _finish_run(ctx, notes),
+        "editor__list_files": lambda path=".": _editor_list_files(ctx, path),
+        "editor__read_file": lambda path: _editor_read_file(ctx, path),
+        "editor__edit_file": lambda path, old, new: _editor_edit_file(ctx, path, old, new),
+        "editor__open": lambda path=None: _editor_open(ctx, path),
     }

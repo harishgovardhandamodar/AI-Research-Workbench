@@ -42,6 +42,26 @@ class TestKernelProtocol(unittest.IsolatedAsyncioTestCase):
         resp = await self.kernel.run_code("print(secret)")
         self.assertFalse(resp.get("ok"))  # name error after reset
 
+    async def test_report_metric_structured(self):
+        resp = await self.kernel.run_code(
+            "report_metric('acc', 0.91)\nreport_metric('rmse', 1.25)")
+        self.assertTrue(resp.get("ok"), resp)
+        self.assertEqual(resp.get("metrics"), {"acc": 0.91, "rmse": 1.25})
+
+    async def test_report_metric_step_key(self):
+        resp = await self.kernel.run_code("report_metric('loss', 0.5, step=3)")
+        self.assertEqual(resp.get("metrics"), {"loss[step=3]": 0.5})
+
+    async def test_report_metric_invalid_value_rejected(self):
+        resp = await self.kernel.run_code("report_metric('acc', 'high')")
+        self.assertFalse(resp.get("ok"))
+        self.assertIn("must be a number", resp.get("error", ""))
+
+    async def test_metrics_cleared_after_call(self):
+        await self.kernel.run_code("report_metric('acc', 0.5)")
+        resp = await self.kernel.run_code("x = 1")
+        self.assertEqual(resp.get("metrics"), {})
+
 
 if __name__ == "__main__":
     unittest.main()

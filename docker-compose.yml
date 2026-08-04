@@ -3,7 +3,10 @@ services:
     build: .
     container_name: fox-workbench
     ports:
-      - "8765:8765"
+      # Bound to localhost by default (browser uses the same origin, so the
+      # WebSocket origin check keeps working). Set FOX_BIND=0.0.0.0 to expose
+      # the workbench to the LAN.
+      - "${FOX_BIND:-127.0.0.1}:8765:8765"
     environment:
       # Reach Ollama / hive gateway running on the Docker host.
       # If you use the bundled `ollama` service instead, set these to
@@ -11,12 +14,35 @@ services:
       FOX_BASE_URL: ${FOX_BASE_URL:-http://host.docker.internal:8081/v1}
       FOX_TOOL_BASE_URL: ${FOX_TOOL_BASE_URL:-http://host.docker.internal:11435/v1}
       FOX_MODEL: ${FOX_MODEL:-qwen3.6:latest}
+      # In-browser VS Code (code-server) integration.
+      FOX_EDITOR_URL: ${FOX_EDITOR_URL:-http://127.0.0.1:8787}
+      FOX_EDITOR_PROBE_URL: ${FOX_EDITOR_PROBE_URL:-http://code-server:8080}
+      FOX_EDITOR_FOLDER: ${FOX_EDITOR_FOLDER:-/home/coder/workbench}
     extra_hosts:
       # Lets "host.docker.internal" resolve to the host on Linux.
       - "host.docker.internal:host-gateway"
     volumes:
       # Persistent data: projects (SQLite + artifacts), kernels, config.
       - fox_data:/app/workbench
+    restart: unless-stopped
+
+  # In-browser VS Code editor sharing the workbench data volume so generated
+  # content (artifacts, notebooks, knowledge graphs, project files) can be
+  # edited in a full editor. UI at http://127.0.0.1:8787. No login by default;
+  # set CODE_SERVER_AUTH=password + CODE_SERVER_PASSWORD to require one.
+  code-server:
+    image: codercom/code-server:latest
+    container_name: fox-code-server
+    user: "0"
+    ports:
+      - "${CODE_SERVER_BIND:-127.0.0.1}:8787:8080"
+    environment:
+      PASSWORD: ${CODE_SERVER_PASSWORD:-fox-workspace}
+    volumes:
+      # Same volume the fox service mounts at /app/workbench.
+      - fox_data:/home/coder/workbench
+      - code_server_config:/home/coder/.local/share/code-server
+    command: ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "${CODE_SERVER_AUTH:-none}", "--disable-telemetry", "/home/coder/workbench"]
     restart: unless-stopped
 
   # Optional: run Ollama itself as a container instead of using the host one.
@@ -44,3 +70,4 @@ services:
 volumes:
   fox_data:
   ollama_data:
+  code_server_config:

@@ -1,0 +1,10 @@
+# Core (MCP servers + notebook) — no GPU required.
+mcp>=1.0
+pyyaml>=6.0
+openai>=1.30
+jupyter_server>=2.0
+uvicorn>=0.30
+
+# Real LoRA/QLoRA training (optional; enables training.real=true).
+# Install separately to avoid pulling torch when you only run simulate mode:
+#   pip install -r requirements-train.txt

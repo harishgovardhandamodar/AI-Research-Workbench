@@ -29,7 +29,13 @@ Suggestions must be specific to what was actually run.
 
 Reply with JSON only, an object:
 {"findings": [{"severity": "critical"|"warning"|"info", "message": "short description"}],
- "suggestions": ["suggestion 1", "suggestion 2", ...]}
+ "suggestions": [{"title": "short action title, e.g. 'Try eps=1.0'",
+                  "action": "one-sentence description of the change to make",
+                  "prompt": "A complete user prompt that, sent to the assistant, would
+                             perform this suggested change and rerun. Start with a verb,
+                             reference the experiment, and state the exact new
+                             config/metrics, e.g. 'Start variant run 'eps=1.0' with config
+                             {...}, rerun the experiment, and report the new metrics.'"}]}
 If everything checks out, findings is an empty array. If you cannot suggest anything
 useful, suggestions is an empty array.
 """
@@ -94,7 +100,33 @@ def _parse_review(text: str) -> dict:
                 })
         suggestions = []
         for s in (parsed.get("suggestions") or [])[:3]:
-            if isinstance(s, str) and s.strip():
-                suggestions.append(s.strip())
+            sug = _normalize_suggestion(s)
+            if sug is not None:
+                suggestions.append(sug)
         return {"findings": findings, "suggestions": suggestions}
     return {"findings": [], "suggestions": []}
+
+
+def _normalize_suggestion(raw) -> dict | None:
+    """Coerce a reviewer suggestion into a structured {title, action, prompt} form.
+
+    Accepts dict suggestions (title/action/prompt) as well as legacy plain strings.
+    """
+    if isinstance(raw, dict):
+        title = str(raw.get("title") or "").strip()
+        action = str(raw.get("action") or "").strip()
+        prompt = str(raw.get("prompt") or "").strip()
+        if not title and action:
+            title = action[:80]
+        if not action and prompt:
+            action = prompt[:200]
+        if not prompt and action:
+            prompt = action
+        if title or prompt:
+            return {"title": title or prompt[:80], "action": action,
+                    "prompt": prompt or action}
+        return None
+    if isinstance(raw, str) and raw.strip():
+        text = raw.strip()
+        return {"title": text[:80], "action": text, "prompt": text}
+    return None

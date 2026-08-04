@@ -63,6 +63,46 @@ class TestStore(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["stages"][0]["name"], "s")
 
+    def test_experiments_roundtrip(self):
+        eid = self.store.create_experiment(
+            "DP vs synthetic", "Synthetic beats DP at ε=1", "accuracy", 0.9, True)
+        exp = self.store.get_experiment(eid)
+        self.assertEqual(exp["name"], "DP vs synthetic")
+        self.assertEqual(exp["goal_metric"], "accuracy")
+        self.assertEqual(exp["goal_target"], 0.9)
+        self.assertTrue(exp["higher_better"])
+        self.assertEqual(exp["status"], "active")
+        self.assertEqual(self.store.list_experiments()[0]["runs"], 0)
+
+    def test_experiment_runs_and_config_linkage(self):
+        eid = self.store.create_experiment("var", "hyp", "acc", 0.9, True)
+        rid = self.store.add_run("p", "r", "done", 1.0, 2.0,
+                                 metrics={"acc": 0.8},
+                                 experiment_id=eid,
+                                 config={"eps": 1.0, "seed": 42})
+        run = self.store.get_run(rid)
+        self.assertEqual(run["experiment_id"], eid)
+        self.assertEqual(run["config"], {"eps": 1.0, "seed": 42})
+        exps = self.store.list_experiments()
+        self.assertEqual(exps[0]["runs"], 1)
+        self.assertEqual(self.store.experiment_runs(eid)[0]["id"], rid)
+        self.store.set_run_experiment(rid, None, {})
+        self.assertIsNone(self.store.get_run(rid)["experiment_id"])
+        self.assertEqual(self.store.experiment_runs(eid), [])
+
+    def test_run_label_roundtrip(self):
+        rid = self.store.add_run("p", "r", "done", 1.0, 2.0,
+                                 label="eps=1.0", config={"eps": 1.0})
+        run = self.store.get_run(rid)
+        self.assertEqual(run["label"], "eps=1.0")
+        self.assertEqual(run["config"], {"eps": 1.0})
+        # set_run_experiment can carry a label too
+        eid = self.store.create_experiment("v", "h", "acc", 0.9, True)
+        self.store.set_run_experiment(rid, eid, {"eps": 2.0}, "eps=2.0")
+        run = self.store.get_run(rid)
+        self.assertEqual(run["label"], "eps=2.0")
+        self.assertEqual(run["experiment_id"], eid)
+
     def test_approval_log_roundtrip(self):
         self.store.log_approval("run_shell", "ls", "allow", True)
         self.store.log_approval("run_shell", "rm -rf /", "deny", False)

@@ -1,0 +1,10 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Generated experiment runtime artifacts (reproducible via the MCP tools).
+experiments/*/experiment_state.json
+experiments/*/adapters/
+experiments/*/checkpoints/
+experiments/*/reports/
+experiments/*/data/*.jsonl

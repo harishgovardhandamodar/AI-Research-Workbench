@@ -178,14 +178,21 @@ class WorkflowTracker:
             if name.startswith("arxiv__"):
                 await self.start()  # begin/reset the arXiv pipeline
             await self.update_stage(stage, "running", message=f"{name} …")
-        elif name in RUN_TOOLS and self._status == "running":
+        elif name in RUN_TOOLS and self._stages:
+            # A multi-turn arXiv replication spans several turns; an earlier turn's
+            # finish() left the pipeline "done". Follow-up turns that keep running
+            # the experiment (finetuning, extra runs, comparisons) resume it so the
+            # "run" stage shows live progress instead of staying hidden/queued.
+            if self._status != "running":
+                self._status = "running"
+                self._updated = time.time()
             await self.update_stage("run", "running", message=f"{name} …")
 
     async def on_tool_end(self, name: str, ok: bool) -> None:
         stage = STAGE_BY_TOOL.get(name)
         if stage:
             await self.update_stage(stage, "done" if ok else "failed")
-        elif name in RUN_TOOLS and self._status == "running":
+        elif name in RUN_TOOLS and self._stages:
             await self.update_stage("run", "done" if ok else "failed")
 
     async def finish(self) -> None:

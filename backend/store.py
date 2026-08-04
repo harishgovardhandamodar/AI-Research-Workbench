@@ -79,7 +79,15 @@ class ProjectStore:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 prompt TEXT, reply TEXT, status TEXT,
                 started_at REAL, finished_at REAL,
-                tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT)"""
+                tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT,
+                experiment_id INTEGER, config TEXT, label TEXT)"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, hypothesis TEXT,
+                goal_metric TEXT, goal_target REAL, higher_better INTEGER,
+                status TEXT, created_at REAL, updated_at REAL)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS goals (
@@ -95,6 +103,20 @@ class ProjectStore:
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate per-run experiment linkage.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN experiment_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN config TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate per-run variant labels.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN label TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -207,16 +229,28 @@ class ProjectStore:
                 tool_sequence: list | None = None,
                 artifact_ids: list | None = None,
                 metrics: dict | None = None,
-                review: dict | None = None) -> int:
+                review: dict | None = None,
+                experiment_id: int | None = None,
+                config: dict | None = None,
+                label: str | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail)."""
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
-            " tool_sequence, artifact_ids, metrics, review) VALUES (?,?,?,?,?,?,?,?,?)",
+            " tool_sequence, artifact_ids, metrics, review, experiment_id, config, label)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
-             json.dumps(metrics or {}), json.dumps(review or {})))
+             json.dumps(metrics or {}), json.dumps(review or {}),
+             experiment_id, json.dumps(config or {}), label or None))
         self._conn.commit()
         return cur.lastrowid
+
+    def set_run_experiment(self, rid: int, experiment_id: int | None,
+                           config: dict | None = None, label: str | None = None):
+        self._conn.execute(
+            "UPDATE runs SET experiment_id=?, config=?, label=? WHERE id=?",
+            (experiment_id, json.dumps(config or {}), label or None, rid))
+        self._conn.commit()
 
     def list_runs(self, limit: int = 50) -> list[dict]:
         rows = self._conn.execute(
@@ -244,7 +278,57 @@ class ProjectStore:
                 "tool_sequence": _jload(r["tool_sequence"], []),
                 "artifact_ids": _jload(r["artifact_ids"], []),
                 "metrics": _jload(r["metrics"], {}),
-                "review": _jload(r["review"], {})}
+                "review": _jload(r["review"], {}),
+                "experiment_id": r["experiment_id"],
+                "config": _jload(r["config"], {}),
+                "label": r["label"]}
+
+    # -- experiments (a family of runs around one research goal) ------------
+    def create_experiment(self, name: str, hypothesis: str = "",
+                          goal_metric: str = "", goal_target: float | None = None,
+                          higher_better: bool = True) -> int:
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO experiments (name, hypothesis, goal_metric, goal_target,"
+            " higher_better, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (name, hypothesis, goal_metric, goal_target,
+             1 if higher_better else 0, "active", now, now))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_experiments(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM experiments ORDER BY id").fetchall()
+        out = []
+        for r in rows:
+            exp = self._row_experiment(r)
+            exp["runs"] = len(self.experiment_runs(r["id"]))
+            out.append(exp)
+        return out
+
+    def get_experiment(self, eid: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM experiments WHERE id=?", (eid,)).fetchone()
+        return self._row_experiment(row) if row else None
+
+    def experiment_runs(self, eid: int, limit: int = 100) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM runs WHERE experiment_id=? ORDER BY id DESC LIMIT ?",
+            (eid, limit)).fetchall()
+        return [self._row_run(r) for r in reversed(rows)]
+
+    def update_experiment_status(self, eid: int, status: str):
+        self._conn.execute(
+            "UPDATE experiments SET status=?, updated_at=? WHERE id=?",
+            (status, time.time(), eid))
+        self._conn.commit()
+
+    def _row_experiment(self, r) -> dict:
+        return {"id": r["id"], "name": r["name"], "hypothesis": r["hypothesis"],
+                "goal_metric": r["goal_metric"], "goal_target": r["goal_target"],
+                "higher_better": bool(r["higher_better"]), "status": r["status"],
+                "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
     # -- goals (target metric + direction, for improvement tracking) --------
     def add_goal(self, metric: str, target: float, higher_better: bool,

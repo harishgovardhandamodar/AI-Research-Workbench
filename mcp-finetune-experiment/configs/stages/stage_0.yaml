@@ -1,0 +1,8 @@
+# Stage 0: base model + initial SFT on the paper's (approximated) data.
+# Overrides the defaults from configs/default.yaml.
+training:
+  method: lora
+  lora_rank: 8
+  learning_rate: 5.0e-05
+  epochs: 1
+  data: [mcp_tool_use_train]
