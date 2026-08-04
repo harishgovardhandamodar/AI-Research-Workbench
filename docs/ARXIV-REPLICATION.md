@@ -81,8 +81,9 @@ Smaller steps if you prefer to drive it yourself:
 
 ### Path B — run the bundled local experiment script
 
-A self-contained local replication of 2409.12642 ships at
-`examples/arxiv/run_local_replication.py`. It:
+A self-contained local replication of 2409.12642 ships in the
+**personal-experiments** repo (`../personal-experiments/examples/arxiv/
+run_local_replication.py`). It:
 
 1. prints the adversarial-robustness checklist (robustness MCP),
 2. builds a synthetic tabular task + logistic classifier (a tractable proxy for
@@ -92,19 +93,20 @@ A self-contained local replication of 2409.12642 ships at
    `arxiv__compare_results`,
 5. prints the verdict.
 
-Run it standalone:
+Run it standalone (from the personal-experiments repo):
 
 ```bash
 .venv/bin/python examples/arxiv/run_local_replication.py
 ```
 
-Or inside the workbench kernel (ask the agent, or exec it):
+Or inside the workbench kernel (ask the agent, or exec it from the
+personal-experiments repo):
 
 ```python
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
-exec(open("examples/arxiv/run_local_replication.py").read())
+exec(open("../personal-experiments/examples/arxiv/run_local_replication.py").read())
 ```
 
 Expected output (deterministic): clean accuracy ~0.99, ASR growing with ε

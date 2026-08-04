@@ -396,7 +396,10 @@ trail plus figures under `examples/privacy/reports/`. See
   the robustness server.
 - **Privacy** — `examples/privacy/` end-to-end red-team/DP/synthetic-data
   evaluation (`run_privacy_eval.py`, `run_peer_exploitation.py`).
-- **ArXiv** — `examples/arxiv/` scripted local replication runs.
+- **ArXiv** — the arXiv MCP server (`mcp_servers/arxiv_replication.py`) drives
+  the full replication workflow; the standalone scripted local replication runs
+  (`examples/arxiv/`) now live in the **personal-experiments** repo
+  (`../personal-experiments/examples/arxiv/`).
 
 See **[examples/README.md](examples/README.md)** for the full catalog.
 
