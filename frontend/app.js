@@ -330,7 +330,6 @@ function msgSetCreate(userMsg, open) {
   div.appendChild(head);
   div.appendChild(body);
   wrap.appendChild(div);
-  head.addEventListener("click", () => div.classList.toggle("collapsed"));
   const setState = { preview: "" };
   const update = () => {
     const info = setTitleFor(userMsg);
@@ -634,13 +633,30 @@ async function renderArtifacts() {
   }
 }
 
-function openArtifact(a) {
+async function openArtifact(a) {
   currentArtifact = a;
   $("art-title").textContent = `${a.name} — ${a.kind}`;
   const view = $("art-view");
-  view.innerHTML = a.data_type === "png"
-    ? `<img src="${B(`/artifacts/${a.id}`)}" alt="">`
-    : `<pre>${esc(a.description)}\n\n${esc(a.data_type === "html" ? "(html artifact)" : "")}</pre>`;
+  if (a.data_type === "png") {
+    view.innerHTML = `<img src="${B(`/artifacts/${a.id}`)}" alt="">`;
+  } else {
+    view.innerHTML = '<div class="muted">Loading…</div>';
+    try {
+      const res = await fetch(B(`/artifacts/${a.id}`));
+      const text = await res.text();
+      if (a.data_type === "html") {
+        view.innerHTML = `<iframe class="art-html" srcdoc="${esc(text)}"></iframe>`;
+      } else {
+        const md = document.createElement("div");
+        md.className = "art-md";
+        md.innerHTML = renderMarkdown(text);
+        view.innerHTML = "";
+        view.appendChild(md);
+      }
+    } catch (e) {
+      view.innerHTML = `<pre>${esc(a.description || "")}</pre>`;
+    }
+  }
   $("art-meta").textContent = `${a.kind} · created ${new Date(a.created_at * 1000).toLocaleString()} · ${a.size} bytes`;
   $("art-code").textContent = a.code || "(no code recorded)";
   $("art-env").textContent = a.env && Object.keys(a.env).length ? JSON.stringify(a.env, null, 2) : "(no env snapshot)";
@@ -1574,9 +1590,6 @@ attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520)
 function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
-  const userIdx = [];
-  msgs.forEach((m, i) => { if (m.role === "user") userIdx.push(i); });
-  const openIdx = new Set(userIdx.slice(-2));
   let lastDay = "";
   let turnUser = "";
   let currentSet = null;
@@ -1593,7 +1606,7 @@ function renderMessages(msgs) {
           wrap.appendChild(sep);
           lastDay = day;
         }
-        currentSet = msgSetCreate(m, openIdx.has(i));
+        currentSet = msgSetCreate(m, true);
         const el = msgContainer("user", mtags, m.created_at, currentSet.body);
         el.body.textContent = m.content;
         tagMessageExperiment(el, m.meta && m.meta.experiment_id);
@@ -1705,8 +1718,14 @@ $("messages").addEventListener("click", (e) => {
   const body = msg && msg.querySelector(".msg-body");
   copyText(body ? body.innerText : "");
 });
-// Clicking an experiment chip on a message focuses that experiment.
+// Clicking a message-set header expands/collapses it (delegated so it always works).
 $("messages").addEventListener("click", (e) => {
+  const head = e.target.closest(".mset-head");
+  if (head) {
+    const set = head.closest(".msg-set");
+    if (set) set.classList.toggle("collapsed");
+    return;
+  }
   const chip = e.target.closest(".msg-exp");
   if (!chip) return;
   const eid = parseInt(chip.dataset.eid, 10);

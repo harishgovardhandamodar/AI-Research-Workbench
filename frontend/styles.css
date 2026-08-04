@@ -540,6 +540,16 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .art-view { background: #0a0e13; border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .art-view img { max-width: 100%; max-height: 52vh; border-radius: 6px; }
 .art-view pre { max-height: 40vh; overflow: auto; text-align: left; }
+.art-md {
+  max-height: 55vh; overflow: auto; text-align: left; width: 100%;
+  font-size: 12.5px; line-height: 1.6; padding: 4px 8px;
+}
+.art-md h1, .art-md h2, .art-md h3 { color: var(--text); margin: 10px 0 5px; }
+.art-md table { border-collapse: collapse; margin: 6px 0; }
+.art-md th, .art-md td { border: 1px solid var(--border); padding: 3px 8px; }
+.art-md pre { background: #0a0e13; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; max-height: 30vh; }
+.art-md code { font-family: var(--mono); font-size: 12px; }
+.art-html { width: 100%; height: 55vh; border: none; border-radius: 6px; background: #fff; }
 .art-meta { margin: 12px 0 0; font-size: 12.5px; color: var(--text-dim); }
 .provenance { margin-top: 12px; }
 .provenance summary { cursor: pointer; color: var(--accent); font-size: 12.5px; }
