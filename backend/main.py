@@ -123,6 +123,17 @@ def compare_requested(text: str) -> bool:
         "compare results", "compare the privacy", "run comparison"))
 
 
+def rerun_compare_requested(text: str) -> bool:
+    """A fresh rerun AND a comparison in one command, e.g. "rerun with new seed
+    and compare with last run" (the Fresh-rerun + Compare-runs quick actions).
+
+    Requires both a rerun/fresh word and a compare word, so generic "compare X
+    and Y" chats are not hijacked."""
+    low = (text or "").lower()
+    return (any(w in low for w in FRESH_WORKFLOW_WORDS)
+            and any(w in low for w in COMPARE_WORKFLOW_WORDS))
+
+
 # A "rerun" the researcher can trigger for a specific notebook:
 # e.g. "rerun with fresh results Run 26_adversarial_model_comparison".
 NOTEBOOK_RUN_WORDS = ["run", "rerun", "re-run", "execute"]
@@ -260,11 +271,11 @@ def message_tags(role: str, text: str) -> list[str]:
     tags: list[str] = []
     low = (text or "").lower()
     if role == "user":
-        if match_workflow(text):
+        if match_workflow(text) or rerun_compare_requested(text):
             tags.append("privacy workflow")
-            if fresh_requested(text):
+            if fresh_requested(text) or rerun_compare_requested(text):
                 tags.append("fresh rerun")
-            if compare_requested(text):
+            if compare_requested(text) or rerun_compare_requested(text):
                 tags.append("compare runs")
         elif "obfusc" in low:
             tags.append("obfuscation")
@@ -617,9 +628,13 @@ async def ws_chat(ws: WebSocket, name: str):
                     # suggestion's prompt to the agent as a fresh turn.
                     user_tags = ["rerun suggestion"]
                 else:
-                    workflow_mode = bool(match_workflow(text) or compare_requested(text))
-                    compare_mode = compare_requested(text)
-                    fresh_mode = fresh_requested(text)
+                    rcc = rerun_compare_requested(text)
+                    workflow_mode = bool(match_workflow(text) or
+                                         compare_requested(text) or rcc)
+                    compare_mode = compare_requested(text) or rcc
+                    fresh_mode = fresh_requested(text) or rcc
+                    if rcc:
+                        user_tags = ["privacy workflow", "fresh rerun", "compare runs"]
                 if intent == "improve_loop":
                     await emit("status", {"message": "Preparing improve loop…"})
                     eid = _resolve_experiment_id(rt, text, experiment_id)
@@ -641,10 +656,17 @@ async def ws_chat(ws: WebSocket, name: str):
                                             "tags": user_tags,
                                             "created_at": _msg_created_at(rt, mid)})
                 if workflow_mode:
-                    await emit("status", {"message":
-                        ("Comparing previous workflow runs…" if compare_mode else
-                         "Running the privacy workflow — peer exploitation · "
-                         "red team · DP robustness…")})
+                    if compare_mode and fresh_mode:
+                        await emit("status", {"message":
+                            "Rerunning the privacy workflow with a fresh seed and "
+                            "comparing with the last run…"})
+                    elif compare_mode:
+                        await emit("status", {"message":
+                            "Comparing previous workflow runs…"})
+                    else:
+                        await emit("status", {"message":
+                            "Running the privacy workflow — peer exploitation · "
+                            "red team · DP robustness…"})
                     result = await run_privacy_workflow(
                         rt, emit, fresh=fresh_mode, compare=compare_mode,
                         prompt=text)
