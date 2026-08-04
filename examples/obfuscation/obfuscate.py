@@ -1,9 +1,10 @@
 """Reusable data-obfuscation library for experimenting with sensitive data.
 
-Provides every technique from the SWIFT obfuscation study
-(`~/WorkBook/obfuscation-study`) as functions that operate on pandas DataFrames,
-so you can apply them interactively to generated or uploaded data inside the Fox
-kernel. All functions are deterministic (fixed `seed` where randomness is used).
+Provides every technique from the obfuscation study
+(`~/WorkBook/obfuscation-study`), adapted to credit-card transaction data, as
+functions that operate on pandas DataFrames so you can apply them interactively
+to generated or uploaded data inside the Fox kernel. All functions are
+deterministic (fixed `seed` where randomness is used).
 
 Techniques (from Summary-Obfuscation-Study.md):
   - Field-level masking   -> apply_masking
@@ -15,13 +16,13 @@ Techniques (from Summary-Obfuscation-Study.md):
   - High-level entry      -> obfuscate_dataframe
 
 Example:
-    from examples.obfuscation.swift_data import generate_swift
+    from examples.obfuscation.credit_card_data import generate_credit_card
     from examples.obfuscation import obfuscate as obf
 
-    df = generate_swift(1000)
-    masked = obf.apply_masking(df, mask=["sender_iban", "sender_bic_swift_code"])
-    tokenized = ob.tokenize(df, columns=["sender_iban", "receiver_iban"])
-    anon = ob.k_anonymize(df, quasi_columns=["booking_date", "sender_city",
+    df = generate_credit_card(1000)
+    masked = obf.apply_masking(df, mask=["card_number", "cardholder_name"])
+    tokenized = ob.tokenize(df, columns=["card_number", "merchant_account"])
+    anon = ob.k_anonymize(df, quasi_columns=["transaction_date", "cardholder_city",
                                              "transaction_amount_usd"], k=5)
 """
 
@@ -34,12 +35,11 @@ from typing import Iterable
 import pandas as pd
 
 # Fields whose values are highly sensitive and must be masked/tokenized.
-HIGH_SENSITIVITY = ["sender_iban", "receiver_iban",
-                    "sender_bic_swift_code", "receiver_bic_swift_code",
-                    "correspondent_bank_bic"]
-MEDIUM_SENSITIVITY = ["sender_institution_name", "receiver_bank_name",
-                      "sender_address", "receiver_address",
-                      "sender_city", "receiver_city"]
+HIGH_SENSITIVITY = ["card_number", "merchant_account",
+                    "acquirer_code", "acquirer_bic"]
+MEDIUM_SENSITIVITY = ["cardholder_name", "merchant_name",
+                      "cardholder_address", "merchant_address",
+                      "cardholder_city", "merchant_city"]
 
 # Country -> continent/region (used for geo-blurring).
 _REGIONS = {
@@ -78,6 +78,20 @@ def mask_bic(value) -> str:
     if len(s) < 4:
         return "?" * len(s)
     return "?" * (len(s) - 2) + s[-2:]
+
+
+def mask_card(value) -> str:
+    """Keep the last 4 digits of a card number (PAN), replace the rest with #.
+
+    Preserves the exact length so the masked value still looks like a PAN.
+    """
+    if not value:
+        return ""
+    s = str(value).strip()
+    if len(s) < 6:
+        return "#" * len(s)
+    visible = s[-4:]
+    return "#" * (len(s) - len(visible)) + visible
 
 
 def mask_name(value) -> str:
@@ -147,6 +161,7 @@ def fuzzy_bucket(value, width: float = 5000.0, symbol: str = "$") -> str:
 _MASKERS = {
     "iban": mask_iban,
     "bic": mask_bic,
+    "card": mask_card,
     "name": mask_name,
     "address": mask_address,
     "city": mask_city,
@@ -158,9 +173,10 @@ def apply_masking(df: pd.DataFrame, mask: Iterable[str] | None = None) -> pd.Dat
     """Field-level masking.
 
     `mask` is an iterable of column names. The masking function is chosen from
-    the column name (iban/bic/name/address/city/amount substrings). If `mask` is
-    None, all known sensitive columns are masked. Preserves formats/lengths so
-    the output still passes structural validation (ideal for test environments).
+    the column name (card/iban/bic/name/address/city/amount substrings). If
+    `mask` is None, all known sensitive columns are masked. Preserves
+    formats/lengths so the output still passes structural validation (ideal for
+    test environments).
     """
     out = df.copy()
     cols = list(mask) if mask is not None else list(
@@ -169,11 +185,12 @@ def apply_masking(df: pd.DataFrame, mask: Iterable[str] | None = None) -> pd.Dat
         if col not in df.columns:
             continue
         kind = "amount" if "amount" in col.lower() else \
-            ("iban" if "iban" in col.lower() else
+            ("iban" if ("iban" in col.lower() or "account" in col.lower()) else
              ("bic" if "bic" in col.lower() else
               ("name" if "name" in col.lower() else
-               ("address" if "address" in col.lower() else
-                ("city" if "city" in col.lower() else "name")))))
+               ("card" if "card" in col.lower() else
+                ("address" if "address" in col.lower() else
+                 ("city" if "city" in col.lower() else "name"))))))
         fn = _MASKERS[kind]
         if kind in ("address", "city"):
             rng = random.Random(0)
@@ -289,21 +306,23 @@ def noisy_aggregate(df: pd.DataFrame, group_cols: Iterable[str],
 def sanitize_metadata(df: pd.DataFrame) -> pd.DataFrame:
     """Full metadata sanitization + country-level geo-blur (AML/sanctions shield).
 
-    Removes names/addresses entirely, replaces BICs with masked placeholders,
-    blurs cities to their region, keeps only coarse non-PII fields.
+    Removes names/addresses entirely, replaces card/BIC identifiers with masked
+    placeholders, blurs cities to their region, keeps only coarse non-PII
+    fields.
     """
     out = df.copy()
-    drop_cols = [c for c in ["sender_address", "receiver_address"] if c in out.columns]
+    drop_cols = [c for c in ["cardholder_address", "merchant_address"] if c in out.columns]
     out = out.drop(columns=drop_cols)
-    for col in ["sender_institution_name", "receiver_bank_name"]:
+    for col in ["cardholder_name", "merchant_name"]:
         if col in out.columns:
             out[col] = "REDACTED"
-    for col in ["sender_bic_swift_code", "receiver_bic_swift_code",
-                "correspondent_bank_bic"]:
+    for col in ["acquirer_bic", "acquirer_code", "merchant_account"]:
         if col in out.columns:
             out[col] = out[col].apply(mask_bic)
-    for city, cc in [("sender_city", "sender_country_code"),
-                     ("receiver_city", "receiver_country_code")]:
+    if "card_number" in out.columns:
+        out["card_number"] = out["card_number"].apply(mask_card)
+    for city, cc in [("cardholder_city", "cardholder_country_code"),
+                     ("merchant_city", "merchant_country_code")]:
         if city in out.columns:
             out[city] = [_REGIONS.get(str(c or "").strip().upper(), _DEFAULT_REGION)
                          for c in out[cc].fillna("")]
@@ -345,7 +364,7 @@ def obfuscate_dataframe(df: pd.DataFrame, techniques: dict) -> pd.DataFrame:
         spec = dict(techniques["k_anonymize"])
         quasi = spec.pop("quasi_columns", None)
         if quasi is None:
-            from .swift_data import QUASI_IDENTIFIER_COLUMNS
+            from .credit_card_data import QUASI_IDENTIFIER_COLUMNS
             quasi = QUASI_IDENTIFIER_COLUMNS
         out, _ = k_anonymize(out, quasi, **spec)
 
@@ -357,17 +376,17 @@ if __name__ == "__main__":
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-    from examples.obfuscation.swift_data import generate_swift
+    from examples.obfuscation.credit_card_data import generate_credit_card
 
-    df = generate_swift(200)
+    df = generate_credit_card(200)
     print("=== original ===")
-    print(df[["sender_iban", "sender_bic_swift_code", "sender_institution_name",
+    print(df[["card_number", "cardholder_name", "card_bin",
               "transaction_amount_usd"]].head(3).to_string())
     print("\n=== masked ===")
-    m = apply_masking(df, mask=["sender_iban", "sender_bic_swift_code"])
-    print(m[["sender_iban", "sender_bic_swift_code"]].head(3).to_string())
+    m = apply_masking(df, mask=["card_number", "cardholder_name"])
+    print(m[["card_number", "cardholder_name"]].head(3).to_string())
     print("\n=== k-anonymized (k=5) ===")
-    anon, risk = k_anonymize(df, ["booking_date", "sender_city",
+    anon, risk = k_anonymize(df, ["transaction_date", "cardholder_city",
                                   "transaction_amount_usd"], k=5)
     print("rows in k<5 classes: {:.1%}".format(risk))
-    print(anon[["booking_date", "sender_city", "transaction_amount_usd"]].head(3).to_string())
+    print(anon[["transaction_date", "cardholder_city", "transaction_amount_usd"]].head(3).to_string())

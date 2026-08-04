@@ -50,12 +50,13 @@ written back *into the notebook*.
 
 ## Data-obfuscation experiments (`obfuscation/`)
 
-The SWIFT data-obfuscation study (from `~/WorkBook/obfuscation-study`) is bundled
-as an importable package so you can run the threat scenarios or obfuscate data
-directly from the workbench kernel:
+The obfuscation study (from `~/WorkBook/obfuscation-study`), adapted to
+credit-card transaction data, is bundled as an importable package so you can run
+the threat scenarios or obfuscate data directly from the workbench kernel:
 
-- `swift_data.py` — `generate_swift(n_rows, seed)` produces synthetic SWIFT
-  transaction records (IBANs, BICs, bank names, countries, amounts).
+- `credit_card_data.py` — `generate_credit_card(n_rows, seed)` produces synthetic
+  credit-card transaction records (PANs, issuer BINs, cardholder/merchant names,
+  countries, amounts).
 - `obfuscate.py` — reusable library: `apply_masking`, `tokenize`, `fuzzy_bucket`,
   `noisy_aggregate`, `k_anonymize`, `sanitize_metadata`, and the high-level
   `obfuscate_dataframe(df, {"mask": ..., "tokenize": ..., "k_anonymize": ...})`.
@@ -77,10 +78,10 @@ In the workbench kernel:
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
-from examples.obfuscation.swift_data import generate_swift
+from examples.obfuscation.credit_card_data import generate_credit_card
 from examples.obfuscation import experiments as exp
 
-df = generate_swift(2000, seed=42)
+df = generate_credit_card(2000, seed=42)
 report = exp.run_all(df)          # prints summary, returns markdown
 ```
 
@@ -90,8 +91,8 @@ Obfuscate your own uploaded data (any CSV with matching column names):
 from examples.obfuscation import obfuscate as obf
 import pandas as pd
 mine = pd.read_csv("my_data.csv")
-safe = obf.obfuscate_dataframe(mine, {"mask": True, "tokenize": ["sender_iban"]})
-anon, risk = obf.k_anonymize(mine, ["booking_date", "sender_city"], k=5)
+safe = obf.obfuscate_dataframe(mine, {"mask": True, "tokenize": ["card_number"]})
+anon, risk = obf.k_anonymize(mine, ["transaction_date", "cardholder_city"], k=5)
 ```
 
 Notebooks `18_obfuscation_techniques` and `19_obfuscation_threat_scenarios` walk

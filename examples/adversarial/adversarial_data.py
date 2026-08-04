@@ -1,9 +1,10 @@
 """Adversarial robustness evaluation helpers built on obfuscation-study data.
 
-Provides the dataset builders (SWIFT transactions from the obfuscation-study
-generator, and the clinical cohort) plus a small FGSM-style attack and the
-robustness metrics from the `robustness` MCP server functions. Used by the
-sample adversarial-testing notebooks and the run_adversarial_eval script.
+Provides the dataset builders (credit-card transactions from the
+obfuscation-study generator, and the clinical cohort) plus a small FGSM-style
+attack and the robustness metrics from the `robustness` MCP server functions.
+Used by the sample adversarial-testing notebooks and the run_adversarial_eval
+script.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import json
 
 import numpy as np
 
-from examples.obfuscation.swift_data import generate_swift
+from examples.obfuscation.credit_card_data import generate_credit_card
 from examples.privacy.clinical_cohort import build_cohort
 
 # Set by the evaluation helpers so the workbench can record run metrics for
@@ -25,17 +26,17 @@ def _std(X: np.ndarray) -> np.ndarray:
     return StandardScaler().fit_transform(X.astype(float))
 
 
-def swift_binary_dataset(n_rows: int = 2000, seed: int = 42):
-    """Binary task: does a SWIFT payment get marked URGENCY?
+def credit_card_binary_dataset(n_rows: int = 2000, seed: int = 42):
+    """Binary task: does a credit-card payment get FRAUD_FLAGGED?
 
     Returns (X_scaled, y, feature_names, target_label).
     """
-    df = generate_swift(n_rows, seed)
+    df = generate_credit_card(n_rows, seed)
     feats = ["transaction_amount_usd", "fx_rate_to_usd", "amount_in_usd",
              "transaction_fee"]
     X = _std(df[feats].astype(float).values)
-    y = (df["priority"] == "URGENCY").astype(int).values
-    return X, y, feats, "priority == URGENCY"
+    y = (df["transaction_status"] == "FRAUD_FLAGGED").astype(int).values
+    return X, y, feats, "transaction_status == FRAUD_FLAGGED"
 
 
 def clinical_binary_dataset(n_rows: int = 300, seed: int = 7):

@@ -619,37 +619,38 @@ NOTEBOOKS = {
 
     # ------------------------------------------------ OBFUSCATION ------------
     "18_obfuscation_techniques": [
-        (M, "# Data obfuscation techniques on SWIFT transaction data\n\nGenerate "
-            "synthetic SWIFT records, then apply each obfuscation technique from "
-            "the obfuscation study: field-level masking, tokenization, fuzzy "
-            "range blurring, noisy aggregation, metadata sanitization and "
-            "k-anonymity. Every figure becomes a workbench artifact."),
+        (M, "# Data obfuscation techniques on credit-card transaction data\n\n"
+            "Generate synthetic credit-card records, then apply each "
+            "obfuscation technique from the obfuscation study: field-level "
+            "masking, tokenization, fuzzy range blurring, noisy aggregation, "
+            "metadata sanitization and k-anonymity. Every figure becomes a "
+            "workbench artifact."),
         (C, "import sys\nfrom pathlib import Path\n"
             "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
-            "from examples.obfuscation.swift_data import generate_swift\n"
+            "from examples.obfuscation.credit_card_data import generate_credit_card\n"
             "from examples.obfuscation import obfuscate as obf\n\n"
-            "df = generate_swift(2000, seed=42)\n"
+            "df = generate_credit_card(2000, seed=42)\n"
             "print(df.shape)\n"
-            "df[['sender_iban', 'sender_bic_swift_code', 'sender_institution_name',\n"
-            "    'sender_city', 'transaction_amount_usd']].head(3)"),
-        (C, "masked = obf.apply_masking(df, mask=['sender_iban', 'sender_bic_swift_code',\n"
-            "                                        'sender_institution_name', 'sender_city'])\n"
-            "masked[['sender_iban', 'sender_bic_swift_code',\n"
-            "        'sender_institution_name', 'sender_city']].head(3)"),
-        (C, "tok = obf.tokenize(df, columns=['sender_iban', 'receiver_iban', 'sender_bic_swift_code'])\n"
-            "print('IBAN -> token:', df['sender_iban'][0], '->', tok['sender_iban'][0])\n"
+            "df[['card_number', 'card_bin', 'cardholder_name',\n"
+            "    'cardholder_city', 'transaction_amount_usd']].head(3)"),
+        (C, "masked = obf.apply_masking(df, mask=['card_number', 'cardholder_name',\n"
+            "                                        'merchant_name', 'cardholder_city'])\n"
+            "masked[['card_number', 'cardholder_name',\n"
+            "        'merchant_name', 'cardholder_city']].head(3)"),
+        (C, "tok = obf.tokenize(df, columns=['card_number', 'merchant_account', 'card_bin'])\n"
+            "print('Card -> token:', df['card_number'][0], '->', tok['card_number'][0])\n"
             "print('Amount exact:', df['transaction_amount_usd'][0],\n"
             "      '-> fuzzy:', obf.fuzzy_bucket(df['transaction_amount_usd'][0], width=5000))\n\n"
-            "anon, risk = obf.k_anonymize(df, ['booking_date', 'sender_city', 'transaction_amount_usd'], k=5)\n"
+            "anon, risk = obf.k_anonymize(df, ['transaction_date', 'cardholder_city', 'transaction_amount_usd'], k=5)\n"
             "print(f'Rows still in k<5 quasi-id classes after k-anonymity: {risk:.1%}')"),
         (C, "import matplotlib.pyplot as plt\n"
             "rows = df.head(6)\n"
             "x = range(len(rows))\n"
             "fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.8))\n"
-            "axes[0].bar([i-0.2 for i in x], rows['sender_iban'].str.len(), width=0.4, label='original', color='#e05b5b')\n"
-            "axes[0].bar([i+0.2 for i in x], obf.apply_masking(df, mask=['sender_iban']).head(6)['sender_iban'].str.len(),\n"
+            "axes[0].bar([i-0.2 for i in x], rows['card_number'].str.len(), width=0.4, label='original', color='#e05b5b')\n"
+            "axes[0].bar([i+0.2 for i in x], obf.apply_masking(df, mask=['card_number']).head(6)['card_number'].str.len(),\n"
             "            width=0.4, label='masked', color='#35c4b6')\n"
-            "axes[0].set_ylabel('IBAN length (chars)'); axes[0].set_title('Masking preserves structure')\n"
+            "axes[0].set_ylabel('Card number length (chars)'); axes[0].set_title('Masking preserves structure')\n"
             "axes[0].legend()\n"
             "axes[1].bar(['exact', 'fuzzy $5K'], [1.0, 1/8], color=['#e05b5b', '#35c4b6'])\n"
             "axes[1].set_yscale('log'); axes[1].set_ylabel('guessing probability')\n"
@@ -658,17 +659,17 @@ NOTEBOOKS = {
 
     "19_obfuscation_threat_scenarios": [
         (M, "# The 8 obfuscation threat scenarios\n\nRun all adversarial scenarios "
-            "from the obfuscation study on synthetic SWIFT data — BEC/fraud, "
-            "insider threat, supply-chain leakage, sanctions evasion, corporate "
-            "espionage, test-environment exposure, account takeover and "
-            "re-identification — and compare the risk before vs after each "
-            "obfuscation control."),
+            "from the obfuscation study on synthetic credit-card transaction "
+            "data — BEC/fraud, insider threat, supply-chain leakage, sanctions "
+            "evasion, corporate espionage, test-environment exposure, account "
+            "takeover and re-identification — and compare the risk before vs "
+            "after each obfuscation control."),
         (C, "import sys\nfrom pathlib import Path\n"
             "sys.path.insert(0, str(Path.cwd()))   # repo root (kernel cwd)\n\n"
-            "from examples.obfuscation.swift_data import generate_swift\n"
+            "from examples.obfuscation.credit_card_data import generate_credit_card\n"
             "from examples.obfuscation import experiments as exp\n\n"
-            "df = generate_swift(2000, seed=42)\n"
-            "print(f'{len(df):,} synthetic SWIFT records ready')"),
+            "df = generate_credit_card(2000, seed=42)\n"
+            "print(f'{len(df):,} synthetic credit-card records ready')"),
         (C, "print(exp.experiment1_bec_fraud(df))"),
         (C, "print(exp.experiment2_insider_threat(df))\n"
             "print(exp.experiment3_supply_chain(df))"),
@@ -798,18 +799,18 @@ NOTEBOOKS = {
     ],
 
     # ------------------------------------------------ ADVERSARIAL ROBUSTNESS --
-    "24_adversarial_swift_robustness": [
-        (M, "# Adversarial robustness — SWIFT payments\n\nBuild a binary "
-            "classifier (URGENCY vs not) on synthetic SWIFT transaction data "
-            "from the obfuscation-study generator, then attack it with an "
-            "FGSM-style gradient perturbation and measure robust accuracy / "
-            "ASR across perturbation budgets."),
+    "24_adversarial_creditcard_robustness": [
+        (M, "# Adversarial robustness — credit-card fraud\n\nBuild a binary "
+            "classifier (FRAUD_FLAGGED vs not) on synthetic credit-card "
+            "transaction data from the obfuscation-study generator, then attack "
+            "it with an FGSM-style gradient perturbation and measure robust "
+            "accuracy / ASR across perturbation budgets."),
         (C, "import sys\nfrom pathlib import Path\n"
             "sys.path.insert(0, str(Path.cwd()))\n\n"
             "import pandas as pd\n"
-            "from examples.adversarial import swift_binary_dataset, train_test, train, robustness_sweep\n"
+            "from examples.adversarial import credit_card_binary_dataset, train_test, train, robustness_sweep\n"
             "from mcp_servers import robustness_tools as rt\n\n"
-            "import os\nX, y, feats, target = swift_binary_dataset(2000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
+            "import os\nX, y, feats, target = credit_card_binary_dataset(2000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
             "Xtr, Xte, ytr, yte = train_test(X, y)\n"
             "print('features:', feats, '| target:', target)\n"
             "print('train/test:', Xtr.shape[0], '/', Xte.shape[0])"),
@@ -827,7 +828,7 @@ NOTEBOOKS = {
             "ax.plot(df['eps'], df['robust_accuracy'], 'o-', label='robust accuracy', color='#e05b5b')\n"
             "ax.plot(df['eps'], df['asr'], 'o--', label='ASR (on correct)', color='#d9a441')\n"
             "ax.set_xlabel('perturbation budget eps'); ax.set_ylabel('accuracy')\n"
-            "ax.legend(); ax.set_title('SWIFT classifier — robustness vs eps')\n"
+            "ax.legend(); ax.set_title('Credit-card fraud classifier — robustness vs eps')\n"
             "ax.grid(alpha=0.3)"),
     ],
 
@@ -862,13 +863,13 @@ NOTEBOOKS = {
 
     "26_adversarial_model_comparison": [
         (M, "# Model comparison under attack\n\nTrain logistic regression, "
-            "random forest and a small MLP on the same SWIFT dataset and "
+            "random forest and a small MLP on the same credit-card dataset and "
             "compare clean vs robust accuracy and ASR at a fixed epsilon."),
         (C, "import sys\nfrom pathlib import Path\n"
             "sys.path.insert(0, str(Path.cwd()))\n\n"
             "import pandas as pd\n"
-            "from examples.adversarial import swift_binary_dataset, train_test, train, evaluate_robustness\n\n"
-            "import os\nX, y, feats, target = swift_binary_dataset(2000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
+            "from examples.adversarial import credit_card_binary_dataset, train_test, train, evaluate_robustness\n\n"
+            "import os\nX, y, feats, target = credit_card_binary_dataset(2000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
             "Xtr, Xte, ytr, yte = train_test(X, y)\n"
             "EPS = 0.5\n"
             "rows = []\n"
@@ -888,7 +889,7 @@ NOTEBOOKS = {
             "ax.bar([i + 0.2 for i in x], df['robust_acc'], width=0.4, label=f'robust accuracy (eps={EPS})', color='#e05b5b')\n"
             "ax.set_xticks(list(x)); ax.set_xticklabels(df['model'])\n"
             "ax.set_ylabel('accuracy'); ax.legend()\n"
-            "ax.set_title('Robustness by model family (SWIFT URGENCY task)')\n"
+            "ax.set_title('Robustness by model family (credit-card fraud task)')\n"
             "for i, r in enumerate(df['asr']):\n"
             "    ax.text(i + 0.2, 0.02, 'ASR %.0f%%' % (r * 100), fontsize=8, ha='center')\n"
             "ax.grid(alpha=0.3, axis='y')"),
@@ -902,19 +903,19 @@ NOTEBOOKS = {
         (C, "import sys\nfrom pathlib import Path\n"
             "sys.path.insert(0, str(Path.cwd()))\n\n"
             "import joblib, numpy as np\n"
-            "from examples.adversarial import swift_binary_dataset, train_test, train, fgsm_grad\n"
+            "from examples.adversarial import credit_card_binary_dataset, train_test, train, fgsm_grad\n"
             "from mcp_servers import robustness_tools as rt\n\n"
-            "import os\nX, y, feats, target = swift_binary_dataset(1000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
+            "import os\nX, y, feats, target = credit_card_binary_dataset(1000, seed=int(os.environ.get('FOX_RUN_SEED', '42')))\n"
             "Xtr, Xte, ytr, yte = train_test(X, y)\n"
             "m = train('lr', Xtr, ytr)\n"
-            "joblib.dump(m, 'examples/adversarial/swift_lr.joblib')\n"
+            "joblib.dump(m, 'examples/adversarial/creditcard_lr.joblib')\n"
             "np.save('examples/adversarial/X_test.npy', Xte)\n"
             "np.save('examples/adversarial/y_test.npy', yte)\n"
             "print('saved model + test arrays under examples/adversarial/')"),
         (C, "g = fgsm_grad(m, Xte[:1], yte[:1])[0]\n"
             "print(rt.simple_fgsm_perturbation(Xte[0].tolist(), g.tolist(), eps=0.5))"),
         (C, "print(rt.evaluate_sklearn_robustness(\n"
-            "    'examples/adversarial/swift_lr.joblib',\n"
+            "    'examples/adversarial/creditcard_lr.joblib',\n"
             "    'examples/adversarial/X_test.npy',\n"
             "    'examples/adversarial/y_test.npy',\n"
             "    attack='ProjectedGradientDescent', eps=0.5, norm='inf'))"),
