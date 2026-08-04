@@ -657,19 +657,33 @@ async def ws_chat(ws: WebSocket, name: str):
                                             "created_at": _msg_created_at(rt, mid)})
                 if workflow_mode:
                     if compare_mode and fresh_mode:
+                        # "rerun with new seed and compare with last run": the
+                        # workflow script can't do both in one call (--compare
+                        # skips the execution), so run the fresh execution first
+                        # (records a new run), then compare against the last one.
                         await emit("status", {"message":
-                            "Rerunning the privacy workflow with a fresh seed and "
-                            "comparing with the last run…"})
+                            "Rerunning the privacy workflow with a fresh seed…"})
+                        fresh_result = await run_privacy_workflow(
+                            rt, emit, fresh=True, compare=False, prompt=text)
+                        await emit("status", {"message":
+                            "Comparing with the last run…"})
+                        cmp_result = await run_privacy_workflow(
+                            rt, emit, fresh=False, compare=True, prompt=text)
+                        result = (fresh_result + "\n\n---\n\n" + cmp_result)[:100_000]
                     elif compare_mode:
                         await emit("status", {"message":
                             "Comparing previous workflow runs…"})
+                        result = await run_privacy_workflow(
+                            rt, emit, fresh=False, compare=True, prompt=text)
                     else:
                         await emit("status", {"message":
                             "Running the privacy workflow — peer exploitation · "
                             "red team · DP robustness…"})
-                    result = await run_privacy_workflow(
-                        rt, emit, fresh=fresh_mode, compare=compare_mode,
-                        prompt=text)
+                        result = await run_privacy_workflow(
+                            rt, emit, fresh=fresh_mode, compare=False, prompt=text)
+                    if not (result or "").strip():
+                        result = ("Privacy workflow produced no output — check "
+                                  "the server log for errors.")
                     amid = rt.store.add_message(
                         "assistant", result,
                         {"tags": message_tags("assistant", result)})
