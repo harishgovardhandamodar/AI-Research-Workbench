@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .agents.approval import ApprovalBroker
-from .agents.coordinator import Coordinator
+from .agents.coordinator import Coordinator, TurnAborted
 from .agents.reviewer import Reviewer
 from .artifacts.store import Artifact
 from .experiments import findings_from_run, metrics_from_run
@@ -503,6 +503,12 @@ def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
     return notices
 
 
+def _msg_created_at(rt: ProjectRuntime, mid: int) -> float | None:
+    """Timestamp for a WS message event (so live chat can show times)."""
+    row = rt.store.get_message(mid)
+    return (row or {}).get("created_at")
+
+
 def _resolve_experiment_id(rt: ProjectRuntime, text: str, experiment_id: str = "") -> int | None:
     """Resolve an experiment id for the improve loop.
 
@@ -544,6 +550,9 @@ async def ws_chat(ws: WebSocket, name: str):
     rt.workflow.subscribe(emit)
 
     broker = ApprovalBroker(emit, store=rt.store)
+    # Cooperative stop: the user's Stop button sets this; the coordinator checks
+    # it at LLM/tool boundaries so the turn unwinds cleanly (no cancelled kernels).
+    abort_event = asyncio.Event()
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
                               record=lambda r: rt.store.add_run(
@@ -559,9 +568,11 @@ async def ws_chat(ws: WebSocket, name: str):
                                   experiment_id=r.get("experiment_id") or None,
                                   config=r.get("config"),
                                   label=r.get("label")),
-                              max_iters=rt.max_iters, mcp=mcp_registry)
+                              max_iters=rt.max_iters, mcp=mcp_registry,
+                              check_abort=abort_event.is_set)
 
     async def handle_turn(text: str, intent: str = "", experiment_id: str = ""):
+        abort_event.clear()
         async with rt.lock:
             try:
                 user_tags = message_tags("user", text)
@@ -607,7 +618,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     return
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
                 coordinator.ctx.message_id = str(mid)
-                await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
+                await emit("user_message", {"id": mid, "content": text,
+                                            "tags": user_tags,
+                                            "created_at": _msg_created_at(rt, mid)})
                 if workflow_mode:
                     await emit("status", {"message":
                         ("Comparing previous workflow runs…" if compare_mode else
@@ -620,7 +633,8 @@ async def ws_chat(ws: WebSocket, name: str):
                         "assistant", result,
                         {"tags": message_tags("assistant", result)})
                     await emit("assistant_message", {"id": amid, "content": result,
-                                                     "tags": message_tags("assistant", result)})
+                                                     "tags": message_tags("assistant", result),
+                                                     "created_at": _msg_created_at(rt, amid)})
                     await emit("done", {})
                     return
                 nb = match_notebook_run(text)
@@ -633,7 +647,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     tags = ["notebook", "fresh rerun" if fresh else "run"]
                     amid = rt.store.add_message("assistant", result, {"tags": tags})
                     await emit("assistant_message", {"id": amid, "content": result,
-                                                     "tags": tags})
+                                                     "tags": tags,
+                                                     "created_at": _msg_created_at(rt, amid)})
                     if has_analysis_intent(text):
                         # The rerun result is already shown; also hand the deep
                         # parameterised analysis (seeds / DP) to the agent.
@@ -653,7 +668,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 await emit("assistant_message", {"id": amid,
                                                  "content": result.get("text", ""),
                                                  "tags": message_tags("assistant",
-                                                                      result.get("text", ""))})
+                                                                      result.get("text", "")),
+                                                 "created_at": _msg_created_at(rt, amid)})
                 # Goal progress vs. the best-known run (improvement tracking).
                 runs_now = rt.store.list_runs()
                 if runs_now:
@@ -670,6 +686,11 @@ async def ws_chat(ws: WebSocket, name: str):
                     except Exception:  # noqa: BLE001
                         await emit("review", {"findings": [], "suggestions": []})
                 await emit("status", {"message": ""})
+                await emit("done", {})
+            except TurnAborted:
+                await emit("status", {"message": ""})
+                await emit("notice",
+                           {"message": "Turn stopped by user — progress so far was saved."})
                 await emit("done", {})
             except LLMError as e:
                 await emit("status", {"message": ""})
@@ -692,6 +713,8 @@ async def ws_chat(ws: WebSocket, name: str):
                                    bool(msg.get("temporary", False)))
                 elif mtype == "ping":
                     await emit("pong", {})
+                elif mtype == "stop":
+                    abort_event.set()
                 else:
                     await incoming.put(msg)
         except WebSocketDisconnect:

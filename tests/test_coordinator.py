@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.agents.coordinator import Coordinator
+from backend.agents.coordinator import Coordinator, TurnAborted
 from backend.agents.tools import ToolContext
 from backend.artifacts.store import ArtifactStore
 from backend.permissions import PermissionManager
@@ -194,6 +194,60 @@ class TestCoordinatorLoop(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorded["metrics"], {"acc": 0.93})
         names = [t["name"] for t in self.recorded["tool_sequence"]]
         self.assertEqual(names, ["start_run", "run_python", "finish_run"])
+
+    async def test_abort_raises_and_records_stopped_status(self):
+        # check_abort stays False for the iteration-top and post-stream checks
+        # (so the first tool runs), then True after it — Stop mid-turn.
+        checks = {"n": 0}
+
+        def check_abort():
+            checks["n"] += 1
+            return checks["n"] > 2
+
+        batches = [
+            [{"id": "c1", "type": "function",
+              "function": {"name": "run_python",
+                           "arguments": {"code": "x = 1"}}}],
+        ]
+        coordinator = Coordinator(ScriptedLLM(batches), self.ctx, emit=self._emit,
+                                  persist=lambda r, c, m: None,
+                                  record=lambda r: self._set_record(r),
+                                  max_iters=6, mcp=None,
+                                  check_abort=check_abort)
+        with self.assertRaises(TurnAborted):
+            await coordinator.run_turn([
+                {"role": "user", "content": "run it"},
+            ])
+        self.assertIsNotNone(self.recorded)
+        self.assertEqual(self.recorded["status"], "stopped")
+        self.assertEqual(len(self.recorded["tool_sequence"]), 1)
+        self.assertEqual(self.recorded["tool_sequence"][0]["name"], "run_python")
+
+    async def test_abort_after_stream_skips_remaining_tools(self):
+        # Stop arriving while the LLM streams: no further tool should run.
+        checks = {"n": 0}
+
+        def check_abort():
+            checks["n"] += 1
+            return checks["n"] >= 2  # False at iteration top, True right after stream
+
+        batches = [
+            [{"id": "c1", "type": "function",
+              "function": {"name": "run_python",
+                           "arguments": {"code": "x = 1"}}}],
+        ]
+        coordinator = Coordinator(ScriptedLLM(batches), self.ctx, emit=self._emit,
+                                  persist=lambda r, c, m: None,
+                                  record=lambda r: self._set_record(r),
+                                  max_iters=6, mcp=None,
+                                  check_abort=check_abort)
+        with self.assertRaises(TurnAborted):
+            await coordinator.run_turn([
+                {"role": "user", "content": "run it"},
+            ])
+        self.assertIsNotNone(self.recorded)
+        self.assertEqual(self.recorded["status"], "stopped")
+        self.assertEqual(len(self.recorded["tool_sequence"]), 0)
 
 
 if __name__ == "__main__":

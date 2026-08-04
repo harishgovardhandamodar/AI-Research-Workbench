@@ -87,7 +87,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                                 {"tags": ["improve loop", f"iteration {i}"]})
         coordinator.ctx.message_id = str(mid)
         await emit("user_message", {"id": mid, "content": current_prompt,
-                                    "tags": ["improve loop"]})
+                                    "tags": ["improve loop"],
+                                    "created_at": _created(store, mid)})
         await emit("status", {"message": f"Improve loop — iteration {i}/{iterations}…"})
 
         try:
@@ -99,7 +100,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
         text = result.get("text", "")
         amid = store.add_message("assistant", text, {"tags": ["improve loop"]})
         await emit("assistant_message", {"id": amid, "content": text,
-                                         "tags": ["improve loop"]})
+                                         "tags": ["improve loop"],
+                                         "created_at": _created(store, amid)})
 
         runs = store.list_runs()
         run = runs[-1] if runs else None
@@ -189,3 +191,9 @@ def _loop_summary(exp: dict, history: list[dict], best_val, best_id,
             lines.append(f"| {h['iteration']} | #{h.get('run_id') or '—'} | "
                          f"{mstr} | {sug} |")
     return "\n".join(lines)
+
+
+def _created(store, mid: int) -> float | None:
+    """Timestamp for a WS message event emitted from the loop."""
+    row = store.get_message(mid)
+    return (row or {}).get("created_at")

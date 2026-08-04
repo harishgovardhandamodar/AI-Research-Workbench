@@ -178,7 +178,9 @@
                 data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
       </div>
       <div id="composer">
+        <span id="activity" class="activity hidden" title="Generating"></span>
         <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
+        <button id="stop-btn" class="btn danger hidden" title="Stop generating">Stop</button>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
       </div>
     </section>
@@ -402,7 +404,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v36";
+  window.FOX_VER = "v37";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

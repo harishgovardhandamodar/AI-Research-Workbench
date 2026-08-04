@@ -134,12 +134,21 @@ def parse_tool_call_json(content: str, tools: dict) -> tuple | None:
     return name, args
 
 
+class TurnAborted(Exception):
+    """Raised inside Coordinator.run_turn when the user hits Stop.
+
+    The turn unwinds cooperatively (checked at LLM/tool boundaries) so no
+    half-finished kernel call is left running; the run is recorded as 'stopped'.
+    """
+
+
 class Coordinator:
     def __init__(self, llm: LLMClient, ctx: ToolContext,
                  emit: Callable[[str, dict], Awaitable[None]] | None = None,
                  persist: Callable[[str, str, dict], None] | None = None,
                  record: Callable[[dict], int] | None = None,
-                 max_iters: int = 8, mcp=None):
+                 max_iters: int = 8, mcp=None,
+                 check_abort: Callable[[], bool] | None = None):
         self.llm = llm
         self.ctx = ctx
         self.emit = emit or _noop_emit
@@ -147,6 +156,7 @@ class Coordinator:
         self.record = record or (lambda r: None)
         self.max_iters = max_iters
         self.mcp = mcp
+        self.check_abort = check_abort
         self.tools = build_tools(ctx)
         self._mcp_loaded = False
         self._run_seq: list[dict] = []
@@ -199,6 +209,10 @@ class Coordinator:
     async def _on_delta(self, text: str):
         await self.emit("stream_delta", {"text": text})
 
+    def _raise_if_aborted(self) -> None:
+        if self.check_abort is not None and self.check_abort():
+            raise TurnAborted()
+
     async def run_turn(self, messages: list[dict]) -> dict:
         """Run one agent turn over `messages` (already ending with the user message).
 
@@ -219,7 +233,11 @@ class Coordinator:
         try:
             await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
+                self._raise_if_aborted()
                 full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
+                # A Stop arriving mid-stream takes effect as soon as it completes
+                # (the stream itself can't be interrupted safely).
+                self._raise_if_aborted()
                 tcs = full.get("tool_calls")
                 if not tcs:
                     # Rescue: some local models emit a tool call as JSON text instead
@@ -309,12 +327,18 @@ class Coordinator:
                         "content": result,
                     })
                     self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
+                    self._raise_if_aborted()
 
             if workflow is not None:
                 await workflow.finish()
             text = self._fallback()
             await self._emit_status(phase="complete")
             return {"text": text}
+        except TurnAborted:
+            status = "stopped"
+            if workflow is not None:
+                await workflow.finish()
+            raise
         except Exception:  # noqa: BLE001
             status = "error"
             if workflow is not None:

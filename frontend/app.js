@@ -207,9 +207,9 @@ function send(obj) {
 
 function handleEvent(type, p) {
   switch (type) {
-    case "user_message": renderUserMessage(p.content, p.tags); break;
+    case "user_message": renderUserMessage(p.content, p.tags, p.created_at); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content, p.tags); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -243,12 +243,53 @@ function msgTagsHtml(tags) {
   return '<div class="msg-tags">' + tags.map((t) => `<span class="m-tag">${esc(t)}</span>`).join("") + '</div>';
 }
 
-function msgContainer(role, tags) {
+function fmtClock(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (e) { return ""; }
+}
+
+function fmtDay(ts) {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return "Today";
+    return d.toLocaleDateString([], {
+      month: "short", day: "numeric",
+      year: d.getFullYear() === today.getFullYear() ? undefined : "numeric",
+    });
+  } catch (e) { return ""; }
+}
+
+async function copyText(text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied to clipboard.");
+    return;
+  } catch (e) { /* fall through to legacy */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); toast("Copied to clipboard."); }
+  catch (e) { toast("Copy failed: " + e.message); }
+  ta.remove();
+}
+
+function msgContainer(role, tags, ts) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const label = document.createElement("div");
   label.className = "msg-label";
-  label.textContent = role === "user" ? "You" : "Fox";
+  label.innerHTML = `<span class="msg-who">${role === "user" ? "You" : "Fox"}</span>
+    <span class="spacer"></span>
+    <span class="msg-time">${ts ? fmtClock(ts) : ""}</span>
+    <button class="msg-copy" title="Copy message" data-role="${role}">⧉</button>`;
   div.appendChild(label);
   const tagHtml = msgTagsHtml(tags);
   if (tagHtml) div.insertAdjacentHTML("beforeend", tagHtml);
@@ -259,8 +300,8 @@ function msgContainer(role, tags) {
   return { div, body };
 }
 
-function renderUserMessage(content, tags) {
-  const { body } = msgContainer("user", tags);
+function renderUserMessage(content, tags, ts) {
+  const { body } = msgContainer("user", tags, ts);
   body.textContent = content;
   scrollBottom();
 }
@@ -281,11 +322,16 @@ function streamDelta(text) {
   scrollBottom();
 }
 
-function finalizeAssistant(content, tags) {
+function finalizeAssistant(content, tags, ts) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
     el.body.innerHTML = renderMarkdown(el.raw);
+    enhanceCodeBlocks(el.body);
+    if (ts) {
+      const t = el.div.querySelector(".msg-time");
+      if (t) t.textContent = fmtClock(ts);
+    }
     curAssistantEl = null;
   }
   state.streaming = false;
@@ -294,6 +340,23 @@ function finalizeAssistant(content, tags) {
     const art = pendingInlineFigs.shift();
     if (el) appendInlineFig(el, art);
   }
+}
+
+function enhanceCodeBlocks(root) {
+  if (!root) return;
+  root.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".code-copy")) return;
+    const btn = document.createElement("button");
+    btn.className = "code-copy";
+    btn.textContent = "⧉";
+    btn.title = "Copy code";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const code = pre.querySelector("code");
+      copyText((code ? code.textContent : "") || pre.textContent || "");
+    });
+    pre.appendChild(btn);
+  });
 }
 
 function scrollBottom() {
@@ -654,11 +717,28 @@ $("approval-deny").addEventListener("click", () => {
 
 /* ============================ turn lifecycle ============================== */
 
+function setTurnControls(busy) {
+  $("send-btn").disabled = busy;
+  $("input").disabled = busy;
+  $("stop-btn").classList.toggle("hidden", !busy);
+  $("activity").classList.toggle("hidden", !busy);
+  clearInterval(state.turnTimer);
+  state.turnTimer = null;
+  if (busy) {
+    state.turnStart = Date.now();
+    const tick = () => {
+      const s = Math.max(0, Math.round((Date.now() - state.turnStart) / 1000));
+      $("activity").textContent = `● generating · ${s}s`;
+    };
+    tick();
+    state.turnTimer = setInterval(tick, 1000);
+  }
+}
+
 function onTurnDone() {
   setConn("ok");
   state.busy = false;
-  $("send-btn").disabled = false;
-  $("input").disabled = false;
+  setTurnControls(false);
   $("input").focus();
   refreshState();
 }
@@ -666,8 +746,7 @@ function onTurnDone() {
 function onError(msg) {
   setConn("ok");
   state.busy = false;
-  $("send-btn").disabled = false;
-  $("input").disabled = false;
+  setTurnControls(false);
   const el = ensureAssistant();
   el.body.innerHTML += `<p style="color:var(--danger)"><strong>Error:</strong> ${esc(msg)}</p>`;
   onTurnDone();
@@ -682,13 +761,17 @@ async function sendChat(textOverride, intent, extra) {
     autoResize(input);
   }
   state.busy = true;
-  $("send-btn").disabled = true;
-  input.disabled = true;
+  setTurnControls(true);
   setConn("busy");
   const payload = { type: "chat", content: text };
   if (intent) payload.intent = intent;
   if (extra) Object.assign(payload, extra);
   send(payload);
+}
+
+function lastUserMsg() {
+  const msgs = $("messages").querySelectorAll(".msg.user .msg-body");
+  return msgs.length ? msgs[msgs.length - 1].textContent : "";
 }
 
 /* ============================ settings =================================== */
@@ -1278,14 +1361,24 @@ attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520)
 function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
+  let lastDay = "";
   for (const m of msgs) {
+    const day = fmtDay(m.created_at);
+    if (day && day !== lastDay) {
+      const sep = document.createElement("div");
+      sep.className = "day-sep";
+      sep.textContent = day;
+      wrap.appendChild(sep);
+      lastDay = day;
+    }
     const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const { body } = msgContainer("user", mtags);
+      const { body } = msgContainer("user", mtags, m.created_at);
       body.textContent = m.content;
     } else if (m.role === "assistant") {
-      const { body } = msgContainer("assistant", mtags);
+      const { body } = msgContainer("assistant", mtags, m.created_at);
       body.innerHTML = renderMarkdown(m.content);
+      enhanceCodeBlocks(body);
     } else if (m.role === "tool") {
       // tool results persisted; rendered as compact card
       const meta = m.meta || {};
@@ -1340,8 +1433,31 @@ $("messages").addEventListener("click", (e) => {
 });
 $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  else if (e.key === "ArrowUp" && !e.shiftKey && e.target.selectionStart === 0 && !e.altKey) {
+    // Edit & resend: pull your last message into the composer.
+    e.preventDefault();
+    const last = lastUserMsg();
+    if (last) {
+      e.target.value = last;
+      e.target.setSelectionRange(last.length, last.length);
+      autoResize(e.target);
+      toast("Editing your last message — press Enter to resend.");
+    }
+  }
 });
 $("input").addEventListener("input", (e) => autoResize(e.target));
+$("stop-btn").addEventListener("click", () => {
+  send({ type: "stop" });
+  toast("Stopping…");
+});
+// Copy a message's text from its ⧉ button.
+$("messages").addEventListener("click", (e) => {
+  const btn = e.target.closest(".msg-copy");
+  if (!btn) return;
+  const msg = btn.closest(".msg");
+  const body = msg && msg.querySelector(".msg-body");
+  copyText(body ? body.innerText : "");
+});
 $("new-project-btn").addEventListener("click", async () => {
   const name = prompt("New project name:");
   if (!name) return;
