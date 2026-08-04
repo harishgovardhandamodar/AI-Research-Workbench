@@ -26,6 +26,7 @@ from .agents.coordinator import Coordinator
 from .agents.reviewer import Reviewer
 from .artifacts.store import Artifact
 from .experiments import findings_from_run, metrics_from_run
+from .experiment_loop import run_improve_loop
 from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .project_runtime import ProjectRuntime
@@ -483,8 +484,27 @@ def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
     return notices
 
 
-# ---------------------------------------------------------- WebSocket ---------
+def _resolve_experiment_id(rt: ProjectRuntime, text: str, experiment_id: str = "") -> int | None:
+    """Resolve an experiment id for the improve loop.
 
+    Uses the explicit id when given, otherwise matches the experiment name in the
+    prompt, otherwise falls back to the most recently created experiment.
+    """
+    if str(experiment_id).isdigit():
+        eid = int(experiment_id)
+        if rt.store.get_experiment(eid) is not None:
+            return eid
+    low = (text or "").lower()
+    exps = rt.store.list_experiments()
+    if exps:
+        for e in exps:
+            if e["name"] and e["name"].lower() in low:
+                return e["id"]
+        return exps[-1]["id"]
+    return None
+
+
+# ---------------------------------------------------------- WebSocket ---------
 @app.websocket("/ws/projects/{name}")
 async def ws_chat(ws: WebSocket, name: str):
     origin = ws.headers.get("origin", "")
@@ -522,7 +542,7 @@ async def ws_chat(ws: WebSocket, name: str):
                                   label=r.get("label")),
                               max_iters=rt.max_iters, mcp=mcp_registry)
 
-    async def handle_turn(text: str, intent: str = ""):
+    async def handle_turn(text: str, intent: str = "", experiment_id: str = ""):
         async with rt.lock:
             try:
                 user_tags = message_tags("user", text)
@@ -538,6 +558,11 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "privacy_compare":
                     workflow_mode = compare_mode = True
                     user_tags = ["privacy workflow", "compare runs"]
+                elif intent == "improve_loop":
+                    # B2: reviewer-driven improve loop — bounded iterations of
+                    # run → review → apply best suggestion → rerun toward the
+                    # experiment's goal. Run server-side, streaming to chat.
+                    user_tags = ["improve loop"]
                 elif intent == "rerun_suggestion":
                     # "Apply & rerun" from a reviewer suggestion: send the
                     # suggestion's prompt to the agent as a fresh turn.
@@ -546,6 +571,21 @@ async def ws_chat(ws: WebSocket, name: str):
                     workflow_mode = bool(match_workflow(text) or compare_requested(text))
                     compare_mode = compare_requested(text)
                     fresh_mode = fresh_requested(text)
+                if intent == "improve_loop":
+                    await emit("status", {"message": "Preparing improve loop…"})
+                    eid = _resolve_experiment_id(rt, text, experiment_id)
+                    if eid is None:
+                        await emit("error", {"message":
+                            "No experiment found. Create one first (chat or the Experiments tab)."})
+                        await emit("done", {})
+                        return
+                    result = await run_improve_loop(
+                        rt.store, coordinator, rt.build_llm_messages,
+                        lambda: Reviewer(rt.llm, rt.store).review(),
+                        eid, text, emit=emit)
+                    await emit("status", {"message": ""})
+                    await emit("done", {})
+                    return
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
                 coordinator.ctx.message_id = str(mid)
                 await emit("user_message", {"id": mid, "content": text, "tags": user_tags})
@@ -646,7 +686,8 @@ async def ws_chat(ws: WebSocket, name: str):
             if msg.get("type") == "chat":
                 text = (msg.get("content") or "").strip()
                 if text:
-                    await handle_turn(text, intent=msg.get("intent") or "")
+                    await handle_turn(text, intent=msg.get("intent") or "",
+                                      experiment_id=msg.get("experiment_id") or "")
     except WebSocketDisconnect:
         pass
     finally:
