@@ -2311,6 +2311,89 @@ function _metricColor(v, min, max) {
   return `rgb(${lerp(79, 201, t)},${lerp(63, 168, t)},${lerp(138, 255, t)})`;
 }
 
+/* ---- experiment grouping + compare-mode helpers (timeline / graph UX) ---- */
+
+const EXP_COLORS = ["#a974ff", "#4f8cff", "#4cd08d", "#d29922", "#e06c6c",
+                    "#00bcd4", "#f48fb1", "#9ccc65"];
+
+function expOf(eid) {
+  if (eid == null) return null;
+  return (state.expList || []).find((e) => String(e.id) === String(eid)) || null;
+}
+
+function expColor(eid) {
+  const idx = (state.expList || []).findIndex((e) => String(e.id) === String(eid));
+  return idx >= 0 ? EXP_COLORS[idx % EXP_COLORS.length] : "#9b93ab";
+}
+
+function expLegend() {
+  const exps = (state.expList || []).filter((e) => e.runs > 0);
+  return exps.map((e) =>
+    `<span class="exp-legend-item"><span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}</span>`).join("");
+}
+
+function expBestRun(runs, metric, higher) {
+  let best = null;
+  for (const r of runs) {
+    const v = r.metrics && r.metrics[metric];
+    if (v == null) continue;
+    if (best === null || (higher ? v > best.v : v < best.v)) best = { v, id: r.id };
+  }
+  return best;
+}
+
+// Compare-mode: click two chart nodes to fill the run comparison.
+let expComparePicks = { a: null, b: null };
+
+function expCompareModeOn() {
+  expComparePicks = { a: null, b: null };
+  $("exp-compare-mode").classList.add("active");
+  $("exp-compare-pick").classList.remove("hidden");
+  updateComparePickBar();
+}
+
+function expCompareModeOff() {
+  $("exp-compare-mode").classList.remove("active");
+  $("exp-compare-pick").classList.add("hidden");
+  expComparePicks = { a: null, b: null };
+}
+
+function updateComparePickBar() {
+  const ra = runsById(expComparePicks.a);
+  const rb = runsById(expComparePicks.b);
+  $("cpk-a").textContent = ra ? "#" + ra.id + " " + (ra.label || "") : "—";
+  $("cpk-b").textContent = rb ? "#" + rb.id + " " + (rb.label || "") : "—";
+}
+
+function runsById(id) {
+  if (id == null) return null;
+  return (state.expRuns || []).find((r) => String(r.id) === String(id)) || null;
+}
+
+function handleExpNodeClick(id) {
+  if (state.expCompareMode) {
+    if (expComparePicks.a == null || expComparePicks.a === id) {
+      expComparePicks.a = expComparePicks.a === id ? null : id;
+    } else if (expComparePicks.b == null || expComparePicks.b === id) {
+      expComparePicks.b = expComparePicks.b === id ? null : id;
+    }
+    updateComparePickBar();
+    if (expComparePicks.a != null && expComparePicks.b != null) {
+      const selA = $("exp-cmp-a"), selB = $("exp-cmp-b");
+      if (selA && selB) {
+        selA.value = String(expComparePicks.a);
+        selB.value = String(expComparePicks.b);
+      }
+      renderExpCompare();
+      expCompareModeOff();
+      const cmp = $("exp-compare");
+      if (cmp) cmp.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    return;
+  }
+  selectRun(id);
+}
+
 // --------------------------------------------------------- run comparison ----
 
 function populateExpCompare() {
@@ -2349,8 +2432,26 @@ async function renderExpCompare() {
   try {
     const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(a)}&run_b=${encodeURIComponent(b)}`);
     const c = r.comparison;
+    const ra = runsById(a), rb = runsById(b);
+    const artCol = (run) => {
+      const arts = (run && run.artifacts) || [];
+      if (!arts.length) return '<div class="muted">no artifacts</div>';
+      return `<div class="cmp-arts">` + arts.map((x) => {
+        const obj = typeof x === "object" ? x : { name: x, id: x, data_type: null };
+        if (obj.id && obj.data_type === "png") {
+          return `<img class="cmp-thumb" src="${B(`/artifacts/${obj.id}`)}" data-art-id="${esc(obj.id)}" title="${esc(obj.name || obj.id)}">`;
+        }
+        return `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+      }).join("") + `</div>`;
+    };
+    let h = `<div class="cmp-head">
+      <div class="cmp-col"><div class="cmp-run">${esc(c.a)}</div>${artCol(ra)}</div>
+      <div class="cmp-vs">vs</div>
+      <div class="cmp-col"><div class="cmp-run">${esc(c.b)}</div>${artCol(rb)}</div>
+    </div>`;
     if (!c.rows.length) {
-      el.innerHTML = `<div class="empty">No shared numeric metrics between <b>${esc(c.a)}</b> and <b>${esc(c.b)}</b>.</div>`;
+      h += `<div class="empty">No shared numeric metrics between <b>${esc(c.a)}</b> and <b>${esc(c.b)}</b>.</div>`;
+      el.innerHTML = h;
       return;
     }
     const sum = c.summary;
@@ -2362,8 +2463,9 @@ async function renderExpCompare() {
         <td class="${cls}">${arrow} ${_fmtNum(row.delta)}</td>
         <td class="${cls}">${row.pct > 0 ? "+" : ""}${_fmtNum(row.pct)}%</td></tr>`;
     }
-    el.innerHTML = `<table class="cmp-table"><tbody>${rows}</tbody></table>
+    h += `<table class="cmp-table"><tbody>${rows}</tbody></table>
       <div class="cmp-summary muted">${sum.shared} shared metric(s) · ${sum.increased} up · ${sum.decreased} down · ${sum.unchanged} unchanged</div>`;
+    el.innerHTML = h;
   } catch (e) {
     el.innerHTML = `<div class="empty">Comparison failed: ${esc(e.message || e)}</div>`;
   }
@@ -2373,7 +2475,7 @@ async function renderExpCompare() {
 
 function buildTimelineSvg(metric, W) {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  const H = 330, padL = 48, padR = 16, padT = 28, padB = 30;
+  const H = 340, padL = 48, padR = 16, padT = 30, padB = 44;
   const vals = nodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   if (!present.length) return '<div class="empty">No numeric values for this metric.</div>';
@@ -2381,6 +2483,24 @@ function buildTimelineSvg(metric, W) {
   const xs = nodes.map((_, i) => nodes.length > 1
     ? padL + i * (W - padL - padR) / (nodes.length - 1) : W / 2);
   const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
+
+  // Per-experiment goal lines (dashed) when this metric is a goal.
+  const goalLines = [];
+  const seenExp = new Set();
+  nodes.forEach((n) => {
+    const exp = expOf(n.experiment_id);
+    if (!exp || seenExp.has(exp.id)) return;
+    seenExp.add(exp.id);
+    if (exp.goal_metric === metric && exp.goal_target != null) {
+      goalLines.push({ v: Number(exp.goal_target), color: expColor(exp.id), name: exp.name });
+    }
+  });
+
+  // Best run for this metric (direction-aware via the goal experiment).
+  const firstExpNode = nodes.find((n) => n.experiment_id != null);
+  const goalExp = expOf(firstExpNode && firstExpNode.experiment_id);
+  const higher = goalExp ? goalExp.higher_better !== false : true;
+  const best = expBestRun(nodes, metric, higher);
 
   let out = `<svg viewBox="0 0 ${W} ${H}">`
     + `<defs><linearGradient id="tlfill" x1="0" y1="0" x2="0" y2="1">`
@@ -2392,10 +2512,12 @@ function buildTimelineSvg(metric, W) {
     out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#332d44" stroke-width="0.5"></line>`;
     out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="#9b93ab">${_fmtNum(v)}</text>`;
   }
-  nodes.forEach((n, i) => {
-    if (vals[i] != null)
-      out += `<text x="${xs[i]}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#9b93ab">#${i + 1}</text>`;
-  });
+  // Goal lines.
+  for (const g of goalLines) {
+    const gy = Math.max(padT, Math.min(H - padB, y(g.v)));
+    out += `<g><line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="${g.color}" stroke-width="1.6" stroke-dasharray="7 5" opacity="0.9"></line>`
+      + `<text x="${W - padR}" y="${gy - 5}" text-anchor="end" font-size="9.5" fill="${g.color}">goal ${esc(g.name)} ${_fmtNum(g.v)}</text></g>`;
+  }
 
   const pts = nodes.map((n, i) => vals[i] == null ? null : `${xs[i]},${y(vals[i])}`).filter(Boolean);
   if (pts.length) {
@@ -2407,18 +2529,28 @@ function buildTimelineSvg(metric, W) {
 
   nodes.forEach((n, i) => {
     if (vals[i] == null) return;
-    const color = n.fresh ? "#d29922" : "#b98cff";
+    const eid = n.experiment_id;
+    const color = eid != null ? expColor(eid) : (n.fresh ? "#d29922" : "#b98cff");
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    const isBest = best && String(best.id) === String(n.id);
+    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    let mark = "";
+    if (isBest) {
+      mark = `<circle r="12" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
+    }
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
       + `<title>${esc(tip)}</title>`
+      + mark
       + `<circle r="7" fill="${color}" stroke="#19132b" stroke-width="2" filter="drop-shadow(0 0 6px ${color}aa)"></circle>`
-      + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">#${i + 1}</text></g>`;
+      + (isBest ? `<text y="-20" text-anchor="middle" font-size="10">★</text>` : "")
+      + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">${_fmtNum(vals[i])}</text>`
+      + `<text y="22" text-anchor="middle" font-size="9" fill="#9b93ab">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
   });
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">${metric.replace(/_/g, " ")} — evolution across runs</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
   out += `</svg>`;
-  return out;
+  const legend = expLegend();
+  return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
 // --------------------------------------------------------- similarity graph --
@@ -2513,7 +2645,7 @@ function buildGraphSvg(metric, W) {
   const H = 580;
   if (!gnodes.length) return '<div class="empty">No runs yet.</div>';
   const nodes = gnodes.map((g, i) => ({
-    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {},
+    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {}, g,
   }));
   const vals = gnodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
@@ -2554,13 +2686,17 @@ function buildGraphSvg(metric, W) {
   nodes.forEach((n, i) => {
     const v = vals[i];
     const color = v == null ? "#9b93ab" : _metricColor(v, vmin, vmax);
+    const ec = expColor(n.g.experiment_id);
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\nclick for full summary`;
+    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
+      + (n.g.experiment_id != null
+        ? `<circle r="21" fill="none" stroke="${ec}" stroke-width="2" opacity="0.75"></circle>` : "")
       + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
-      + `<text y="-24" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
-      + `<text y="30" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
+      + (v != null ? `<text y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#0a0a0d">${_fmtNum(v)}</text>` : "")
+      + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
+      + `<text y="34" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
     const subs = expSubNodes(n.run);
     const R = 92;
@@ -2578,7 +2714,7 @@ function buildGraphSvg(metric, W) {
   });
 
   // legend
-  out += `<g transform="translate(${W - 230}, 12)">`
+  out += `<g transform="translate(${W - 290}, 12)">`
     + `<text x="0" y="-4" font-size="9" fill="#9b93ab">${metric.replace(/_/g, " ")}</text>`;
   for (let i = 0; i < 70; i++) {
     const t = i / 69;
@@ -2590,9 +2726,10 @@ function buildGraphSvg(metric, W) {
     + `<text x="78" y="20" font-size="9" fill="#b98cff">● finding</text>`
     + `<text x="78" y="31" font-size="9" fill="#a974ff">● artifact</text></g>`;
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap; ring = experiment)</text>`;
   out += `</svg>`;
-  return out;
+  const legend = expLegend();
+  return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
 function renderExperiments() {
@@ -2858,10 +2995,17 @@ function renderExpDetail() {
   const arts = run.artifacts || [];
   if (!arts.length) {
     h += `<div class="muted">none</div>`;
-  }
-  for (const a of arts) {
-    const obj = typeof a === "object" ? a : { name: a, id: null };
-    h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+  } else {
+    h += `<div class="ed-arts">`;
+    for (const a of arts) {
+      const obj = typeof a === "object" ? a : { name: a, id: a, data_type: null };
+      if (obj.id && obj.data_type === "png") {
+        h += `<div class="ed-art-thumb"><img src="${B(`/artifacts/${obj.id}`)}" alt="${esc(obj.name || obj.id)}" data-art-id="${esc(obj.id)}" title="${esc(obj.name || obj.id)}"></div>`;
+      } else {
+        h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+      }
+    }
+    h += `</div>`;
   }
   const sims = similarRuns(run.id);
   if (sims.length) {
@@ -2895,7 +3039,7 @@ EXP_VIEWS.forEach((id) => {
   $(id).addEventListener("click", (e) => {
     if (expPan[id].drag && expPan[id].drag.moved) { expPan[id].drag.moved = false; return; }
     const n = e.target.closest(".exp-node, .exp-subnode");
-    if (n && n.dataset.id) selectRun(n.dataset.id);
+    if (n && n.dataset.id) handleExpNodeClick(n.dataset.id);
   });
 });
 ["exp-detail", "expmain-detail"].forEach((id) => {
@@ -2904,6 +3048,8 @@ EXP_VIEWS.forEach((id) => {
   el.addEventListener("click", (e) => {
     const sim = e.target.closest(".ed-sim-link");
     if (sim) { selectRun(sim.dataset.id); return; }
+    const thumb = e.target.closest(".ed-art-thumb img, .cmp-thumb");
+    if (thumb) { openArtifactById(thumb.dataset.artId); return; }
     const art = e.target.closest(".ed-art");
     if (art) openArtifactById(art.dataset.artId);
   });
@@ -2912,6 +3058,16 @@ $("exp-refresh-main").addEventListener("click", loadExperiments);
 $("exp-cmp-go").addEventListener("click", renderExpCompare);
 $("exp-cmp-a").addEventListener("change", renderExpCompare);
 $("exp-cmp-b").addEventListener("change", renderExpCompare);
+$("exp-compare-mode").addEventListener("click", () => {
+  if (state.expCompareMode) { state.expCompareMode = false; expCompareModeOff(); }
+  else { state.expCompareMode = true; expCompareModeOn(); }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.expCompareMode) {
+    state.expCompareMode = false;
+    expCompareModeOff();
+  }
+});
 $("goal-add").addEventListener("click", addGoal);
 $("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });

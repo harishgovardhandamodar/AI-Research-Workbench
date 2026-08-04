@@ -55,9 +55,13 @@
           <button class="expview-btn" data-expview="graph">Graph</button>
         </div>
         <select id="exp-metric-main" title="Metric"></select>
+        <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
         <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
         <span class="spacer"></span>
-        <span class="muted exp-hint">Timeline = evolution over runs · Graph = similarity edges (thicker = more similar) · click a node for details</span>
+        <span class="muted exp-hint">Timeline = evolution · Graph = similarity edges · click a node for details · ⇄ Compare = click two runs</span>
+      </div>
+      <div id="exp-compare-pick" class="exp-compare-pick hidden">
+        <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
       </div>
       <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
@@ -457,7 +461,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v43";
+  window.FOX_VER = "v44";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

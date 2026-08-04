@@ -127,14 +127,16 @@ def unify_record(run: dict, artifact_store=None) -> dict:
         artifacts = []
         for aid in run.get("artifact_ids") or []:
             name = aid
+            data_type = None
             if artifact_store is not None:
                 try:
                     art = artifact_store.get(aid)
                     if art is not None:
                         name = art.name
+                        data_type = art.data_type
                 except Exception:  # noqa: BLE001
                     pass
-            artifacts.append({"id": aid, "name": name})
+            artifacts.append({"id": aid, "name": name, "data_type": data_type})
     cfg = run.get("config") or {}
     seed = run.get("seed")
     if seed is None and isinstance(cfg, dict):
@@ -155,6 +157,7 @@ def unify_record(run: dict, artifact_store=None) -> dict:
         "findings": findings_from_run(run),
         "artifacts": artifacts,
         "prompt": run.get("prompt") or "",
+        "experiment_id": run.get("experiment_id"),
     }
 
 
@@ -263,6 +266,7 @@ def build_graph(records: list[dict], artifact_store=None) -> dict:
             "findings": u["findings"],
             "artifacts": u["artifacts"],
             "prompt": u["prompt"],
+            "experiment_id": u["experiment_id"],
         })
     edges = []
     for i in range(len(records)):
