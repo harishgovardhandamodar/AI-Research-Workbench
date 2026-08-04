@@ -36,6 +36,22 @@ def _find_artifact_file_on_disk(artifact_id: str) -> Path | None:
     return None
 
 
+def _find_artifact_file_on_disk_by_name(name: str) -> Path | None:
+    """Match artifact data files by artifact name (id vs name mismatch in old
+    reports), preferring exact name then base-name prefix."""
+    if not PROJECTS_DIR.exists() or not name:
+        return None
+    for proj in PROJECTS_DIR.iterdir():
+        art_dir = proj / "artifacts"
+        if not art_dir.is_dir():
+            continue
+        for p in sorted(art_dir.iterdir()):
+            stem = p.stem
+            if stem == name or stem.startswith(name):
+                return p
+    return None
+
+
 def _find_artifact_meta_on_disk(artifact_id: str) -> dict | None:
     """Read an artifact row from the project DB without loading the runtime."""
     if not PROJECTS_DIR.exists():
@@ -79,9 +95,20 @@ async def artifact_file(artifact_id: str):
                                "application/octet-stream")
             return FileResponse(rt.artifacts.artifacts_dir / Path(art.data_path).name,
                                 media_type=media)
+    # Fallback: resolve by artifact NAME (reports reference figures by name,
+    # e.g. /artifacts/new_fig_peer_coverage_seed123).
+    for rt in runtimes.values():
+        art = rt.artifacts.find_by_name(artifact_id)
+        if art is not None and art.data_path:
+            p = rt.artifacts.artifacts_dir / Path(art.data_path).name
+            if p.exists():
+                media = _MEDIA.get(art.data_type, "application/octet-stream")
+                return FileResponse(p, media_type=media)
     # Runtime not loaded (e.g. after restart): fall back to scanning the
     # projects' artifacts directories so existing files keep working.
     path = _find_artifact_file_on_disk(artifact_id)
+    if path is None:
+        path = _find_artifact_file_on_disk_by_name(artifact_id)
     if path is not None:
         media = _MEDIA.get(path.suffix.lstrip("."), "application/octet-stream")
         return FileResponse(path, media_type=media)

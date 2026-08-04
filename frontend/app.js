@@ -96,10 +96,12 @@ function renderMarkdown(src) {
   });
 
   text = text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware)
+  // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware);
+  // also accept artifact:<id> URLs the agent sometimes writes.
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
-    const src = /^\/artifacts\//.test(url) ? B(url) : url;
-    const artId = /^\/artifacts\//.test(url) ? url.split("/").pop() : "";
+    const artId = /^\/artifacts\//.test(url) ? url.split("/").pop()
+      : /^artifact:/.test(url) ? url.replace(/^artifact:/, "") : "";
+    const src = artId ? B("/artifacts/" + artId) : url;
     return `<img src="${esc(src)}" alt="${esc(alt)}" class="chat-fig" data-art-id="${esc(artId)}">`;
   });
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
