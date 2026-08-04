@@ -119,6 +119,8 @@ async def artifact_file(artifact_id: str):
 async def artifact_meta(artifact_id: str):
     for rt in runtimes.values():
         art = rt.artifacts.get(artifact_id)
+        if art is None:
+            art = rt.artifacts.find_by_name(artifact_id)
         if art is not None:
             return {"artifact": art.to_dict()}
     meta = _find_artifact_meta_on_disk(artifact_id)
