@@ -12,9 +12,11 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 - **Artifact system with full provenance** — every figure/table records its exact
   code + environment snapshot, stored in SQLite + filesystem
 - **Background reviewer agent** that checks claims against the execution history
+- **Experiment Tracking** - Artifacts and experiments tracked as knowledge graphs helps in tracking metrices between run ![alt text](image.png) ![alt text](image-1.png) ![alt text](image-2.png)
 - **Permission model** — shell commands ask before running; network is deny-by-default
 - **Project workspaces** — SQLite-backed sessions, per-project kernels
 - **Figure annotation / regeneration** — "remove the gridlines" regenerates the figure
+- **Built in - VS code Editor** - edit agent generated scripts with built in VS code editor
 
 ## Architecture
 
