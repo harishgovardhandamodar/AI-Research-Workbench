@@ -204,6 +204,24 @@
                 data-text="Run the privacy workflow with a fresh seed">↻ Fresh rerun</button>
         <button class="btn subtle small quick" data-intent="privacy_compare"
                 data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
+        <button class="btn subtle small quick" data-intent="improve_loop"
+                data-text="Improve the latest experiment toward its goal">🔁 Improve experiment</button>
+        <button class="btn subtle small quick"
+                data-text="Plan and create an experiment to answer a research question">⚗ New experiment</button>
+        <button class="btn subtle small quick"
+                data-text="Run notebook examples/notebooks/01_simple_decay_fit.ipynb">🏃 Run sample notebook</button>
+        <button class="btn subtle small quick"
+                data-text="Compare the last two runs and show the metric deltas">🥇 Compare last 2 runs</button>
+        <button class="btn subtle small quick"
+                data-text="Generate a lab-notebook report for the last run">📊 Report last run</button>
+        <button class="btn subtle small quick"
+                data-text="Summarize our conversation so far">📝 Summarize chat</button>
+        <button class="btn subtle small quick"
+                data-text="Import the Kaggle dataset alexisbcook/titanic into the project">📥 Import Kaggle dataset</button>
+        <button class="btn subtle small quick"
+                data-text="Show the best run so far and why it wins">🏆 Best run so far</button>
+        <button class="btn subtle small quick"
+                data-text="List all experiments with their status and best metric">🗂 Experiments</button>
       </div>
       <div id="composer">
         <span id="activity" class="activity hidden" title="Generating"></span>
@@ -464,7 +482,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v54";
+  window.FOX_VER = "v55";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
