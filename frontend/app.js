@@ -1490,9 +1490,9 @@ $("files-refresh").addEventListener("click", loadFiles);
 
 async function loadExperiments() {
   try {
-    const r = await api("/api/experiments");
+    const r = await api(`/api/projects/${state.project}/experiments/history`);
     state.expRuns = r.experiments || [];
-    const g = await api("/api/experiments/graph");
+    const g = await api(`/api/projects/${state.project}/experiments/graph`);
     state.expGraph = g;
     populateExpMetrics();
     renderExperiments();
@@ -1598,7 +1598,7 @@ async function addGoal() {
   } catch (e) { toast("Failed to add goal: " + e.message); }
 }
 
-function expMetric() { return state.expMetric || "linkage50"; }
+function expMetric() { return state.expMetric || ""; }
 function expNodeValue(node, metric) {
   const v = (node.metrics && node.metrics[metric] != null) ? node.metrics[metric] : node[metric];
   return (v == null || Number.isNaN(Number(v))) ? null : Number(v);
@@ -1609,9 +1609,8 @@ function populateExpMetrics() {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
   const keys = new Set();
   nodes.forEach((n) => Object.keys(n.metrics || {}).forEach((k) => keys.add(k)));
-  ["linkage50", "plausibility", "unique_pct", "rmse_eps0_1"].forEach((k) => keys.add(k));
   const opts = [...keys].sort();
-  if (!opts.includes(state.expMetric)) state.expMetric = opts[0];
+  if (!opts.includes(state.expMetric)) state.expMetric = opts[0] || "";
   const fill = (sel) => {
     if (!sel) return;
     sel.innerHTML = opts.map((k) =>
@@ -1637,12 +1636,15 @@ function _metricColor(v, min, max) {
 function populateExpCompare() {
   const runs = (state.agentRuns || []).map((r) => ({
     value: String(r.id),
-    label: `#${r.id} ${(r.prompt || "").replace(/\s+/g, " ").slice(0, 70)}`,
+    label: `#${r.id} ${(r.label || r.prompt || "").replace(/\s+/g, " ").slice(0, 70)}`,
   })).reverse();
-  const exps = ((state.expGraph && state.expGraph.nodes) || []).map((n) => ({
-    value: String(n.id),
-    label: `${n.label}${n.timestamp ? " · " + new Date(n.timestamp).toLocaleString() : ""}`,
-  }));
+  const runVals = new Set(runs.map((r) => r.value));
+  const exps = ((state.expGraph && state.expGraph.nodes) || [])
+    .filter((n) => !runVals.has(String(n.id)))
+    .map((n) => ({
+      value: String(n.id),
+      label: `${n.label}${n.timestamp ? " · " + new Date(n.timestamp).toLocaleString() : ""}`,
+    }));
   const opts = [...runs, ...exps];
   const selA = $("exp-cmp-a"), selB = $("exp-cmp-b"), res = $("exp-cmp-result");
   if (!opts.length) {
@@ -1727,7 +1729,7 @@ function buildTimelineSvg(metric, W) {
     if (vals[i] == null) return;
     const color = n.fresh ? "#d29922" : "#b98cff";
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
       + `<title>${esc(tip)}</title>`
       + `<circle r="7" fill="${color}" stroke="#19132b" stroke-width="2" filter="drop-shadow(0 0 6px ${color}aa)"></circle>`
@@ -1780,47 +1782,25 @@ function _forceLayout(nodes, edges, W, H) {
   return pos;
 }
 
-// Per-experiment sub-nodes: tags, findings and artifact keywords, so the graph
-// shows at a glance what each experiment contains.
+// Per-run sub-nodes: kind/seed tags, findings and artifact keywords, so the
+// graph shows at a glance what each run contains (works for any run kind).
 function expSubNodes(run) {
-  const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
   const nodes = [];
   const tag = (label) => nodes.push({ kind: "tag", label, color: "#d29922" });
   const find = (label) => nodes.push({ kind: "finding", label, color: "#b98cff" });
   const art = (label) => nodes.push({ kind: "artifact", label, color: "#a974ff" });
 
-  // notebook / generic experiment run (has a metrics dict, no stage structure)
-  if ((run.metrics && Object.keys(run.metrics).length) && !s1.length) {
-    tag(run.fresh ? "fresh" : "deterministic");
-    tag(run.kind === "notebook" ? "notebook" : "experiment");
-    const m = run.metrics;
-    if (m.clean_accuracy != null) find("clean " + (m.clean_accuracy * 100).toFixed(0) + "%");
-    if (m.robust_accuracy != null) find("robust " + (m.robust_accuracy * 100).toFixed(0) + "%");
-    if (m.asr != null) find("ASR " + (m.asr * 100).toFixed(0) + "%");
-    if (m.eps != null) find("eps " + _fmtNum(m.eps));
-    for (const a of (run.artifacts || []).slice(0, 3)) {
-      const name = (typeof a === "object" ? a.name : a) || "";
-      art(name.replace(/\.(png|md)$/, "").slice(0, 16));
-    }
-    return nodes;
+  if (run.seed != null) tag("seed " + run.seed);
+  if (run.fresh) tag("fresh");
+  if (run.kind) tag(run.kind);
+  for (const f of (run.findings || []).slice(0, 4)) {
+    find(String(f).replace(/\s+/g, " ").slice(0, 24));
   }
-
-  tag(run.fresh ? "fresh" : "deterministic");
-  if (last1Val(s1, "plausibility_verdict")) tag("plausibility " + last1Val(s1, "plausibility_verdict").toLowerCase());
-  if (s2.reid_risk) tag("re-id " + s2.reid_risk.toLowerCase());
-  if (s2.unique_pct != null) find("unique " + s2.unique_pct.toFixed(0) + "%");
-  if (s2.extreme_unique_corner_cases != null) find("corner " + s2.extreme_unique_corner_cases);
-  if (s3.length && s3[0].protection_index != null) find("DP prot " + (s3[0].protection_index * 100).toFixed(0) + "%");
-  if (last1Val(s1, "linkage_success") != null) find("linkage " + (last1Val(s1, "linkage_success") * 100).toFixed(0) + "%");
   for (const a of (run.artifacts || []).slice(0, 3)) {
     const name = (typeof a === "object" ? a.name : a) || "";
     art(name.replace(/\.(png|md)$/, "").slice(0, 16));
   }
   return nodes;
-}
-
-function last1Val(s1, key) {
-  return s1.length ? s1[s1.length - 1][key] : undefined;
 }
 
 function _separate(pos, n, minDist, W, H) {
@@ -1895,12 +1875,12 @@ function buildGraphSvg(metric, W) {
     const v = vals[i];
     const color = v == null ? "#9b93ab" : _metricColor(v, vmin, vmax);
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · seed ${n.seed}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\nclick for full summary`;
+    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
       + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
       + `<text y="-24" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
-      + `<text y="30" text-anchor="middle" font-size="9" fill="#9b93ab">seed ${n.seed}</text></g>`;
+      + `<text y="30" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
     const subs = expSubNodes(n.run);
     const R = 92;
@@ -1937,7 +1917,7 @@ function buildGraphSvg(metric, W) {
 
 function renderExperiments() {
   const runs = state.expRuns || [];
-  const empty = '<div class="empty">No workflow runs yet. Trigger the privacy workflow in chat (or add &quot;rerun with fresh results&quot;) to build up a history.</div>';
+  const empty = '<div class="empty">No runs yet in this project. Ask Fox to run an analysis or experiment in chat and each turn will appear here.</div>';
   const metric = expMetric();
   const charts = [
     ["expmain-timeline", "timeline", 1240, 330],
@@ -2157,7 +2137,7 @@ function similarRuns(id) {
     else if (e.target === id) other = e.source;
     if (!other) continue;
     const n = byId[other];
-    if (n) out.push({ id: n.id, index: n.index, seed: n.seed,
+    if (n) out.push({ id: n.id, index: n.index, seed: n.seed, label: n.label,
                       similarity: e.similarity, overlap: e.overlap });
   }
   return out.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 3);
@@ -2166,64 +2146,40 @@ function similarRuns(id) {
 function renderExpDetail() {
   const el = $("exp-detail");
   const runs = state.expRuns || [];
-  const idx = runs.findIndex((r) => r.id === state.expSelected);
-  const run = idx >= 0 ? runs[idx] : null;
+  const run = runs.find((r) => r.id === state.expSelected) || null;
   if (!run) {
     const msg = '<div class="empty">Select a run node to see its summary, findings and related runs.</div>';
     if (el) el.innerHTML = msg;
     if ($("expmain-detail")) $("expmain-detail").innerHTML = msg;
     return;
   }
-  const s1 = run.stage1 || [], s2 = run.stage2 || {}, s3 = run.stage3 || [];
-  const last1 = s1[s1.length - 1] || {}, first3 = s3[0] || {};
-  const set = run.settings || {};
   const badge = run.fresh ? '<span class="exp-badge fresh">fresh</span>'
-                          : '<span class="exp-badge det">deterministic</span>';
-  const time = new Date(run.timestamp).toLocaleString();
-  const pct = (v) => (v == null ? "—" : (Number(v) * 100).toFixed(1) + "%");
+                          : `<span class="exp-badge det">${esc(run.kind || "run")}</span>`;
+  const time = run.timestamp ? new Date(run.timestamp).toLocaleString() : "—";
+  let h = `<div class="ed-head">${esc(run.label || ("Run #" + run.id))} ${badge}</div>`;
+  h += `<div class="ed-meta">${esc(time)}</div>`;
 
-  // notebook / generic experiment run (metrics dict, no stage structure)
-  if ((run.metrics && Object.keys(run.metrics).length) && !s1.length) {
-    let h = `<div class="ed-head">Run #${idx + 1} · ${esc(run.label || "notebook")} ${badge}</div>`;
-    h += `<div class="ed-meta">${time}</div>`;
-    h += `<div class="ed-sec">Experiment</div>`;
-    h += `<div class="ed-find">${esc(run.label || "notebook run")}`
-      + (run.seed ? ` · seed ${run.seed}` : "") + ` · ${run.kind || "notebook"}</div>`;
+  const mkeys = Object.keys(run.metrics || {});
+  if (mkeys.length) {
     h += `<div class="ed-sec">Metrics</div><table>`;
-    for (const [k, v] of Object.entries(run.metrics)) {
-      h += `<tr><th>${esc(k.replace(/_/g, " "))}</th><td>${_fmtNum(v)}</td></tr>`;
+    for (const k of mkeys) {
+      h += `<tr><th>${esc(k.replace(/_/g, " "))}</th><td>${_fmtNum(run.metrics[k])}</td></tr>`;
     }
     h += `</table>`;
-    h += `<div class="ed-sec">Artifacts</div>`;
-    for (const a of run.artifacts || []) {
-      const obj = typeof a === "object" ? a : { name: a, id: null };
-      h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
-    }
-    if (el) el.innerHTML = h;
-    if ($("expmain-detail") && $("expmain-detail") !== el) $("expmain-detail").innerHTML = h;
-    return;
   }
-
-  let h = `<div class="ed-head">Run #${idx + 1} · seed ${run.seed} ${badge}</div>`;
-  h += `<div class="ed-meta">${time}</div>`;
-  h += `<div class="ed-sec">Settings</div><table>
-    <tr><th>Population</th><td>${set.population_size ?? "—"}</td></tr>
-    <tr><th>Victim sample</th><td>${set.victim_size ?? "—"}</td></tr>
-    <tr><th>Coverage</th><td>${(set.coverage_levels || []).join(", ") || "—"}</td></tr>
-    <tr><th>ε levels</th><td>${(set.dp_epsilons || []).join(", ") || "—"}</td></tr>
-  </table>`;
-  h += `<div class="ed-sec">Key metrics</div><table>
-    <tr><th>Linkage @50% coverage</th><td>${pct(last1.linkage_success)}</td></tr>
-    <tr><th>Plausibility @50%</th><td>${last1.attack_plausibility != null ? last1.attack_plausibility.toFixed(2) + " (" + (last1.plausibility_verdict || "?") + ")" : "—"}</td></tr>
-    <tr><th>Unique records</th><td>${s2.unique_pct != null ? s2.unique_pct.toFixed(1) + "%" : "—"}</td></tr>
-    <tr><th>Extreme+unique corner cases</th><td>${s2.extreme_unique_corner_cases ?? "—"}</td></tr>
-    <tr><th>Re-identification risk</th><td>${s2.reid_risk ?? "—"}</td></tr>
-    <tr><th>Membership advantage</th><td>${s2.membership_advantage ?? "—"}</td></tr>
-    <tr><th>DP attacker RMSE @ε=0.1</th><td>${first3.attacker_pred_rmse != null ? first3.attacker_pred_rmse.toFixed(2) : "—"}</td></tr>
-  </table>`;
-  if (s2.message) h += `<div class="ed-sec">Findings</div><div class="ed-find">${esc(s2.message)}</div>`;
+  if (run.prompt) {
+    h += `<div class="ed-sec">Prompt</div><div class="ed-find">${esc(run.prompt)}</div>`;
+  }
+  if ((run.findings || []).length) {
+    h += `<div class="ed-sec">Findings</div>`;
+    for (const f of run.findings) h += `<div class="ed-find">${esc(f)}</div>`;
+  }
   h += `<div class="ed-sec">Artifacts</div>`;
-  for (const a of run.artifacts || []) {
+  const arts = run.artifacts || [];
+  if (!arts.length) {
+    h += `<div class="muted">none</div>`;
+  }
+  for (const a of arts) {
     const obj = typeof a === "object" ? a : { name: a, id: null };
     h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
   }
@@ -2231,7 +2187,7 @@ function renderExpDetail() {
   if (sims.length) {
     h += `<div class="ed-sec">Similar / overlapping runs</div>`;
     for (const s of sims) {
-      h += `<div class="ed-sim"><a class="ed-sim-link" data-id="${esc(s.id)}">Run #${s.index + 1} (seed ${s.seed})</a> — similarity <b>${((s.similarity || 0) * 100).toFixed(0)}%</b> · overlap <b>${((s.overlap || 0) * 100).toFixed(0)}%</b></div>`;
+      h += `<div class="ed-sim"><a class="ed-sim-link" data-id="${esc(s.id)}">${esc(s.label || ("Run #" + (s.index + 1)))}</a> — similarity <b>${((s.similarity || 0) * 100).toFixed(0)}%</b> · overlap <b>${((s.overlap || 0) * 100).toFixed(0)}%</b></div>`;
     }
   }
   if (el) el.innerHTML = h;

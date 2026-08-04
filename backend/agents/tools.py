@@ -12,13 +12,11 @@ import base64
 import dataclasses
 import json
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .. import editor as editor_cfg
 from ..artifacts.store import Artifact, ArtifactStore
-from ..experiments import record_experiment
 from ..kernels.manager import KernelManager
 from ..notebooks import NotebookError, NotebookService
 from ..permissions import PermissionManager
@@ -42,6 +40,9 @@ class ToolContext:
     experiment_id: str = ""
     experiment_config: dict | None = None
     last_metrics: dict | None = None
+    # Artifact ids produced by the most recent tool call, so the coordinator can
+    # record exact run↔artifact linkage instead of parsing tool text.
+    last_artifact_ids: list = dataclasses.field(default_factory=list)
     variant: dict | None = None
     finished_variants: list = dataclasses.field(default_factory=list)
 
@@ -328,6 +329,7 @@ async def _run_python(ctx: ToolContext, code: str) -> str:
         ctx.artifacts.add_artifact(art, data=data, data_type="png")
         artifact_ids.append(art.id)
     if artifact_ids:
+        ctx.last_artifact_ids.extend(artifact_ids)
         parts.append("Figures generated (artifacts): " + ", ".join(artifact_ids))
         if ctx.emit:
             for aid in artifact_ids:
@@ -395,6 +397,7 @@ async def _save_artifact(ctx: ToolContext, name: str, description: str,
                    code="# saved manually", env=env,
                    message_id=ctx.message_id, run_id=ctx.run_id)
     ctx.artifacts.add_artifact(art, data=content.encode(), data_type="text")
+    ctx.last_artifact_ids.append(art.id)
     if ctx.emit:
         await ctx.emit("artifact", {"artifact": art.to_dict()})
     return f"Saved artifact {art.id} ({kind}: {name})"
@@ -514,6 +517,7 @@ async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> 
                        message_id=ctx.message_id, run_id=ctx.run_id)
         ctx.artifacts.add_artifact(art, data=data, data_type="png")
         collected.append(art.to_dict())
+        ctx.last_artifact_ids.append(art.id)
         if ctx.emit:
             await ctx.emit("artifact", {"artifact": art.to_dict()})
         return art
@@ -531,21 +535,21 @@ async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> 
         lines.append(f"  cell {r['index']}: {status}{extra}")
     result = "\n".join(lines)
 
-    # Record the experiment the same way as the chat-rerun path so the agent's
-    # notebook runs appear on the Experiments timeline/graph too.
+    # Record the run in the project's runs table (same source of truth as agent
+    # runs and notebook-intent runs) so it appears on the Experiments timeline
+    # and graph with its metrics and artifacts.
     try:
         metrics = await _notebook_metrics(ctx)
-        record_experiment({
-            "id": f"nb-tool-{int(time.time())}",
-            "kind": "notebook",
-            "label": notebook,
-            "seed": None,
-            "fresh": False,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "metrics": metrics,
-            "artifacts": [{"name": a["name"], "id": a["id"]} for a in collected],
-            "source": "agent-tool",
-        })
+        ctx.store.add_run(
+            prompt=f"run notebook {notebook}",
+            reply=result,
+            status="done",
+            started_at=time.time(), finished_at=time.time(),
+            artifact_ids=[a["id"] for a in collected],
+            metrics=metrics,
+            kind="notebook",
+            label=notebook,
+        )
     except Exception:  # noqa: BLE001
         pass
     return result

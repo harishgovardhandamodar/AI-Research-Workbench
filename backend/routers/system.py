@@ -89,14 +89,22 @@ async def list_models():
 
 @router.get("/api/experiments")
 async def get_experiments():
-    """List all privacy-workflow runs (timestamps, settings, metrics, artifacts)."""
+    """Legacy global experiment history (privacy_runs.json).
+
+    Deprecated: the Experiments UI reads per-project history from
+    /api/projects/{name}/experiments/history instead.
+    """
     return {"experiments": load_experiments()}
 
 
 @router.get("/api/experiments/graph")
 async def get_experiments_graph():
-    """Graph view: one node per run + similarity/overlap edges between runs."""
-    return build_graph()
+    """Legacy global graph (privacy_runs.json).
+
+    Deprecated: use /api/projects/{name}/experiments/graph for project-scoped,
+    SQLite-backed runs.
+    """
+    return build_graph(load_experiments())
 
 
 @router.get("/api/agent")
@@ -133,14 +141,16 @@ async def agent_dashboard():
 
     # Status / add-on data.
     total_artifacts = 0
+    total_runs = 0
     for rt in runtimes.values():
         try:
             total_artifacts += len(rt.artifacts.list())
+            total_runs += rt.store.count_runs()
         except Exception:  # noqa: BLE001
             pass
     addons = {
         "projects": len(runtimes) or (len(list(PROJECTS_DIR.iterdir())) if PROJECTS_DIR.exists() else 0),
-        "experiments": len(load_experiments()),
+        "experiments": total_runs,
         "artifacts": total_artifacts,
         "notebooks": len(bundled),
         "scripts": len(bundled_scripts),

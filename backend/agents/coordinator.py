@@ -59,13 +59,13 @@ run_python by exec'ing the file, e.g. exec(open("examples/experiments/01_simple_
 For experiments the user wants to keep as notebooks, use create_notebook and
 run_notebook so the results are stored inside the .ipynb file.
 
-Data-obfuscation experiments: the SWIFT obfuscation study is bundled under
-examples/obfuscation/ (data generator, obfuscation library, and 9 threat
-scenarios). Import it in the kernel with
+Data-obfuscation experiments: the obfuscation study (adapted to credit-card
+transaction data) is bundled under examples/obfuscation/ (data generator,
+obfuscation library, and 9 threat scenarios). Import it in the kernel with
   import sys; from pathlib import Path; sys.path.insert(0, str(Path.cwd()))
-  from examples.obfuscation.swift_data import generate_swift
+  from examples.obfuscation.credit_card_data import generate_credit_card
   from examples.obfuscation import experiments as exp
-  df = generate_swift(2000, seed=42); report = exp.run_all(df)
+  df = generate_credit_card(2000, seed=42); report = exp.run_all(df)
 The notebooks examples/notebooks/18_obfuscation_techniques.ipynb and
 19_obfuscation_threat_scenarios.ipynb demonstrate the techniques and scenarios;
 run them with run_notebook. To obfuscate the user's own uploaded data, load it
@@ -284,6 +284,12 @@ class Coordinator:
                         "result": _snippet(result, 300),
                     })
                     self._run_artifacts.extend(_artifact_ids(name, result))
+                    # Exact artifact linkage from the tool itself (figures,
+                    # saved artifacts, notebook outputs), not text scraping.
+                    produced = list(getattr(self.ctx, "last_artifact_ids", []) or [])
+                    if produced:
+                        self._run_artifacts.extend(produced)
+                        self.ctx.last_artifact_ids = []
                     structured = getattr(self.ctx, "last_metrics", None) or {}
                     if structured:
                         self._run_metrics.update(structured)

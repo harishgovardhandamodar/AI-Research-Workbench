@@ -80,7 +80,7 @@ class ProjectStore:
                 prompt TEXT, reply TEXT, status TEXT,
                 started_at REAL, finished_at REAL,
                 tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT,
-                experiment_id INTEGER, config TEXT, label TEXT)"""
+                experiment_id INTEGER, config TEXT, label TEXT, kind TEXT)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS experiments (
@@ -117,6 +117,12 @@ class ProjectStore:
         # Migration: older databases predate per-run variant labels.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN label TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate the run kind (agent_run / notebook /
+        # privacy_workflow / ...) used by the Experiments traceability UI.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN kind TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -232,16 +238,23 @@ class ProjectStore:
                 review: dict | None = None,
                 experiment_id: int | None = None,
                 config: dict | None = None,
-                label: str | None = None) -> int:
-        """Persist one agent turn as a run row (prompt → reply → tool trail)."""
+                label: str | None = None,
+                kind: str = "agent_run") -> int:
+        """Persist one agent turn as a run row (prompt → reply → tool trail).
+
+        `kind` tags the source of the record (agent_run, notebook, workflow,
+        privacy_workflow, ...) so the Experiments UI can render it generically.
+        """
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
-            " tool_sequence, artifact_ids, metrics, review, experiment_id, config, label)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
+            " label, kind)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
              json.dumps(metrics or {}), json.dumps(review or {}),
-             experiment_id, json.dumps(config or {}), label or None))
+             experiment_id, json.dumps(config or {}), label or None,
+             kind or "agent_run"))
         self._conn.commit()
         return cur.lastrowid
 
@@ -259,6 +272,10 @@ class ProjectStore:
         for r in reversed(rows):
             out.append(self._row_run(r))
         return out
+
+    def count_runs(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()
+        return row["n"] if row else 0
 
     def get_run(self, rid: int) -> dict | None:
         row = self._conn.execute(
@@ -281,7 +298,8 @@ class ProjectStore:
                 "review": _jload(r["review"], {}),
                 "experiment_id": r["experiment_id"],
                 "config": _jload(r["config"], {}),
-                "label": r["label"]}
+                "label": r["label"],
+                "kind": r["kind"] or "agent_run"}
 
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",

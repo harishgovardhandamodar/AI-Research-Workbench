@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..artifacts.store import Artifact
-from ..experiments import compare_runs, load_experiments
+from ..experiments import build_graph, compare_runs, unify_record
 from ..llm import LLMError
 from ..state import get_runtime
 
@@ -36,6 +36,22 @@ async def project_run(name: str, rid: int):
 async def project_experiments(name: str):
     """Structured experiments (families of runs) for this project."""
     return {"experiments": get_runtime(name).store.list_experiments()}
+
+
+@router.get("/api/projects/{name}/experiments/history")
+async def project_experiments_history(name: str, limit: int = 50):
+    """Every run in this project as a unified traceability record (metrics,
+    findings, artifacts) for the Experiments timeline/graph UI."""
+    rt = get_runtime(name)
+    records = rt.store.list_runs(limit)
+    return {"experiments": [unify_record(r, rt.artifacts) for r in records]}
+
+
+@router.get("/api/projects/{name}/experiments/graph")
+async def project_experiments_graph(name: str):
+    """Graph view: one node per run + similarity/overlap edges between runs."""
+    rt = get_runtime(name)
+    return build_graph(rt.store.list_runs(), rt.artifacts)
 
 
 @router.post("/api/projects/{name}/experiments")
@@ -178,12 +194,13 @@ async def project_run_report(name: str, rid: int):
         env = await rt.kernels.get_env()
     except Exception:  # noqa: BLE001
         pass
-    art = Artifact(kind="text", name=f"run-{rid}-report",
-                   description=f"Auto-generated lab-notebook report for run #{rid}",
-                   code="# auto-generated report", env=env)
-    rt.artifacts.add_artifact(art, data=report.encode(), data_type="text")
     mid = rt.store.add_message("assistant", report,
                                {"tags": ["report", f"run #{rid}"]})
+    art = Artifact(kind="text", name=f"run-{rid}-report",
+                   description=f"Auto-generated lab-notebook report for run #{rid}",
+                   code="# auto-generated report", env=env,
+                   run_id=str(rid), message_id=str(mid))
+    rt.artifacts.add_artifact(art, data=report.encode(), data_type="text")
     return {"report": report, "artifact_id": art.id, "message_id": mid}
 
 
@@ -218,21 +235,14 @@ async def project_goals_delete(name: str, metric: str):
 
 @router.get("/api/projects/{name}/compare")
 async def project_compare(name: str, run_a: str = "", run_b: str = ""):
-    """Metric delta between two runs (agent runs or experiment-history records)."""
+    """Metric delta between two runs (any two records from this project)."""
     if not run_a or not run_b:
         raise HTTPException(status_code=400, detail="run_a and run_b are required")
     rt = get_runtime(name)
 
     def resolve(ref: str):
-        # Agent run ids are integers; experiment-history ids are strings.
-        if ref.isdigit():
-            rec = rt.store.get_run(int(ref))
-            if rec is not None:
-                return rec
-        for exp in load_experiments():
-            if str(exp.get("id")) == ref:
-                return exp
-        return None
+        # Run ids from this project's runs table are integers.
+        return rt.store.get_run(int(ref)) if str(ref).isdigit() else None
 
     ra, rb = resolve(run_a), resolve(run_b)
     if ra is None or rb is None:

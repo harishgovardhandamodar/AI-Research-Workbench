@@ -103,6 +103,18 @@ class TestStore(unittest.TestCase):
         self.assertEqual(run["label"], "eps=2.0")
         self.assertEqual(run["experiment_id"], eid)
 
+    def test_run_kind_and_count(self):
+        self.store.add_run("p1", "r1", "done", 1.0, 2.0, kind="agent_run")
+        self.store.add_run("p2", "r2", "done", 3.0, 4.0, kind="notebook",
+                           metrics={"acc": 0.9}, label="nb1")
+        self.assertEqual(self.store.count_runs(), 2)
+        run = self.store.get_run(2)
+        self.assertEqual(run["kind"], "notebook")
+        self.assertEqual(run["label"], "nb1")
+        # default kind for legacy callers
+        rid = self.store.add_run("p3", "r3", "done", 5.0, 6.0)
+        self.assertEqual(self.store.get_run(rid)["kind"], "agent_run")
+
     def test_approval_log_roundtrip(self):
         self.store.log_approval("run_shell", "ls", "allow", True)
         self.store.log_approval("run_shell", "rm -rf /", "deny", False)

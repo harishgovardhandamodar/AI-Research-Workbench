@@ -16,7 +16,6 @@ import re
 import sys
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +25,7 @@ from .agents.approval import ApprovalBroker
 from .agents.coordinator import Coordinator
 from .agents.reviewer import Reviewer
 from .artifacts.store import Artifact
+from .experiments import findings_from_run, metrics_from_run
 from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .project_runtime import ProjectRuntime
@@ -170,7 +170,6 @@ def _nb_artifact_cb(rt: ProjectRuntime, emit):
 async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
                               fresh: bool, message_id: str = "") -> str:
     """Execute a notebook (fresh seed when requested) and summarize the results."""
-    from .experiments import record_experiment
     from .notebooks import NotebookError
     svc = rt.notebooks
     try:
@@ -203,8 +202,9 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
     res = await svc.execute(name, on_artifact=on_artifact, prelude=prelude)
     nb = res["notebook"]
 
-    # Record the run in the Experiments history (kind = notebook), reading any
-    # metrics the notebook helper exposed (e.g. clean/robust accuracy).
+    # Record the run in the project's runs table (the same source of truth as
+    # agent runs), reading any metrics the notebook helper exposed (e.g. clean/
+    # robust accuracy) so it shows up on the Experiments timeline/graph.
     metrics = {}
     try:
         resp = await rt.kernels.python.run_code(
@@ -219,16 +219,18 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
     except Exception:  # noqa: BLE001
         pass
     try:
-        record_experiment({
-            "id": f"nb-{int(time.time())}",
-            "kind": "notebook",
-            "label": name,
-            "seed": seed_used,
-            "fresh": bool(fresh),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "metrics": metrics,
-            "artifacts": collected,
-        })
+        rt.store.add_run(
+            prompt=f"run notebook {name}",
+            reply="\n".join(f"cell {r['index']}: "
+                            f"{'ok' if r['ok'] else 'FAILED'}" for r in res["report"]),
+            status="done",
+            started_at=time.time(), finished_at=time.time(),
+            artifact_ids=[a["id"] for a in collected],
+            metrics=metrics,
+            kind="notebook",
+            label=name,
+            config={"seed": seed_used, "fresh": bool(fresh)},
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -290,7 +292,8 @@ def message_tags(role: str, text: str) -> list[str]:
 
 
 async def run_privacy_workflow(rt: ProjectRuntime, emit,
-                               fresh: bool = False, compare: bool = False) -> str:
+                               fresh: bool = False, compare: bool = False,
+                               prompt: str = "") -> str:
     """Run (or compare) the privacy workflow and register outputs as artifacts."""
     script = PRIVACY_WORKFLOW["script"]
     base_report_dir = ROOT / PRIVACY_WORKFLOW["report_dir"]
@@ -390,7 +393,7 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
         lines = [
             "## Privacy workflow — peer exploitation · red team · DP robustness",
             "",
-            "The workflow ran **3 stages** on synthetic SWIFT data "
+            "The workflow ran **3 stages** on synthetic credit-card data "
             "(obfuscation-study generator) and produced the reports below, which "
             "are also saved as artifacts.",
         ]
@@ -416,6 +419,32 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
         "> Artifacts registered: " + ", ".join(artifact_names),
     ]
     message = "\n".join(lines)
+
+    # Record this workflow run in the project's own runs table (same source of
+    # truth as agent runs) so the Experiments tab shows it with its metrics,
+    # findings and artifacts. Comparisons don't produce new stage data, so only
+    # real workflow executions are recorded.
+    if not compare:
+        try:
+            last = {}
+            if runs_file.exists():
+                data = json.loads(runs_file.read_text())
+                if data and isinstance(data, list):
+                    last = data[-1]
+            rt.store.add_run(
+                prompt=prompt or "privacy workflow",
+                reply=message[:4000],
+                status="done",
+                started_at=time.time(), finished_at=time.time(),
+                artifact_ids=[a["id"] for a in artifact_refs],
+                metrics=metrics_from_run(last),
+                kind="privacy_workflow",
+                label="privacy workflow" + (" (fresh)" if fresh else ""),
+                config={"findings": findings_from_run(last),
+                        "seed": last.get("seed"), "fresh": bool(fresh)},
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return message[:60_000] if message else "(workflow produced no output)"
 
 
@@ -526,7 +555,8 @@ async def ws_chat(ws: WebSocket, name: str):
                          "Running the privacy workflow — peer exploitation · "
                          "red team · DP robustness…")})
                     result = await run_privacy_workflow(
-                        rt, emit, fresh=fresh_mode, compare=compare_mode)
+                        rt, emit, fresh=fresh_mode, compare=compare_mode,
+                        prompt=text)
                     amid = rt.store.add_message(
                         "assistant", result,
                         {"tags": message_tags("assistant", result)})
