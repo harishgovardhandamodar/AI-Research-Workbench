@@ -2787,7 +2787,8 @@ function buildTimelineSvg(metric, W) {
     const color = eid != null ? expColor(eid) : (n.fresh ? "#d29922" : "#b98cff");
     const sel = state.expSelected === n.id ? " selected" : "";
     const isBest = best && String(best.id) === String(n.id);
-    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    const sug = reviewSuggestionsFor(n.id).length > 0;
+    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
     let mark = "";
     if (isBest) {
       mark = `<circle r="12" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
@@ -2797,6 +2798,7 @@ function buildTimelineSvg(metric, W) {
       + mark
       + `<circle r="7" fill="${color}" stroke="#19132b" stroke-width="2" filter="drop-shadow(0 0 6px ${color}aa)"></circle>`
       + (isBest ? `<text y="-20" text-anchor="middle" font-size="10">★</text>` : "")
+      + (sug ? `<text y="-28" text-anchor="middle" font-size="10">💡</text>` : "")
       + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">${_fmtNum(vals[i])}</text>`
       + `<text y="22" text-anchor="middle" font-size="9" fill="#9b93ab">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
   });
@@ -2942,13 +2944,19 @@ function buildGraphSvg(metric, W) {
     const color = v == null ? "#9b93ab" : _metricColor(v, vmin, vmax);
     const ec = expColor(n.g.experiment_id);
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\nclick for full summary`;
+    const bestForMetric = bestRunForMetric(metric);
+    const isBest = bestForMetric && String(bestForMetric.id) === String(n.id);
+    const sug = reviewSuggestionsFor(n.id).length > 0;
+    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
       + (n.g.experiment_id != null
         ? `<circle r="21" fill="none" stroke="${ec}" stroke-width="2" opacity="0.75"></circle>` : "")
+      + (isBest ? `<circle r="25" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"></circle>` : "")
       + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
       + (v != null ? `<text y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#0a0a0d">${_fmtNum(v)}</text>` : "")
+      + (isBest ? `<text y="-34" text-anchor="middle" font-size="11">★</text>` : "")
+      + (sug ? `<text y="-46" text-anchor="middle" font-size="11">💡</text>` : "")
       + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
       + `<text y="34" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
@@ -3214,6 +3222,65 @@ function similarRuns(id) {
   return out.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 3);
 }
 
+/* ---- experiment run insights: reviewer suggestions + best-run compare ---- */
+
+function reviewOf(runId) {
+  return (state.agentRuns || []).find((r) => String(r.id) === String(runId)) || null;
+}
+
+function reviewSuggestionsFor(runId) {
+  const r = reviewOf(runId);
+  return (r && r.review && r.review.suggestions) || [];
+}
+
+function reviewFindingsFor(runId) {
+  const r = reviewOf(runId);
+  return (r && r.review && r.review.findings) || [];
+}
+
+function bestRunForMetric(metric) {
+  const runs = state.expRuns || [];
+  if (!metric) return null;
+  let best = null;
+  for (const r of runs) {
+    const v = r.metrics && r.metrics[metric];
+    if (v == null) continue;
+    if (best === null || v > best.v) best = { id: r.id, v };
+  }
+  return best;
+}
+
+function suggestionLabel(s) {
+  if (typeof s === "string") return s;
+  if (!s) return "";
+  return s.title || s.action || (typeof s.prompt === "string" ? s.prompt : JSON.stringify(s));
+}
+
+async function compareRunVsBest(runId, outEl) {
+  const metric = expMetric();
+  const best = bestRunForMetric(metric);
+  if (!best) { outEl.textContent = "no runs with the active metric"; return; }
+  if (String(best.id) === String(runId)) {
+    outEl.textContent = "this is the best run for " + metric.replace(/_/g, " ") + " 🏆";
+    return;
+  }
+  outEl.textContent = "Comparing…";
+  try {
+    const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(runId)}&run_b=${encodeURIComponent(best.id)}`);
+    const c = r.comparison;
+    if (!c.rows.length) { outEl.textContent = "no shared metrics vs best"; return; }
+    const rows = c.rows.map((row) => {
+      const cls = row.delta > 0 ? "delta-up" : row.delta < 0 ? "delta-down" : "";
+      const arrow = row.delta > 0 ? "▲" : row.delta < 0 ? "▼" : "—";
+      return `<tr><td>${esc(row.metric)}</td><td>${_fmtNum(row.a)}</td><td>${_fmtNum(row.b)}</td>
+        <td class="${cls}">${arrow} ${_fmtNum(row.delta)}</td>
+        <td class="${cls}">${row.pct > 0 ? "+" : ""}${_fmtNum(row.pct)}%</td></tr>`;
+    }).join("");
+    outEl.innerHTML = `<div class="vs-head">this run vs <b>best</b> (run #${best.id})</div>
+      <table class="cmp-table"><tbody>${rows}</tbody></table>`;
+  } catch (e) { outEl.textContent = "compare failed: " + (e.message || e); }
+}
+
 function renderExpDetail() {
   const el = $("exp-detail");
   const runs = state.expRuns || [];
@@ -3229,6 +3296,12 @@ function renderExpDetail() {
   const time = run.timestamp ? new Date(run.timestamp).toLocaleString() : "—";
   let h = `<div class="ed-head">${esc(run.label || ("Run #" + run.id))} ${badge}</div>`;
   h += `<div class="ed-meta">${esc(time)}</div>`;
+  h += `<div class="ed-actions">
+    ${run.experiment_id != null
+      ? `<button class="btn subtle small ed-improve" data-eid="${esc(run.experiment_id)}" data-rid="${esc(run.id)}" title="Run the improve loop for this experiment">🔁 Improve from here</button>` : ""}
+    <button class="btn subtle small ed-vs-best" data-rid="${esc(run.id)}" title="Compare this run against the best run for the active metric">⇄ Compare vs best</button>
+    <span class="ed-vs-out muted"></span>
+  </div>`;
 
   const mkeys = Object.keys(run.metrics || {});
   if (mkeys.length) {
@@ -3241,9 +3314,24 @@ function renderExpDetail() {
   if (run.prompt) {
     h += `<div class="ed-sec">Prompt</div><div class="ed-find">${esc(run.prompt)}</div>`;
   }
+  const sugs = reviewSuggestionsFor(run.id);
+  if (sugs.length) {
+    h += `<div class="ed-sec">💡 Suggested improvements</div>`;
+    for (const s of sugs.slice(0, 4)) {
+      h += `<div class="ed-find ed-sug">💡 ${esc(String(suggestionLabel(s)).replace(/\s+/g, " ").slice(0, 160))}</div>`;
+    }
+  }
   if ((run.findings || []).length) {
     h += `<div class="ed-sec">Findings</div>`;
     for (const f of run.findings) h += `<div class="ed-find">${esc(f)}</div>`;
+  }
+  const revFindings = reviewFindingsFor(run.id);
+  if (revFindings.length && !(run.findings || []).length) {
+    h += `<div class="ed-sec">Reviewer findings</div>`;
+    for (const f of revFindings.slice(0, 4)) {
+      const t = typeof f === "object" ? (f.message || JSON.stringify(f)) : String(f);
+      h += `<div class="ed-find">${esc(String(t).replace(/\s+/g, " ").slice(0, 160))}</div>`;
+    }
   }
   h += `<div class="ed-sec">Artifacts</div>`;
   const arts = run.artifacts || [];
@@ -3302,6 +3390,20 @@ EXP_VIEWS.forEach((id) => {
   el.addEventListener("click", (e) => {
     const sim = e.target.closest(".ed-sim-link");
     if (sim) { selectRun(sim.dataset.id); return; }
+    const improve = e.target.closest(".ed-improve");
+    if (improve) {
+      const eid = improve.dataset.eid;
+      const rid = improve.dataset.rid;
+      sendChat(`Improve the experiment toward its goal, continuing from run #${rid}.`,
+               "improve_loop", { experiment_id: eid });
+      return;
+    }
+    const vsBest = e.target.closest(".ed-vs-best");
+    if (vsBest) {
+      const out = vsBest.parentElement.querySelector(".ed-vs-out");
+      if (out) compareRunVsBest(vsBest.dataset.rid, out);
+      return;
+    }
     const thumb = e.target.closest(".ed-art-thumb img, .cmp-thumb");
     if (thumb) { openArtifactById(thumb.dataset.artId); return; }
     const art = e.target.closest(".ed-art");

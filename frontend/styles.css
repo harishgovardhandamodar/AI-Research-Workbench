@@ -684,6 +684,11 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .exp-detail th, .exp-detail td { border: 1px solid var(--border); padding: 2px 6px; text-align: left; }
 .exp-detail th { background: var(--bg-3); }
 .exp-detail .ed-find { font-size: 12px; margin: 3px 0; }
+.ed-actions { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.ed-actions .btn { font-size: 11px; }
+.ed-vs-out { font-size: 11px; }
+.ed-sug { color: #d9c4ff; border-left: 2px solid #a974ff; padding-left: 6px; }
+.vs-head { font-size: 11px; color: var(--text-dim); margin: 6px 0 3px; }
 .exp-detail .ed-art { font-size: 11.5px; color: var(--accent); cursor: pointer; margin: 2px 0; display: block; }
 .exp-detail .ed-art:hover { text-decoration: underline; }
 .ed-arts { display: flex; flex-wrap: wrap; gap: 6px; }
