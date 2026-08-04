@@ -1,7 +1,0 @@
-# Stage 1: incremental fine-tuning from stage_0's adapter with new data.
-training:
-  lora_rank: 16
-  learning_rate: 2.0e-05
-  epochs: 1
-  from_adapter: stage_0-adapter
-  data: [mcp_tool_use_incremental]
