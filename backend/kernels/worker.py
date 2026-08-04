@@ -6,7 +6,10 @@ Protocol (line-delimited JSON on stdin -> same on stdout):
   request:  {"id": str, "op": "run_code"|"list_variables"|"get_env"|"reset"|"ping",
              "code": str, "timeout": float}
   response: {"id": str, "ok": bool, "output": str, "error": str,
-             "figures": [b64png,...], "variables": {...}, "env": {...}}
+             "figures": [b64png,...], "variables": {...}, "env": {...},
+             "metrics": {name: value}}
+             (metrics collects values reported via report_metric() since the
+             previous request, cleared on reset)
 """
 
 from __future__ import annotations
@@ -146,6 +149,37 @@ except ImportError:
 
 # ----------------------------------------------------------------- kernel -----
 
+_METRICS: dict = {}
+
+
+def _report_metric(name, value, *, step=None):
+    """Structured metric reporting for experiments.
+
+    Inside kernel code, call ``report_metric("acc", 0.91)`` (or with a ``step``
+    for curves). Values must be real numbers/bools; everything else raises so a
+    mislabeled call fails loudly instead of silently polluting run metrics.
+    """
+    if isinstance(value, bool):
+        value = 1.0 if value else 0.0
+    if not isinstance(value, (int, float)):
+        raise TypeError(
+            f"report_metric value for {name!r} must be a number, got "
+            f"{type(value).__name__}")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("report_metric name must be a non-empty string")
+    key = str(name).strip()
+    if step is not None:
+        key = f"{key}[step={int(step)}]"
+    _METRICS[key] = float(value)
+    return None
+
+
+def _take_metrics() -> dict:
+    out = dict(_METRICS)
+    _METRICS.clear()
+    return out
+
+
 def _save_artifact_hint(**kwargs):
     raise RuntimeError(
         "save_artifact is an agent TOOL, not a Python function. Do not call it inside "
@@ -156,7 +190,8 @@ def _save_artifact_hint(**kwargs):
 
 def _base_ns() -> dict:
     return {"__name__": "__main__", "__builtins__": __builtins__,
-            "save_artifact": _save_artifact_hint}
+            "save_artifact": _save_artifact_hint,
+            "report_metric": _report_metric}
 
 
 def _compile(code: str):
@@ -211,7 +246,8 @@ def run_code(ns: dict, code: str, timeout: float) -> dict:
     if len(output) > 50_000:
         output = output[-50_000:] + "\n...[truncated]"
     return {"ok": ok, "output": output, "error": error,
-            "figures": _flush_figures(), "variables": _list_variables(ns)}
+            "figures": _flush_figures(), "variables": _list_variables(ns),
+            "metrics": _take_metrics()}
 
 
 def main() -> None:
@@ -236,6 +272,7 @@ def main() -> None:
             elif op == "reset":
                 ns.clear()
                 ns.update(_base_ns())
+                _METRICS.clear()
                 if plt is not None:
                     plt.close("all")
                 resp = {"ok": True, "variables": {}}

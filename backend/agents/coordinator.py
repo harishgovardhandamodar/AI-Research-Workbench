@@ -31,6 +31,10 @@ Working style:
   save function for that.
 - Use the save_artifact TOOL (a separate tool call, never inside the Python kernel)
   to persist important tables/summaries/data.
+- When the user asks to run/compare/optimise an experiment, FIRST call
+  create_experiment (hypothesis + goal metric/target + baseline config), then run
+  variants. Inside run_python code, call report_metric("name", value) for each
+  headline number so every run records structured, comparable metrics.
 - Use run_shell only when necessary; prefer the Python kernel. Shell commands that
   touch the network or are destructive will ask the user for permission.
 - Tools that come from external MCP servers are named like <server>__<tool> (e.g.
@@ -276,6 +280,10 @@ class Coordinator:
                         "result": _snippet(result, 300),
                     })
                     self._run_artifacts.extend(_artifact_ids(name, result))
+                    structured = getattr(self.ctx, "last_metrics", None) or {}
+                    if structured:
+                        self._run_metrics.update(structured)
+                        self.ctx.last_metrics = None
                     self._run_metrics.update(_extract_metrics(result))
                     messages.append({
                         "role": "tool",
@@ -312,6 +320,8 @@ class Coordinator:
             "tool_sequence": self._run_seq,
             "artifact_ids": self._run_artifacts,
             "metrics": self._run_metrics,
+            "experiment_id": int(self.ctx.experiment_id) if str(self.ctx.experiment_id).isdigit() else None,
+            "config": self.ctx.experiment_config,
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)

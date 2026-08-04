@@ -39,6 +39,9 @@ class ToolContext:
     workflow: "WorkflowTracker | None" = None
     message_id: str = ""
     run_id: str = ""
+    experiment_id: str = ""
+    experiment_config: dict | None = None
+    last_metrics: dict | None = None
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -161,6 +164,30 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "create_experiment",
+            "description": (
+                "Create a structured experiment: a family of runs grouped around one "
+                "research question with a hypothesis, optional goal metric/target, and "
+                "config variations. Call this BEFORE running the experiment so runs are "
+                "attached to it and can be compared across variants."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short experiment name, e.g. 'DP vs synthetic on income'"},
+                    "hypothesis": {"type": "string", "description": "One-sentence hypothesis the experiment tests"},
+                    "goal_metric": {"type": "string", "description": "Headline metric name, e.g. 'accuracy'"},
+                    "goal_target": {"type": "number", "description": "Target value for the goal metric"},
+                    "higher_better": {"type": "boolean", "description": "Whether larger goal_metric is better", "default": True},
+                    "config": {"type": "object", "description": "Baseline config (hyperparameters/parameters) for the first run"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "editor__list_files",
             "description": (
                 "List the files in this project's workspace (the folder the in-browser "
@@ -241,11 +268,15 @@ def get_tool_schemas() -> list[dict]:
 async def _run_python(ctx: ToolContext, code: str) -> str:
     env = await ctx.kernels.get_env()
     resp = await ctx.kernels.python.run_code(code)
+    ctx.last_metrics = resp.get("metrics") or {}
     parts = []
     if resp.get("output"):
         parts.append(resp["output"].rstrip())
     if resp.get("error"):
         parts.append(f"[error] {resp['error']}")
+    metrics = ctx.last_metrics
+    if metrics:
+        parts.append("[metrics] " + json.dumps(metrics))
     artifact_ids = []
     for i, fig in enumerate(resp.get("figures") or [], start=1):
         data = base64.b64decode(fig)
@@ -326,6 +357,32 @@ async def _save_artifact(ctx: ToolContext, name: str, description: str,
     if ctx.emit:
         await ctx.emit("artifact", {"artifact": art.to_dict()})
     return f"Saved artifact {art.id} ({kind}: {name})"
+
+
+async def _create_experiment(ctx: ToolContext, name: str, hypothesis: str = "",
+                             goal_metric: str = "", goal_target: float | None = None,
+                             higher_better: bool = True,
+                             config: dict | None = None) -> str:
+    name = (name or "").strip()
+    if not name:
+        return "[error] experiment name is required"
+    try:
+        eid = ctx.store.create_experiment(
+            name, hypothesis or "", goal_metric or "",
+            float(goal_target) if goal_target is not None else None, bool(higher_better))
+    except Exception as e:  # noqa: BLE001
+        return f"[error] could not create experiment: {e}"
+    ctx.experiment_id = str(eid)
+    ctx.experiment_config = dict(config or {})
+    line = (f"Experiment #{eid} created: {name!r} (runs will be attached to it).\n"
+            f"Hypothesis: {hypothesis or '(none)'}\n"
+            f"Goal: {goal_metric or '(none)'}"
+            + (f" target={goal_target}, higher_better={higher_better}" if goal_target is not None else ""))
+    if ctx.experiment_config:
+        line += "\nConfig: " + json.dumps(ctx.experiment_config)
+    line += ("\nUse report_metric('" + (goal_metric or "my_metric")
+             + "', value) inside run_python code so each run records its headline metric.")
+    return line
 
 
 async def _list_vars(ctx: ToolContext) -> str:
@@ -543,6 +600,10 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "list_kernel_variables": lambda: _list_vars(ctx),
         "run_notebook": lambda notebook, cells="all": _run_notebook(ctx, notebook, cells),
         "create_notebook": lambda name, code="": _create_notebook(ctx, name, code),
+        "create_experiment": lambda name, hypothesis="", goal_metric="",
+            goal_target=None, higher_better=True, config=None:
+            _create_experiment(ctx, name, hypothesis, goal_metric, goal_target,
+                               higher_better, config),
         "editor__list_files": lambda path=".": _editor_list_files(ctx, path),
         "editor__read_file": lambda path: _editor_read_file(ctx, path),
         "editor__edit_file": lambda path, old, new: _editor_edit_file(ctx, path, old, new),
