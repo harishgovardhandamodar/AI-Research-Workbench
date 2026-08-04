@@ -542,6 +542,10 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 }
 .exp-badge.fresh { color: #d29922; border-color: #d29922; }
 .exp-badge.det { color: #b98cff; border-color: #b98cff; }
+.exp-badge.ok { color: #4cd08d; border-color: #4cd08d; }
+.exp-badge.warn { color: #e06c6c; border-color: #e06c6c; }
+.exp-status { font-size: 10.5px; padding: 1px 3px; background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .exp-views { display: flex; gap: 6px; margin: 8px 0 6px; }
 .expview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; padding: 3px 10px; cursor: pointer; }
 .expview-btn.active { color: var(--text); border-color: #a974ff; background: rgba(169,116,255,.12); }

@@ -84,6 +84,25 @@ async def project_experiment(name: str, eid: int):
     return {"experiment": exp}
 
 
+EXPERIMENT_STATUSES = ("active", "completed", "cancelled")
+
+
+@router.patch("/api/projects/{name}/experiments/{eid}")
+async def update_project_experiment(name: str, eid: int, body: dict):
+    """Update an experiment's lifecycle status (active -> completed/cancelled)."""
+    store = get_runtime(name).store
+    exp = store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    status = (body.get("status") or "").strip()
+    if status not in EXPERIMENT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {', '.join(EXPERIMENT_STATUSES)}")
+    store.update_experiment_status(eid, status)
+    return {"experiment": store.get_experiment(eid)}
+
+
 @router.post("/api/projects/{name}/experiments/{eid}/link")
 async def link_run_to_experiment(name: str, eid: int, body: dict):
     """Attach an existing run to an experiment (optionally with its config)."""

@@ -186,6 +186,18 @@ class TestImproveLoop(unittest.IsolatedAsyncioTestCase):
         self.assertIn("not found", result["summary"])
         self.assertEqual(result["iterations"], [])
 
+    async def test_loop_refuses_closed_experiment(self):
+        eid = self.store.create_experiment("sweep", "h", "accuracy", 0.9, True)
+        self.store.update_experiment_status(eid, "completed")
+        coordinator = self._coordinator(FakeLLM())
+        result = await run_improve_loop(
+            self.store, coordinator, self._build_llm_messages, None,
+            eid, "Improve it.", emit=self._emit)
+        self.assertEqual(result["iterations"], [])
+        self.assertFalse(result["goal_reached"])
+        self.assertIn("completed", result["summary"])
+        self.assertIn("reopen", result["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()
