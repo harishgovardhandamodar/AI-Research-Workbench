@@ -314,6 +314,12 @@
           <datalist id="mgmt-repo-list"></datalist>
           <button id="mgmt-detect" class="btn subtle small" type="button">Detect</button>
         </div>
+        <label>GitHub repo (owner/repo) for change management — pushes auto-commits there</label>
+        <div class="mgmt-row">
+          <input id="cfg-mgmt-github" placeholder="harishgovardhandamodar/personal-experiments" autocomplete="off">
+          <button id="mgmt-link" class="btn subtle small" type="button">Link</button>
+          <span id="mgmt-gh-status" class="muted kaggle-status"></span>
+        </div>
         <label class="check"><input id="cfg-mgmt-autocommit" type="checkbox" checked> Auto-commit experiment artifacts on each experiment run</label>
         <label class="check"><input id="cfg-mgmt-autopush" type="checkbox"> Auto-push after commit (uses SSH/credentials)</label>
       </div>
@@ -430,7 +436,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v39";
+  window.FOX_VER = "v40";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

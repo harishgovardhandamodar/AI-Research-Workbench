@@ -126,6 +126,41 @@ class ExperimentRepoTests(unittest.TestCase):
         self.assertIsInstance(repos, list)
         self.assertNotIn(str(self.mgmt), [r["path"] for r in repos])
 
+    def test_github_remote_url_formatting(self):
+        CONFIG["management"]["github_repo"] = "harishg/datasets"
+        self.assertEqual(er.github_remote_url(), "git@github.com:harishg/datasets.git")
+        CONFIG["management"]["github_repo"] = "https://github.com/harishg/datasets"
+        self.assertEqual(er.github_remote_url(), "git@github.com:harishg/datasets.git")
+        CONFIG["management"]["github_repo"] = "git@github.com:harishg/datasets.git"
+        self.assertEqual(er.github_remote_url(), "git@github.com:harishg/datasets.git")
+        CONFIG["management"]["github_repo"] = "file:///tmp/bare.git"
+        self.assertEqual(er.github_remote_url(), "file:///tmp/bare.git")
+        CONFIG["management"]["github_repo"] = ""
+        self.assertIsNone(er.github_remote_url())
+
+    def test_ensure_remote_adds_and_updates_origin(self):
+        CONFIG["management"]["github_repo"] = "harishg/datasets"
+        ok, msg = er.ensure_remote(self.mgmt)
+        self.assertTrue(ok, msg)
+        self.assertEqual(er.current_remote(self.mgmt), "git@github.com:harishg/datasets.git")
+        # Changing the github repo updates origin.
+        CONFIG["management"]["github_repo"] = "harishg/other"
+        ok, _ = er.ensure_remote(self.mgmt)
+        self.assertTrue(ok)
+        self.assertEqual(er.current_remote(self.mgmt), "git@github.com:harishg/other.git")
+        # No github repo configured -> leaves origin alone.
+        CONFIG["management"]["github_repo"] = ""
+        ok, _ = er.ensure_remote(self.mgmt)
+        self.assertTrue(ok)
+        self.assertEqual(er.current_remote(self.mgmt), "git@github.com:harishg/other.git")
+
+    def test_autocommit_sets_origin_when_github_repo_configured(self):
+        CONFIG["management"]["github_repo"] = "harishg/datasets"
+        run = self.store.get_run(self.rid)
+        res = er.autocommit(self.rt, run)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(er.current_remote(self.mgmt), "git@github.com:harishg/datasets.git")
+
 
 if __name__ == "__main__":
     unittest.main()

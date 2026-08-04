@@ -788,6 +788,7 @@ function openSettings() {
   $("cfg-kaggle-key").value = kg.key || "";
   const mgmt = c.management || {};
   $("cfg-mgmt-repo").value = mgmt.repo_dir || "";
+  $("cfg-mgmt-github").value = mgmt.github_repo || "";
   $("cfg-mgmt-autocommit").checked = mgmt.auto_commit !== false;
   $("cfg-mgmt-autopush").checked = !!mgmt.auto_push;
   const dl = $("model-list");
@@ -861,6 +862,7 @@ async function saveSettings() {
     },
     management: {
       repo_dir: $("cfg-mgmt-repo").value.trim(),
+      github_repo: $("cfg-mgmt-github").value.trim(),
       auto_commit: $("cfg-mgmt-autocommit").checked,
       auto_push: $("cfg-mgmt-autopush").checked,
     },
@@ -1599,6 +1601,32 @@ $("mgmt-detect").addEventListener("click", () => {
   const pick = dl.options[0].value;
   $("cfg-mgmt-repo").value = pick;
   toast("Set to " + pick);
+});
+$("mgmt-link").addEventListener("click", async () => {
+  const gh = ($("cfg-mgmt-github").value || "").trim();
+  if (!gh) { toast("Enter a GitHub repo (owner/repo).", 4000); return; }
+  const status = $("mgmt-gh-status");
+  status.textContent = "Linking…";
+  try {
+    const r = await api("/api/management/link", {
+      method: "POST",
+      body: JSON.stringify({ github_repo: gh }),
+    });
+    if (r.ok) {
+      status.textContent = (r.remote ? "origin → " + r.remote : "") + (r.message ? " · " + r.message : "");
+      status.classList.remove("kaggle-err");
+      status.classList.add("kaggle-ok");
+      toast("Linked GitHub repo — auto-commits will be pushed there.");
+    } else {
+      status.textContent = r.message || "link failed";
+      status.classList.remove("kaggle-ok");
+      status.classList.add("kaggle-err");
+    }
+  } catch (e) {
+    status.textContent = "Failed to link: " + e.message;
+    status.classList.remove("kaggle-ok");
+    status.classList.add("kaggle-err");
+  }
 });
 
 $("mcp-add-btn").addEventListener("click", () => $("mcp-add-form").classList.remove("hidden"));

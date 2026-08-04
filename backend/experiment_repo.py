@@ -44,6 +44,51 @@ def autopush_enabled() -> bool:
     return bool((CONFIG.get("management") or {}).get("auto_push", False))
 
 
+def github_repo_name() -> str:
+    return ((CONFIG.get("management") or {}).get("github_repo") or "").strip()
+
+
+def github_remote_url() -> str | None:
+    """Remote URL for the configured GitHub repo.
+
+    Accepts 'owner/repo' (becomes git@github.com:owner/repo.git) or a full URL
+    (https://…, http://…, git@…, file://…). None when not configured."""
+    gh = github_repo_name().rstrip("/")
+    if not gh:
+        return None
+    for prefix in ("https://github.com/", "http://github.com/", "github.com/"):
+        if gh.startswith(prefix):
+            gh = gh[len(prefix):]
+            break
+    if gh.startswith("git@") or "://" in gh:
+        return gh
+    gh = gh.removesuffix(".git")
+    return f"git@github.com:{gh}.git"
+
+
+def current_remote(repo: Path) -> str | None:
+    code, out = _git(repo, "remote", "get-url", "origin")
+    return out.strip() if code == 0 else None
+
+
+def ensure_remote(repo: Path) -> tuple[bool, str]:
+    """Point the management repo's `origin` at the configured GitHub repo.
+
+    No-op when no GitHub repo is configured; adds or updates `origin` otherwise.
+    Returns (ok, message)."""
+    url = github_remote_url()
+    if not url:
+        return True, "no github repo configured"
+    existing = current_remote(repo)
+    if existing == url:
+        return True, f"origin already -> {url}"
+    code, out = _git(repo, "remote", "set-url", "origin", url) if existing else \
+        _git(repo, "remote", "add", "origin", url)
+    if code != 0:
+        return False, f"could not set origin: {out}"
+    return True, f"origin -> {url}"
+
+
 def sibling_git_repos() -> list[dict]:
     """Discover sibling git repos (next to the workbench repo) to offer in the
     settings tab as the experiment management repo."""
@@ -195,6 +240,12 @@ def autocommit(rt, run: dict, experiments: list[dict] | None = None,
             return {"ok": False, "message": f"git commit failed: {out}"}
         if "nothing to commit" in out:
             return {"ok": True, "message": "no changes to commit"}
+        # Link the configured GitHub repo as `origin` (change management) and,
+        # when enabled, push the auto-commit there.
+        if github_remote_url():
+            okr, msgr = ensure_remote(repo)
+            if not okr:
+                return {"ok": False, "message": msgr}
         if autopush_enabled():
             code, out = _git(repo, "push")
             if code != 0:
@@ -225,7 +276,11 @@ async def maybe_autocommit(rt, run: dict) -> None:
         # worker thread so it can't block the chat.
         experiments = _experiments_payload(rt)
         message = _commit_message(rt, run)
-        await asyncio.to_thread(autocommit, rt, run, experiments, message)
+        res = await asyncio.to_thread(autocommit, rt, run, experiments, message)
+        if not res.get("ok"):
+            import sys
+            print(f"[experiment-repo] auto-commit failed for {rt.name}: "
+                  f"{res.get('message')}", file=sys.stderr)
     except Exception:  # noqa: BLE001
         pass
     finally:

@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "mcp": {"servers": DEFAULT_SERVERS},
     "editor": editor_cfg.editor_config(),
     "kaggle": {"username": "", "key": ""},
-    "management": {"repo_dir": "", "auto_commit": True, "auto_push": False},
+    "management": {"repo_dir": "", "github_repo": "", "auto_commit": True, "auto_push": False},
 }
 
 

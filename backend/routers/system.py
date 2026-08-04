@@ -41,7 +41,8 @@ async def set_config(body: dict):
                                  if k in ("username", "key")})
     if "management" in cfg:
         CONFIG["management"].update({k: v for k, v in cfg["management"].items()
-                                     if k in ("repo_dir", "auto_commit", "auto_push")})
+                                     if k in ("repo_dir", "github_repo",
+                                              "auto_commit", "auto_push")})
     if "mcp" in cfg and "servers" in cfg["mcp"]:
         CONFIG["mcp"]["servers"] = cfg["mcp"]["servers"]
         await rebuild_mcp()
@@ -61,6 +62,37 @@ async def management_repos():
     from ..experiment_repo import sibling_git_repos
 
     return {"repos": sibling_git_repos()}
+
+
+@router.get("/api/management/status")
+async def management_status():
+    """Current experiment-management wiring: local repo, GitHub repo, origin."""
+    from ..experiment_repo import current_remote, management_repo_dir
+
+    repo = management_repo_dir()
+    return {
+        "repo_dir": str(repo) if repo else "",
+        "github_repo": (CONFIG.get("management") or {}).get("github_repo", ""),
+        "remote": current_remote(repo) if repo is not None else None,
+    }
+
+
+@router.post("/api/management/link")
+async def management_link(body: dict):
+    """Link the experiment management repo to a GitHub repo (owner/repo or URL):
+    saves it and points the local repo's `origin` at it."""
+    from ..experiment_repo import (ensure_remote, github_remote_url,
+                                   management_repo_dir)
+
+    gh = (body.get("github_repo") or "").strip()
+    CONFIG["management"]["github_repo"] = gh
+    save_config(CONFIG)
+    repo = management_repo_dir()
+    if repo is None:
+        return {"ok": False, "remote": None,
+                "message": "set the management repo path (Settings) first"}
+    ok, msg = ensure_remote(repo)
+    return {"ok": ok, "message": msg, "remote": github_remote_url()}
 
 
 @router.get("/api/editor")
