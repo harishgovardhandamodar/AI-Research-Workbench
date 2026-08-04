@@ -1608,7 +1608,12 @@ const graphPan = attachGraphPan(graphWrap, "graph-svg-wrap", () => $("graph-svg"
 attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520);
 
 function flatMode() {
-  try { return /[?&]flat=1/.test(window.location.search || ""); } catch (e) { return false; }
+  // Flat (plain bubbles) is the default; grouped sets are opt-in via ?sets=1.
+  try {
+    const q = window.location.search || "";
+    if (/[?&]sets=1/.test(q)) return false;
+    return true;
+  } catch (e) { return true; }
 }
 
 // Plain per-message rendering (no grouping) — used with ?flat=1 as a fallback.
