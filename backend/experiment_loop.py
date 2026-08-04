@@ -60,6 +60,11 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     if exp is None:
         return {"summary": f"experiment #{experiment_id} not found",
                 "iterations": [], "goal_reached": False, "best": None}
+    if exp.get("status", "active") != "active":
+        return {"summary": (f"experiment {exp['name']!r} is {exp.get('status')} "
+                            "— reopen it before running the improve loop"),
+                "iterations": [], "goal_reached": False, "best": None,
+                "stopped_reason": f"experiment {exp.get('status')}"}
 
     iterations = max(1, min(int(iterations or 3), max_iterations))
     goal_metric = exp.get("goal_metric") or ""

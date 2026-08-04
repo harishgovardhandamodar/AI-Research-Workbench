@@ -1686,12 +1686,20 @@ function renderExpList() {
     if (e.plan) {
       planHtml = `<details class="exp-plan"><summary>Plan</summary><div class="exp-plan-body">${esc(e.plan)}</div></details>`;
     }
+    const status = e.status || "active";
+    const active = status === "active";
+    const badgeCls = active ? "det" : (status === "completed" ? "ok" : "warn");
     card.innerHTML = `<div class="exp-card-head">
         <b class="exp-card-name">${esc(e.name)}</b>
-        <span class="exp-badge det">${esc(e.status || "active")}</span>
+        <span class="exp-badge ${badgeCls}">${esc(status)}</span>
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
         <span class="spacer"></span>
-        <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}">Improve</button>
+        <select class="exp-status" data-id="${e.id}" title="lifecycle status">
+          <option value="active"${active ? " selected" : ""}>active</option>
+          <option value="completed"${status === "completed" ? " selected" : ""}>completed</option>
+          <option value="cancelled"${status === "cancelled" ? " selected" : ""}>cancelled</option>
+        </select>
+        <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}"${active ? "" : " disabled title=\"reopen the experiment first\""}>Improve</button>
       </div>
       ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
       ${goal}
@@ -1703,6 +1711,17 @@ function renderExpList() {
     b.addEventListener("click", () => {
       sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
                "improve_loop", { experiment_id: b.dataset.id });
+    }));
+  el.querySelectorAll(".exp-status").forEach((sel) =>
+    sel.addEventListener("change", async () => {
+      try {
+        await api(`/api/projects/${state.project}/experiments/${sel.dataset.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: sel.value }),
+        });
+        toast(`Experiment #${sel.dataset.id} → ${sel.value}.`);
+        await loadExperiments();
+      } catch (e) { toast("Failed to update experiment: " + e.message); }
     }));
 }
 
