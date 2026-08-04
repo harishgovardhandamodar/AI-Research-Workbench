@@ -13,6 +13,9 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
   code + environment snapshot, stored in SQLite + filesystem
 - **Background reviewer agent** that checks claims against the execution history
 - **Experiment Tracking** - Artifacts and experiments tracked as knowledge graphs helps in tracking metrices between run ![alt text](image.png) ![alt text](image-1.png) ![alt text](image-2.png)
+- **Experiment source control** — version experiments, runs and artifacts in a
+  sibling git repo (e.g. `personal-experiments`) with auto-commit/push to GitHub;
+  see [HOW-to-USE.md → Experiment source control](HOW-to-USE.md#experiment-source-control-management-repo)
 - **Permission model** — shell commands ask before running; network is deny-by-default
 - **Project workspaces** — SQLite-backed sessions, per-project kernels
 - **Figure annotation / regeneration** — "remove the gridlines" regenerates the figure

@@ -95,6 +95,7 @@ Click **Settings** (top-right) and configure:
 | **Temperature** | Sampling temperature for the agent. |
 | **Run background reviewer after each turn** | Enables the reviewer that checks claims against execution history. |
 | **MCP servers** | Model Context Protocol servers (see [Agent dashboard](#agent-dashboard-and-mcp-servers)). |
+| **Experiment management repo** | Version experiments in a sibling git repo and push to GitHub (see [Experiment source control](#experiment-source-control-management-repo)). |
 
 Use **Test connection** before saving. Settings persist in
 `workbench/config.json`.
@@ -310,6 +311,67 @@ goal is reached, the reviewer has no further suggestions, or the budget is
 spent. A summary table reports per-iteration metrics and the applied
 suggestion.
 
+### Experiment source control (management repo)
+
+Every project's experiments, runs and artifacts can be versioned in a **sibling
+git repo** (e.g. `../personal-experiments`) and pushed to GitHub — your
+experiment history becomes a real source-controlled repo, not just the local DB.
+
+**Setup** (Settings → **Experiment management repo**):
+
+1. **Repo path** — a local git worktree to use. Click **Detect** to list the
+   sibling repos next to the workbench and pick one, or type a path (it is
+   `git init`-ed for you if it doesn't exist).
+2. **GitHub repo (owner/repo)** — the remote for change management, e.g.
+   `yourname/personal-experiments`. Click **Link** to point the repo's `origin`
+   at it. Both `owner/repo` and `https://github.com/…` are accepted; `owner/repo`
+   becomes `git@github.com:owner/repo.git` so your SSH key is used.
+3. **Auto-commit on each experiment run** — snapshot + commit after every
+   experiment run.
+4. **Auto-push after commit** — also push to the GitHub remote.
+
+**What gets committed** — under `<repo>/fox/<project>/`:
+
+- `experiments.json` — all experiments with their runs, metrics, configs, reviews
+- `runs/<id>.json` — per-run records
+- `artifacts/` — figures / tables / reports produced by runs
+- `data/` — imported datasets (e.g. Kaggle imports)
+
+Only the `fox/` subtree is staged, so unrelated changes already in the repo are
+never swept into an experiment commit.
+
+**Manual commit / push** — experiment, workflow, notebook and report result
+messages in the chat show **Commit** and **Push** buttons; click them to
+snapshot + commit, or push, the experiment repo on demand (no need to wait for
+auto-commit). A status line next to the buttons reports the outcome.
+
+**Docker:** the container can't see sibling repos or SSH keys by default. Add a
+`docker-compose.override.yml` (gitignored, local-only) that mounts the repo and
+key, and sets git's identity/`safe.directory`:
+
+```yaml
+services:
+  fox:
+    volumes:
+      - /home/you/WorkBook/personal-experiments:/app/mgmt-repo
+      - /home/you/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+    environment:
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new -i /root/.ssh/id_ed25519"
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: "safe.directory"
+      GIT_CONFIG_VALUE_0: "*"
+      GIT_AUTHOR_NAME: "Your Name"
+      GIT_AUTHOR_EMAIL: "you@example.com"
+      GIT_COMMITTER_NAME: "Your Name"
+      GIT_COMMITTER_EMAIL: "you@example.com"
+```
+
+Then set **Repo path** to the in-container mount, `/app/mgmt-repo`, in Settings.
+
+> **Prerequisites**: a GitHub account with SSH access configured (`ssh -T
+> git@github.com` should greet you), and the sibling repo either created locally
+> (`git init`) or cloned from GitHub — commit/push needs a valid git worktree.
+
 ---
 
 ## Agent dashboard and MCP servers
@@ -421,7 +483,26 @@ Environment variables (used by `docker-compose.yml` and the app):
 | `CODE_SERVER_AUTH` / `CODE_SERVER_PASSWORD` | — | Require a password for the editor. |
 
 Runtime settings (base URL, tool URL, model, temperature, reviewer toggle, MCP
-servers) live in `workbench/config.json`.
+servers) live in `workbench/config.json`. Experiment source control is
+configured under `management`:
+
+| Key | Meaning |
+|-----|---------|
+| `management.repo_dir` | Path to the sibling experiment repo (local git worktree). |
+| `management.github_repo` | GitHub remote for change management (`owner/repo` or full URL). |
+| `management.auto_commit` | Auto-commit experiment artifacts after each run (default `true`). |
+| `management.auto_push` | Auto-push the commit to GitHub (default `false`). |
+
+Example:
+
+```json
+"management": {
+  "repo_dir": "/home/you/WorkBook/personal-experiments",
+  "github_repo": "yourname/personal-experiments",
+  "auto_commit": true,
+  "auto_push": true
+}
+```
 
 ---
 
@@ -438,6 +519,11 @@ servers) live in `workbench/config.json`.
   (libraries/variables) inside each snippet, or prefer `run_python`.
 - **Reviewer too noisy** — disable *Run background reviewer after each turn* in
   **Settings**.
+- **Experiment auto-commit/push does nothing** — confirm a **Repo path** is set
+  under Settings → Experiment management repo; with Docker, verify
+  `docker-compose.override.yml` mounts the repo + SSH key, then set **Repo path**
+  to the in-container mount (`/app/mgmt-repo`). Check the server log for
+  `[experiment-repo] auto-commit failed …` messages.
 - **Nothing leaves the machine** — data stays local unless you approve a network
   `run_shell` command.
 
