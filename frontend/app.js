@@ -281,7 +281,7 @@ async function copyText(text) {
   ta.remove();
 }
 
-function msgContainer(role, tags, ts) {
+function msgContainer(role, tags, ts, target) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const label = document.createElement("div");
@@ -296,12 +296,70 @@ function msgContainer(role, tags, ts) {
   const body = document.createElement("div");
   body.className = "msg-body";
   div.appendChild(body);
-  $("messages").appendChild(div);
+  (target || $("messages")).appendChild(div);
   return { div, body };
 }
 
+/* ---- conversation sets: group request + steps + result, collapsible ---- */
+
+function setTitleFor(userMsg) {
+  const meta = (userMsg && userMsg.meta) || {};
+  const exp = expOf(meta.experiment_id);
+  const title = exp ? exp.name
+    : (userMsg && userMsg.content ? String(userMsg.content).replace(/\s+/g, " ").slice(0, 60) : "message");
+  const it = /iteration\s+(\d+)/i.exec((meta.tags || []).join(" "));
+  return {
+    title,
+    iteration: it ? it[1] : "",
+    expId: meta.experiment_id != null ? meta.experiment_id : null,
+    ts: userMsg ? userMsg.created_at : null,
+  };
+}
+
+function msgSetCreate(userMsg, open) {
+  const wrap = $("messages");
+  const div = document.createElement("div");
+  div.className = "msg-set" + (open ? "" : " collapsed");
+  if (userMsg && userMsg.id != null) div.dataset.userId = userMsg.id;
+  const head = document.createElement("button");
+  head.className = "mset-head";
+  head.type = "button";
+  head.title = "Expand / collapse";
+  const body = document.createElement("div");
+  body.className = "mset-body";
+  div.appendChild(head);
+  div.appendChild(body);
+  wrap.appendChild(div);
+  head.addEventListener("click", () => div.classList.toggle("collapsed"));
+  const update = () => {
+    const info = setTitleFor(userMsg);
+    const it = info.iteration ? " · iteration " + info.iteration : "";
+    const dt = info.ts ? " · " + new Date(info.ts * 1000).toLocaleString() : "";
+    head.innerHTML = `<span class="caret">▸</span>`
+      + `<span class="mset-title">${esc(info.title)}</span>`
+      + (it ? `<span class="mset-iter">${esc(it)}</span>` : "")
+      + `<span class="spacer"></span>`
+      + `<span class="mset-time">${esc(dt)}</span>`;
+  };
+  update();
+  return { div, body, update };
+}
+
+function expandSetOf(el) {
+  const set = el.closest(".msg-set");
+  if (set) set.classList.remove("collapsed");
+}
+
 function renderUserMessage(content, tags, ts, expId) {
-  const el = msgContainer("user", tags, ts);
+  const userMsg = {
+    content: content || "",
+    tags: tags || [],
+    created_at: ts,
+    meta: { tags: tags || [], experiment_id: expId },
+  };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const el = msgContainer("user", tags, ts, set.body);
   el.body.textContent = content;
   tagMessageExperiment(el, expId);
   scrollBottom();
@@ -309,7 +367,8 @@ function renderUserMessage(content, tags, ts, expId) {
 
 function ensureAssistant(tags) {
   if (curAssistantEl && document.body.contains(curAssistantEl.div)) return curAssistantEl;
-  const el = msgContainer("assistant", tags);
+  if (!state._currentSet) state._currentSet = msgSetCreate(null, true);
+  const el = msgContainer("assistant", tags, null, state._currentSet.body);
   curAssistantEl = el;
   setConn("busy");
   state.streaming = true;
@@ -985,6 +1044,7 @@ async function switchProject(name) {
   state.artifacts = [];
   $("messages").innerHTML = "";
   curAssistantEl = null;
+  state._currentSet = null;
   state.expDetail = {};
   state.expRanking = {};
   state.activeExperiment = null;
@@ -1512,36 +1572,46 @@ function renderMessages(msgs) {
   wrap.innerHTML = "";
   let lastDay = "";
   let turnUser = "";
+  let currentSet = null;
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
-    const day = fmtDay(m.created_at);
-    if (day && day !== lastDay) {
-      const sep = document.createElement("div");
-      sep.className = "day-sep";
-      sep.textContent = day;
-      wrap.appendChild(sep);
-      lastDay = day;
-    }
     const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const el = msgContainer("user", mtags, m.created_at);
+      const hasLaterUser = msgs.slice(i + 1).some((x) => x.role === "user");
+      const day = fmtDay(m.created_at);
+      if (day && day !== lastDay) {
+        const sep = document.createElement("div");
+        sep.className = "day-sep";
+        sep.textContent = day;
+        wrap.appendChild(sep);
+        lastDay = day;
+      }
+      currentSet = msgSetCreate(m, !hasLaterUser);
+      const el = msgContainer("user", mtags, m.created_at, currentSet.body);
       el.body.textContent = m.content;
       tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       turnUser = m.id;
-    } else if (m.role === "assistant") {
-      const el = msgContainer("assistant", mtags, m.created_at);
+      continue;
+    }
+    if (!currentSet) {
+      // Assistant/tool content before any user message: open an implicit set.
+      currentSet = msgSetCreate(null, true);
+    }
+    if (m.role === "assistant") {
+      // Drop empty bubbles (intermediate tool-call rows carry no text; the
+      // tool cards below represent the steps).
+      if (!(m.content || "").trim()) continue;
+      const el = msgContainer("assistant", mtags, m.created_at, currentSet.body);
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
       tagMessageExperiment(el, m.meta && m.meta.experiment_id);
-      // Re-attach figures produced during this turn (artifacts are linked to the
-      // turn's user message id) to the final assistant reply of the turn, so
-      // charts survive refreshState() re-renders after execution.
+      // Re-attach figures produced during this turn to the final assistant
+      // reply of the turn, so charts survive refreshState() re-renders.
       const next = msgs[i + 1];
       const isFinal = !next || next.role === "user";
       if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
     } else if (m.role === "tool") {
-      // tool results persisted; rendered as compact card
       const meta = m.meta || {};
       const card = document.createElement("div");
       card.className = "toolcard";
@@ -1552,7 +1622,7 @@ function renderMessages(msgs) {
         </div>
         <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
       card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
-      wrap.appendChild(card);
+      currentSet.body.appendChild(card);
     }
   }
   scrollBottom();
@@ -2062,6 +2132,7 @@ function jumpToExpMessage(eid, runId) {
     return;
   }
   const el = targets[targets.length - 1];
+  expandSetOf(el);
   el.scrollIntoView({ behavior: "smooth", block: "start" });
   el.classList.add("exp-flash");
   setTimeout(() => el.classList.remove("exp-flash"), 1600);
@@ -2085,6 +2156,7 @@ function jumpExpMessage(dir) {
     }
   }
   pick.scrollIntoView({ behavior: "smooth", block: "start" });
+  expandSetOf(pick);
   pick.classList.add("exp-flash");
   setTimeout(() => pick.classList.remove("exp-flash"), 1600);
 }

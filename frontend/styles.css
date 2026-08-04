@@ -220,6 +220,23 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .quick-actions .quick:hover { opacity: 1; border-color: var(--accent); }
 
 /* ---------- messages ---------- */
+.msg-set {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-2); overflow: hidden;
+}
+.mset-head {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; background: var(--bg-3); border: none; cursor: pointer;
+  font-size: 12px; color: var(--text); text-align: left; font: inherit;
+}
+.mset-head:hover { background: #262030; }
+.mset-head .caret { transition: transform .15s; color: var(--text-dim); }
+.msg-set.collapsed .mset-head .caret { transform: rotate(-90deg); }
+.mset-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mset-iter { color: var(--accent-2); font-size: 11px; white-space: nowrap; }
+.mset-time { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+.mset-body { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.msg-set.collapsed .mset-body { display: none; }
 .msg { max-width: 78%; display: flex; flex-direction: column; gap: 6px; }
 .msg.user { align-self: flex-end; }
 .msg.assistant { align-self: flex-start; width: 92%; }
