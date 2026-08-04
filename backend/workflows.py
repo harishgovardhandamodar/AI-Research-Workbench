@@ -53,6 +53,29 @@ STAGE_BY_TOOL: dict[str, str] = {
 RUN_TOOLS = {"run_python", "run_notebook", "run_shell"}
 
 
+def improve_stages(iterations: int) -> list[dict]:
+    """Stages for the agentic improve loop: one per bounded iteration."""
+    return [{"id": f"iter{i}", "label": f"Iteration {i}"}
+            for i in range(1, max(1, int(iterations)) + 1)]
+
+
+# Privacy peer-exploitation / red-team / DP-robustness pipeline.
+PRIVACY_STAGES: list[dict] = [
+    {"id": "stage1", "label": "Peer-in-distribution exploitation"},
+    {"id": "stage2", "label": "Corner cases / red team"},
+    {"id": "stage3", "label": "Differential-privacy robustness"},
+    {"id": "report", "label": "Report & artifacts"},
+]
+
+# Notebook execution (cell-level progress).
+def notebook_stages(n_cells: int) -> list[dict]:
+    return [{"id": f"cell{i}", "label": f"Cell {i}"} for i in range(1, max(1, n_cells) + 1)]
+
+
+def generic_stage(label: str = "Working") -> list[dict]:
+    return [{"id": "working", "label": label}]
+
+
 class WorkflowTracker:
     """Tracks one pipeline run per project, broadcasting every change."""
 
@@ -178,22 +201,35 @@ class WorkflowTracker:
             if name.startswith("arxiv__"):
                 await self.start()  # begin/reset the arXiv pipeline
             await self.update_stage(stage, "running", message=f"{name} …")
-        elif name in RUN_TOOLS and self._stages:
-            # A multi-turn arXiv replication spans several turns; an earlier turn's
-            # finish() left the pipeline "done". Follow-up turns that keep running
-            # the experiment (finetuning, extra runs, comparisons) resume it so the
-            # "run" stage shows live progress instead of staying hidden/queued.
+            return
+        if name in RUN_TOOLS and self._stages:
+            # A dedicated pipeline (arXiv / improve / privacy) is active: feed the
+            # matching stage so it shows live progress, and resume a finished
+            # pipeline when a follow-up turn keeps running code.
             if self._status != "running":
                 self._status = "running"
                 self._updated = time.time()
-            await self.update_stage("run", "running", message=f"{name} …")
+            active = "run" if any(s["id"] == "run" for s in self._stages) else \
+                ("working" if any(s["id"] == "working" for s in self._stages) else None)
+            if active:
+                await self.update_stage(active, "running", message=f"{name} …")
+            return
+        if name in RUN_TOOLS and self._status != "running":
+            # Generic agent activity: start a lightweight live workflow so the
+            # indicator reflects every pipeline (not just arXiv/improve/privacy).
+            await self.start(title="Agent workflow", stages=generic_stage())
+        if name in RUN_TOOLS:
+            await self.update_stage("working", "running", message=f"{name} …")
 
     async def on_tool_end(self, name: str, ok: bool) -> None:
         stage = STAGE_BY_TOOL.get(name)
         if stage:
             await self.update_stage(stage, "done" if ok else "failed")
         elif name in RUN_TOOLS and self._stages:
-            await self.update_stage("run", "done" if ok else "failed")
+            active = "run" if any(s["id"] == "run" for s in self._stages) else \
+                ("working" if any(s["id"] == "working" for s in self._stages) else None)
+            if active:
+                await self.update_stage(active, "done" if ok else "failed")
 
     async def finish(self) -> None:
         """Called when the agent turn ends: freeze the pipeline as done/failed."""

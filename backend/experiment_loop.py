@@ -48,12 +48,14 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                            experiment_id: int, prompt: str,
                            emit: _NoopEmit | None = None,
                            iterations: int | None = None,
-                           max_iterations: int = LOOP_MAX_ITERATIONS) -> dict:
+                           max_iterations: int = LOOP_MAX_ITERATIONS,
+                           workflow=None) -> dict:
     """Run a bounded improve loop for an experiment.
 
     Returns {"summary", "iterations": [...], "goal_reached": bool, "best": value}.
     Each iteration entry carries {iteration, prompt, run_id, metrics,
-    suggestion, goal_metric_value}.
+    suggestion, goal_metric_value}. When `workflow` (a WorkflowTracker) is given,
+    per-iteration progress is pushed to the chat's workflow panel.
     """
     emit = emit or _noop_emit
     exp = store.get_experiment(experiment_id)
@@ -71,6 +73,12 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     goal_target = exp.get("goal_target")
     higher = bool(exp.get("higher_better", True))
 
+    if workflow is not None:
+        from .workflows import improve_stages
+
+        await workflow.start(title=f"Improve {exp['name']}",
+                             stages=improve_stages(iterations))
+
     runs_all = store.experiment_runs(experiment_id)
     best_val, best_id = best_metric(runs_all, goal_metric, higher) if goal_metric else (None, None)
     current_prompt = (prompt or "").strip() or f"Improve the experiment {exp['name']!r}."
@@ -83,6 +91,9 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     coordinator.ctx.experiment_id = str(experiment_id)
 
     for i in range(1, iterations + 1):
+        if workflow is not None:
+            await workflow.update_stage(f"iter{i}", "running",
+                                        message=f"Improve loop — iteration {i}/{iterations}")
         mid = store.add_message("user", current_prompt,
                                 {"tags": ["improve loop", f"iteration {i}"],
                                  "experiment_id": experiment_id})
@@ -98,8 +109,14 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
         except Exception as e:  # noqa: BLE001
             stopped_reason = f"iteration {i} failed: {type(e).__name__}: {e}"
             await emit("notice", {"message": f"Improve loop {stopped_reason}"})
+            if workflow is not None:
+                await workflow.update_stage(f"iter{i}", "failed",
+                                            message=stopped_reason)
             break
         text = result.get("text", "")
+        if workflow is not None:
+            await workflow.update_stage(f"iter{i}", "done",
+                                        message=f"Iteration {i} complete")
         amid = store.add_message("assistant", text,
                                  {"tags": ["improve loop"],
                                   "experiment_id": experiment_id})
@@ -170,6 +187,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     await emit("assistant_message", {"id": -1, "content": summary,
                                      "tags": ["improve loop summary"],
                                      "experiment_id": experiment_id})
+    if workflow is not None:
+        await workflow.finish()
     return {"summary": summary, "iterations": history,
             "goal_reached": goal_reached, "best": best_val,
             "stopped_reason": stopped_reason}

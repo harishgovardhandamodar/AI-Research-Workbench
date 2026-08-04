@@ -510,7 +510,11 @@ function fmtDt(iso) {
 
 function scrollBottom() {
   const m = $("messages");
-  m.scrollTop = m.scrollHeight;
+  if (!m) return;
+  // Only auto-scroll when the user is already near the bottom, so they can read
+  // earlier messages while a long process streams without being yanked down.
+  const nearBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 120;
+  if (nearBottom) m.scrollTop = m.scrollHeight;
 }
 
 /* -------- workflow progress panel (arXiv ingestion & replication) -------- */
@@ -528,26 +532,13 @@ function renderWorkflow(snap) {
   state.workflow = snap;
   const panel = $("workflow-panel");
   const stages = snap.stages || [];
-  panel.classList.remove("hidden");
-  if (!stages.length || snap.status === "idle") {
-    $("workflow-title").textContent = "Workflow";
-    $("workflow-state").textContent = "idle";
-    $("workflow-state").className = "wf-state idle";
-    $("workflow-status").textContent = "No pipeline is running — start one by asking the agent (e.g. ingest & replicate an arXiv paper, or run the privacy workflow).";
-    $("workflow-fill").style.width = "0%";
-    const wrap = $("workflow-stages");
-    wrap.innerHTML = "";
-    const row = document.createElement("div");
-    row.className = "wf-stage pending";
-    row.innerHTML = `<span class="wf-ico">○</span>
-      <div class="wf-stage-body">
-        <div class="wf-label">No active workflow</div>
-        <div class="wf-detail">Progress will appear here live as the agent works.</div>
-        <div class="wf-mini"><div class="wf-mini-fill" style="width:0%"></div></div>
-      </div>`;
-    wrap.appendChild(row);
+  // An idle panel is just noise — only surface it while a pipeline is actually
+  // active (running or waiting on approval).
+  if (snap.status === "idle" || !stages.length) {
+    panel.classList.add("hidden");
     return;
   }
+  panel.classList.remove("hidden");
   $("workflow-title").textContent = snap.title || "Workflow";
   $("workflow-state").textContent = snap.status === "running" ? "running"
     : snap.status === "waiting_approval" ? "waiting" : snap.status;

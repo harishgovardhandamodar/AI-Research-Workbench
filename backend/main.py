@@ -225,12 +225,23 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
                 pass
         return art
 
-    res = await svc.execute(name, on_artifact=on_artifact, prelude=prelude)
-    nb = res["notebook"]
+    wf = getattr(rt, "workflow", None)
+    if wf is not None:
+        from .workflows import generic_stage
 
-    # Record the run in the project's runs table (the same source of truth as
-    # agent runs), reading any metrics the notebook helper exposed (e.g. clean/
-    # robust accuracy) so it shows up on the Experiments timeline/graph.
+        await wf.start(title=f"Notebook {name}", stages=generic_stage("Executing notebook"))
+        await wf.update_stage("working", "running", message=f"Executing {name}")
+    try:
+        res = await svc.execute(name, on_artifact=on_artifact, prelude=prelude)
+        nb = res["notebook"]
+    except Exception:
+        if wf is not None:
+            await wf.finish()
+        raise
+    if wf is not None:
+        await wf.update_stage("working", "done", message="Notebook complete")
+        await wf.finish()
+
     metrics = {}
     try:
         resp = await rt.kernels.python.run_code(
@@ -330,17 +341,40 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
         args.append("--fresh")
     if compare:
         args.append("--compare")
+    wf = getattr(rt, "workflow", None)
+    if wf is not None and not compare:
+        from .workflows import PRIVACY_STAGES
+
+        await wf.start(title="Privacy workflow", stages=PRIVACY_STAGES)
     proc = await asyncio.create_subprocess_exec(
         sys.executable, *args, cwd=str(ROOT),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
+        # Stream stdout so the workflow panel shows live stage progress.
+        out_b = bytearray()
+        if proc.stdout is not None:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                out_b += line
+                if wf is not None and not compare:
+                    txt = line.decode(errors="replace").upper()
+                    for sid, marker in (("stage1", "STAGE 1"), ("stage2", "STAGE 2"),
+                                        ("stage3", "STAGE 3")):
+                        if marker in txt:
+                            await wf.update_stage(sid, "done",
+                                                  message=line.decode(errors="replace").strip()[:90])
         out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
     except asyncio.TimeoutError:
         proc.kill()
         out, err = b"", b"[timeout] workflow exceeded 600s"
-    summary = out.decode(errors="replace")
+    summary = (bytes(out_b) or out).decode(errors="replace")
     if err:
         summary += "\n[stderr]\n" + err.decode(errors="replace")[-2000:]
+    if wf is not None and not compare:
+        await wf.update_stage("report", "done", message="Report & artifacts ready")
+        await wf.finish()
 
     report_dir = out_dir
     artifact_names = []
@@ -885,7 +919,7 @@ async def ws_chat(ws: WebSocket, name: str):
                     result = await run_improve_loop(
                         rt.store, coordinator, rt.build_llm_messages,
                         lambda: Reviewer(rt.llm, rt.store).review(),
-                        eid, text, emit=emit)
+                        eid, text, emit=emit, workflow=rt.workflow)
                     await emit("status", {"message": ""})
                     await emit("done", {})
                     return
