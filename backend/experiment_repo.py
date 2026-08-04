@@ -166,7 +166,9 @@ def snapshot_project(rt, repo: Path, experiments: list[dict] | None = None) -> l
     base = repo / "fox" / rt.name
     base.mkdir(parents=True, exist_ok=True)
 
-    payload = {"project": rt.name, "experiments": experiments or _experiments_payload(rt)}
+    payload = {"project": rt.name,
+               "experiments": experiments if experiments is not None
+               else _experiments_payload(rt)}
     written: list[str] = []
     if _write_if_changed(base / "experiments.json", json.dumps(payload, indent=2)):
         written.append(f"fox/{rt.name}/experiments.json")

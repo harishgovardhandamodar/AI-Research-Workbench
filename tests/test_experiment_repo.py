@@ -194,6 +194,14 @@ class ExperimentRepoTests(unittest.TestCase):
         self.assertIn("no management repo", res["message"])
         self.assertFalse(er.push()["ok"])
 
+    def test_commit_project_with_empty_payload_does_not_reopen_store(self):
+        # Regression: an empty (falsy) precomputed experiments list must not
+        # trigger a store re-read inside the worker thread.
+        CONFIG["management"]["github_repo"] = ""
+        res = er.commit_project(self.rt, experiments=[])
+        self.assertTrue(res["ok"], res)
+        self.assertIn("experiments: testproj", res["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
