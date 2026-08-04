@@ -306,6 +306,17 @@
         <label>API key (or KAGGLE_KEY env)</label>
         <input id="cfg-kaggle-key" type="password" autocomplete="off">
       </div>
+      <div class="form-section">
+        <span class="plabel">Experiment management repo (git)</span>
+        <label>Repo path (e.g. a sibling repo like personal-experiments)</label>
+        <div class="mgmt-row">
+          <input id="cfg-mgmt-repo" list="mgmt-repo-list" placeholder="/home/…/personal-experiments" autocomplete="off">
+          <datalist id="mgmt-repo-list"></datalist>
+          <button id="mgmt-detect" class="btn subtle small" type="button">Detect</button>
+        </div>
+        <label class="check"><input id="cfg-mgmt-autocommit" type="checkbox" checked> Auto-commit experiment artifacts on each experiment run</label>
+        <label class="check"><input id="cfg-mgmt-autopush" type="checkbox"> Auto-push after commit (uses SSH/credentials)</label>
+      </div>
       <div class="modal-actions">
         <button id="cfg-test" class="btn subtle">Test connection</button>
         <span id="cfg-status"></span>
@@ -419,7 +430,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v38";
+  window.FOX_VER = "v39";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

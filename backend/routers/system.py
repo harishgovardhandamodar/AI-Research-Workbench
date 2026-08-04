@@ -39,6 +39,9 @@ async def set_config(body: dict):
     if "kaggle" in cfg:
         CONFIG["kaggle"].update({k: v for k, v in cfg["kaggle"].items()
                                  if k in ("username", "key")})
+    if "management" in cfg:
+        CONFIG["management"].update({k: v for k, v in cfg["management"].items()
+                                     if k in ("repo_dir", "auto_commit", "auto_push")})
     if "mcp" in cfg and "servers" in cfg["mcp"]:
         CONFIG["mcp"]["servers"] = cfg["mcp"]["servers"]
         await rebuild_mcp()
@@ -49,6 +52,15 @@ async def set_config(body: dict):
         rt.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         rt.max_iters = CONFIG["agent"].get("max_iters", 8)
     return {"config": CONFIG}
+
+
+@router.get("/api/management/repos")
+async def management_repos():
+    """Candidate experiment management repos: sibling git worktrees next to the
+    workbench repo (e.g. the personal-experiments repo)."""
+    from ..experiment_repo import sibling_git_repos
+
+    return {"repos": sibling_git_repos()}
 
 
 @router.get("/api/editor")

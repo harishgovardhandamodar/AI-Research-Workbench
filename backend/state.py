@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
     "mcp": {"servers": DEFAULT_SERVERS},
     "editor": editor_cfg.editor_config(),
     "kaggle": {"username": "", "key": ""},
+    "management": {"repo_dir": "", "auto_commit": True, "auto_push": False},
 }
 
 
@@ -39,6 +40,7 @@ def load_config() -> dict:
             cfg["agent"].update(saved.get("agent", {}))
             cfg["editor"].update(saved.get("editor", {}))
             cfg["kaggle"].update(saved.get("kaggle", {}))
+            cfg["management"].update(saved.get("management", {}))
             if "servers" in saved.get("mcp", {}):
                 # Keep user's servers but always surface the bundled default
                 # servers (e.g. newly-added "privacy") unless overridden by name.

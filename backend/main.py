@@ -27,6 +27,7 @@ from .agents.reviewer import Reviewer
 from .artifacts.store import Artifact
 from .experiments import findings_from_run, metrics_from_run
 from .experiment_loop import run_improve_loop
+from .experiment_repo import maybe_autocommit
 from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .project_runtime import ProjectRuntime
@@ -503,6 +504,11 @@ def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
     return notices
 
 
+def _autocommit_ready(run: dict) -> bool:
+    """Auto-commit only for runs that belong to an experiment."""
+    return bool(run.get("experiment_id"))
+
+
 def _msg_created_at(rt: ProjectRuntime, mid: int) -> float | None:
     """Timestamp for a WS message event (so live chat can show times)."""
     row = rt.store.get_message(mid)
@@ -550,24 +556,37 @@ async def ws_chat(ws: WebSocket, name: str):
     rt.workflow.subscribe(emit)
 
     broker = ApprovalBroker(emit, store=rt.store)
+
+    def _record_run(r: dict) -> int:
+        rid = rt.store.add_run(
+            prompt=r.get("prompt", ""),
+            reply=r.get("reply", ""),
+            status=r.get("status", "done"),
+            started_at=r.get("started_at", 0.0),
+            finished_at=r.get("finished_at", time.time()),
+            tool_sequence=r.get("tool_sequence"),
+            artifact_ids=r.get("artifact_ids"),
+            metrics=r.get("metrics"),
+            review=r.get("review"),
+            experiment_id=r.get("experiment_id") or None,
+            config=r.get("config"),
+            label=r.get("label"))
+        # Auto-commit experiment artifacts to the management repo (best-effort,
+        # off the event loop) when a run is part of an experiment.
+        try:
+            r["id"] = rid
+            if _autocommit_ready(r):
+                asyncio.get_running_loop().create_task(maybe_autocommit(rt, r))
+        except Exception:  # noqa: BLE001
+            pass
+        return rid
+
     # Cooperative stop: the user's Stop button sets this; the coordinator checks
     # it at LLM/tool boundaries so the turn unwinds cleanly (no cancelled kernels).
     abort_event = asyncio.Event()
     coordinator = Coordinator(rt.llm, rt.ctx(emit, broker), emit=emit,
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
-                              record=lambda r: rt.store.add_run(
-                                  prompt=r.get("prompt", ""),
-                                  reply=r.get("reply", ""),
-                                  status=r.get("status", "done"),
-                                  started_at=r.get("started_at", 0.0),
-                                  finished_at=r.get("finished_at", time.time()),
-                                  tool_sequence=r.get("tool_sequence"),
-                                  artifact_ids=r.get("artifact_ids"),
-                                  metrics=r.get("metrics"),
-                                  review=r.get("review"),
-                                  experiment_id=r.get("experiment_id") or None,
-                                  config=r.get("config"),
-                                  label=r.get("label")),
+                              record=_record_run,
                               max_iters=rt.max_iters, mcp=mcp_registry,
                               check_abort=abort_event.is_set)
 

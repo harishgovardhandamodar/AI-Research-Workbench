@@ -16,6 +16,7 @@ import asyncio
 import json
 import sys
 import time
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from .artifacts.store import Artifact
@@ -64,6 +65,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "github",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/github_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
@@ -90,10 +99,25 @@ class MCPConnection:
 
             transport = self.config.get("transport", "stdio")
             if transport == "stdio":
+                # Inherit the full parent environment (git needs PATH for the
+                # github server) plus the server's own overrides, and tell the
+                # github server where the experiment management repo lives.
+                import os
+
+                env = dict(os.environ)
+                env.update(self.config.get("env") or {})
+                try:
+                    from .state import CONFIG  # late import avoids a cycle
+
+                    mgmt = (CONFIG.get("management") or {}).get("repo_dir") or ""
+                    if mgmt:
+                        env["FOX_MGMT_REPO"] = str(Path(mgmt).expanduser().resolve())
+                except Exception:  # noqa: BLE001
+                    pass
                 params = StdioServerParameters(
                     command=_resolve(self.config.get("command", "python3")),
                     args=self.config.get("args") or [],
-                    env=self.config.get("env"),
+                    env=env,
                     cwd=str(ROOT),
                 )
                 self._streams = stdio_client(params)

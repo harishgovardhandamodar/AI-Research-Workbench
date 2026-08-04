@@ -777,7 +777,7 @@ function lastUserMsg() {
 /* ============================ settings =================================== */
 
 function openSettings() {
-  const c = state.config || { llm: {}, agent: {}, mcp: {}, kaggle: {} };
+  const c = state.config || { llm: {}, agent: {}, mcp: {}, kaggle: {}, management: {} };
   $("cfg-base-url").value = c.llm.base_url || "";
   $("cfg-tool-url").value = c.llm.tool_base_url || "";
   $("cfg-model").value = c.llm.model || "";
@@ -786,12 +786,26 @@ function openSettings() {
   const kg = c.kaggle || {};
   $("cfg-kaggle-user").value = kg.username || "";
   $("cfg-kaggle-key").value = kg.key || "";
+  const mgmt = c.management || {};
+  $("cfg-mgmt-repo").value = mgmt.repo_dir || "";
+  $("cfg-mgmt-autocommit").checked = mgmt.auto_commit !== false;
+  $("cfg-mgmt-autopush").checked = !!mgmt.auto_push;
   const dl = $("model-list");
   dl.innerHTML = (state.models || []).map((m) => `<option value="${esc(m.id)}">`).join("");
   state.mcpServers = (c.mcp?.servers || []).map((s) => ({ ...s }));
   renderMcpList();
   $("settings-modal").classList.remove("hidden");
   refreshMcpStatus();
+  detectMgmtRepos();
+}
+
+async function detectMgmtRepos() {
+  const dl = $("mgmt-repo-list");
+  if (!dl) return;
+  try {
+    const r = await api("/api/management/repos");
+    dl.innerHTML = (r.repos || []).map((x) => `<option value="${esc(x.path)}">`).join("");
+  } catch (e) { /* best-effort */ }
 }
 
 function renderMcpList() {
@@ -844,6 +858,11 @@ async function saveSettings() {
     kaggle: {
       username: $("cfg-kaggle-user").value.trim(),
       key: $("cfg-kaggle-key").value.trim(),
+    },
+    management: {
+      repo_dir: $("cfg-mgmt-repo").value.trim(),
+      auto_commit: $("cfg-mgmt-autocommit").checked,
+      auto_push: $("cfg-mgmt-autopush").checked,
     },
   };
   try {
@@ -1574,6 +1593,13 @@ $("print-btn").addEventListener("click", () => {
 $("workflow-close").addEventListener("click", () => $("workflow-panel").classList.add("hidden"));
 $("cfg-save").addEventListener("click", saveSettings);
 $("cfg-test").addEventListener("click", testConnection);
+$("mgmt-detect").addEventListener("click", () => {
+  const dl = $("mgmt-repo-list");
+  if (!dl || !dl.options.length) { detectMgmtRepos(); toast("No sibling git repos found."); return; }
+  const pick = dl.options[0].value;
+  $("cfg-mgmt-repo").value = pick;
+  toast("Set to " + pick);
+});
 
 $("mcp-add-btn").addEventListener("click", () => $("mcp-add-form").classList.remove("hidden"));
 $("mcp-add-cancel").addEventListener("click", () => $("mcp-add-form").classList.add("hidden"));
