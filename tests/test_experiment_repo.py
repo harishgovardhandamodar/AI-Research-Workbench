@@ -161,6 +161,39 @@ class ExperimentRepoTests(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self.assertEqual(er.current_remote(self.mgmt), "git@github.com:harishg/datasets.git")
 
+    def test_commit_project_snapshots_and_commits(self):
+        res = er.commit_project(self.rt)
+        self.assertTrue(res["ok"], res)
+        files = _git(self.mgmt, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertIn("fox/testproj/experiments.json", files)
+        self.assertNotIn("keep.txt", files)
+
+    def test_commit_project_no_changes(self):
+        er.commit_project(self.rt)
+        res = er.commit_project(self.rt)
+        self.assertTrue(res["ok"])
+        self.assertIn("no changes", res["message"])
+
+    def test_push_with_local_remote(self):
+        # A bare repo stands in for the GitHub remote (file:// URL).
+        bare = self.tmp / "remote.git"
+        bare.mkdir(parents=True)
+        _git(bare, "init", "-q", "--bare")
+        CONFIG["management"]["github_repo"] = f"file://{bare}"
+        self.assertTrue(er.commit_project(self.rt)["ok"])
+        res = er.push()
+        self.assertTrue(res["ok"], res)
+        # The pushed branch carries the fox/ snapshot.
+        pushed = _git(bare, "log", "--all", "--name-only", "--format=")
+        self.assertIn("fox/testproj/experiments.json", pushed)
+
+    def test_commit_project_without_repo(self):
+        CONFIG["management"]["repo_dir"] = ""
+        res = er.commit_project(self.rt)
+        self.assertFalse(res["ok"])
+        self.assertIn("no management repo", res["message"])
+        self.assertFalse(er.push()["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

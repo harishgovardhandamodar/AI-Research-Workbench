@@ -9,3 +9,4 @@ examples/privacy/*.png
 examples/privacy/*.csv
 examples/privacy/reports/
 examples/obfuscation/obfuscation_report.md
+docker-compose.override.yml

@@ -285,3 +285,66 @@ async def maybe_autocommit(rt, run: dict) -> None:
         pass
     finally:
         _inflight.discard(rt.name)
+
+
+# ------------------------------------------------------ manual commit / push --
+
+def commit_project(rt, message: str | None = None,
+                   experiments: list[dict] | None = None) -> dict:
+    """Manually snapshot + commit a project's experiments/artifacts into the
+    management repo (scoped to fox/ so unrelated repo changes stay untouched).
+
+    Store reads are expected to be precomputed (`experiments`) when called from a
+    worker thread; falls back to reading the store when not."""
+    try:
+        repo = management_repo_dir()
+        if repo is None:
+            return {"ok": False, "message": "no management repo configured "
+                    "(Settings → Experiment management repo)"}
+        ok, msg = ensure_repo(repo)
+        if not ok:
+            return {"ok": False, "message": msg}
+        snapshot_project(rt, repo, experiments)
+        rel = "fox/"
+        code, out = _git(repo, "add", "--", rel)
+        if code != 0:
+            return {"ok": False, "message": f"git add failed: {out}"}
+        msg = message or f"experiments: {rt.name}"
+        code, out = _git(repo, "commit", "-m", msg, "--no-gpg-sign")
+        if code not in (0, 1):
+            return {"ok": False, "message": f"git commit failed: {out}"}
+        if "nothing to commit" in out:
+            return {"ok": True, "message": "no changes to commit"}
+        if github_remote_url():
+            ensure_remote(repo)
+        return {"ok": True, "message": msg}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+
+async def commit_project_async(rt, message: str | None = None) -> dict:
+    """Thread-safe commit: store reads happen on the event loop, git/file work
+    in a worker thread."""
+    experiments = _experiments_payload(rt)
+    return await asyncio.to_thread(commit_project, rt, message, experiments)
+
+
+def push(repo: Path | None = None) -> dict:
+    """Push the management repo's current branch to its remote (GitHub)."""
+    try:
+        repo = repo or management_repo_dir()
+        if repo is None:
+            return {"ok": False, "message": "no management repo configured "
+                    "(Settings → Experiment management repo)"}
+        if github_remote_url():
+            okr, msgr = ensure_remote(repo)
+            if not okr:
+                return {"ok": False, "message": msgr}
+        code, out = _git(repo, "push")
+        if code != 0:
+            code, out = _git(repo, "push", "-u", "origin", "HEAD")
+            if code != 0:
+                return {"ok": False, "message": f"push failed: {out}"}
+        return {"ok": True, "message": "pushed"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}

@@ -247,6 +247,10 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   text-align: center; font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px;
   color: var(--text-dim); opacity: .7; margin: 8px 0 0;
 }
+.repo-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.repo-actions .btn { padding: 2px 9px; font-size: 11px; }
+.repo-status { font-size: 11px; color: var(--text-dim); }
+.repo-status.err { color: var(--danger); }
 .msg-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
 .m-tag { font-size: 10px; padding: 1px 8px; border-radius: 10px; background: rgba(79,140,255,.15); color: var(--accent-2); border: 1px solid rgba(79,140,255,.35); }
 .msg.user .m-tag { background: rgba(224,91,91,.12); color: #ffb4b4; border-color: rgba(224,91,91,.35); }

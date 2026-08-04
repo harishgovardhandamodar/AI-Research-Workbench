@@ -328,6 +328,7 @@ function finalizeAssistant(content, tags, ts) {
     el.raw = content || el.raw || "";
     el.body.innerHTML = renderMarkdown(el.raw);
     enhanceCodeBlocks(el.body);
+    maybeAttachRepoButtons(el, tags);
     if (ts) {
       const t = el.div.querySelector(".msg-time");
       if (t) t.textContent = fmtClock(ts);
@@ -357,6 +358,49 @@ function enhanceCodeBlocks(root) {
     });
     pre.appendChild(btn);
   });
+}
+
+/* ---- experiment repo: manual commit / push buttons on result messages ---- */
+
+function repoTagsMatch(tags) {
+  return /(improve loop|workflow|notebook|report|experiment|rerun|finetune)/i.test((tags || []).join(" "));
+}
+
+function maybeAttachRepoButtons(el, tags) {
+  if (!el || !repoTagsMatch(tags)) return;
+  if (el.div.querySelector(".repo-actions")) return;
+  const bar = document.createElement("div");
+  bar.className = "repo-actions";
+  bar.innerHTML = `
+    <button class="btn subtle small repo-commit" title="Commit experiment artifacts to the management repo">Commit</button>
+    <button class="btn subtle small repo-push" title="Push the management repo to GitHub">Push</button>
+    <span class="muted repo-status"></span>`;
+  el.div.appendChild(bar);
+  bar.querySelector(".repo-commit").addEventListener("click", () => repoAction("commit", bar));
+  bar.querySelector(".repo-push").addEventListener("click", () => repoAction("push", bar));
+}
+
+async function repoAction(kind, bar) {
+  const st = bar.querySelector(".repo-status");
+  st.classList.remove("err");
+  st.textContent = kind === "commit" ? "Committing…" : "Pushing…";
+  try {
+    const endpoint = kind === "commit" ? "commit" : "push";
+    const r = await api(`/api/projects/${state.project}/management/${endpoint}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (r.ok) {
+      st.textContent = kind === "commit" ? "Committed ✓" : "Pushed ✓";
+      if (r.message) st.title = r.message;
+    } else {
+      st.textContent = r.message || "failed";
+      st.classList.add("err");
+    }
+  } catch (e) {
+    st.textContent = "Failed: " + e.message;
+    st.classList.add("err");
+  }
 }
 
 function scrollBottom() {
@@ -1459,6 +1503,7 @@ function renderMessages(msgs) {
       const el = msgContainer("assistant", mtags, m.created_at);
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
+      maybeAttachRepoButtons(el, mtags);
       // Re-attach figures produced during this turn (artifacts are linked to the
       // turn's user message id) to the final assistant reply of the turn, so
       // charts survive refreshState() re-renders after execution.

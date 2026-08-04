@@ -12,8 +12,8 @@ from fastapi.responses import JSONResponse
 from ..experiments import build_graph, load_experiments
 from ..llm import LLMError
 from ..paths import PROJECTS_DIR, ROOT
-from ..state import (CONFIG, get_llm, make_llm, mcp_registry, rebuild_mcp,
-                     reset_llm_cache, runtimes, save_config)
+from ..state import (CONFIG, get_llm, get_runtime, make_llm, mcp_registry,
+                     rebuild_mcp, reset_llm_cache, runtimes, save_config)
 from .. import editor as editor_cfg
 
 router = APIRouter()
@@ -93,6 +93,38 @@ async def management_link(body: dict):
                 "message": "set the management repo path (Settings) first"}
     ok, msg = ensure_remote(repo)
     return {"ok": ok, "message": msg, "remote": github_remote_url()}
+
+
+@router.post("/api/projects/{name}/management/commit")
+async def project_management_commit(name: str, body: dict):
+    """Commit this project's experiment artifacts to the management repo."""
+    from .. import experiment_repo
+
+    rt = get_runtime(name)
+    return await experiment_repo.commit_project_async(
+        rt, (body.get("message") or "").strip() or None)
+
+
+@router.post("/api/projects/{name}/management/push")
+async def project_management_push(name: str):
+    """Push the management repo's current branch to its GitHub remote."""
+    from .. import experiment_repo
+
+    return await asyncio.to_thread(experiment_repo.push)
+
+
+@router.post("/api/projects/{name}/management/commit-and-push")
+async def project_management_commit_and_push(name: str, body: dict):
+    """Commit this project's experiment artifacts and push them to GitHub."""
+    from .. import experiment_repo
+
+    rt = get_runtime(name)
+    result = await experiment_repo.commit_project_async(
+        rt, (body.get("message") or "").strip() or None)
+    if not result.get("ok"):
+        return result
+    pushed = await asyncio.to_thread(experiment_repo.push)
+    return {**result, "pushed": pushed}
 
 
 @router.get("/api/editor")
