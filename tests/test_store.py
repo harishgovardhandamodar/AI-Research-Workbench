@@ -56,6 +56,24 @@ class TestStore(unittest.TestCase):
         self.assertTrue(self.store.delete_goal("accuracy"))
         self.assertFalse(self.store.delete_goal("accuracy"))
 
+    def test_goals_experiment_scoping(self):
+        eid = self.store.create_experiment("sweep", "h", "accuracy", 0.9, True)
+        self.store.add_goal("accuracy", 0.9, True, "90%")
+        self.store.add_goal("loss", 0.2, False, "low loss", experiment_id=eid)
+        self.assertEqual(len(self.store.list_goals()), 2)
+        scoped = self.store.goals_for_experiment(eid)
+        self.assertEqual([g["metric"] for g in scoped], ["accuracy", "loss"])
+        self.assertEqual(scoped[1]["experiment_id"], eid)
+        # deleting with an experiment_id only removes that scoped row
+        self.assertTrue(self.store.delete_goal("loss", experiment_id=eid))
+        self.assertFalse(self.store.delete_goal("loss", experiment_id=eid))
+        self.assertEqual(len(self.store.list_goals()), 1)
+        # project-wide delete still works
+        self.assertTrue(self.store.delete_goal("accuracy"))
+        # migration is idempotent across a reopen
+        store2 = ProjectStore(self.tmp)
+        self.assertEqual(store2.list_goals(), [])
+
     def test_workflow_runs_roundtrip(self):
         self.store.add_workflow_run({"title": "t", "status": "done", "pct": 100,
                                      "stages": [{"name": "s"}]})

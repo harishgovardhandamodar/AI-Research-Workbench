@@ -92,7 +92,7 @@ class ProjectStore:
         c.execute(
             """CREATE TABLE IF NOT EXISTS goals (
                 metric TEXT PRIMARY KEY, target REAL, higher_better INTEGER,
-                label TEXT, created_at REAL)"""
+                label TEXT, created_at REAL, experiment_id INTEGER)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS approval_log (
@@ -117,6 +117,11 @@ class ProjectStore:
         # Migration: older databases predate per-run variant labels.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN label TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate per-goal experiment scoping.
+        try:
+            c.execute("ALTER TABLE goals ADD COLUMN experiment_id INTEGER")
         except sqlite3.OperationalError:
             pass
         # Migration: older databases predate the run kind (agent_run / notebook /
@@ -357,11 +362,14 @@ class ProjectStore:
 
     # -- goals (target metric + direction, for improvement tracking) --------
     def add_goal(self, metric: str, target: float, higher_better: bool,
-                 label: str = "") -> None:
+                 label: str = "", experiment_id: int | None = None) -> None:
+        """Add/refresh a goal. experiment_id scopes it to one experiment;
+        None means project-wide. One row per metric (INSERT OR REPLACE)."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO goals (metric, target, higher_better, label, created_at)"
-            " VALUES (?,?,?,?,?)",
-            (metric, target, 1 if higher_better else 0, label, time.time()))
+            "INSERT OR REPLACE INTO goals (metric, target, higher_better, label,"
+            " created_at, experiment_id) VALUES (?,?,?,?,?,?)",
+            (metric, target, 1 if higher_better else 0, label, time.time(),
+             experiment_id))
         self._conn.commit()
 
     def list_goals(self) -> list[dict]:
@@ -369,10 +377,26 @@ class ProjectStore:
             "SELECT * FROM goals ORDER BY created_at").fetchall()
         return [{"metric": r["metric"], "target": r["target"],
                  "higher_better": bool(r["higher_better"]), "label": r["label"],
-                 "created_at": r["created_at"]} for r in rows]
+                 "created_at": r["created_at"],
+                 "experiment_id": r["experiment_id"]} for r in rows]
 
-    def delete_goal(self, metric: str) -> bool:
-        cur = self._conn.execute("DELETE FROM goals WHERE metric=?", (metric,))
+    def goals_for_experiment(self, eid: int) -> list[dict]:
+        """Goals that apply to an experiment: its own scoped goals plus any
+        project-wide (unscoped) goals."""
+        return [g for g in self.list_goals()
+                if g["experiment_id"] is None or g["experiment_id"] == eid]
+
+    def delete_goal(self, metric: str, experiment_id: int | None = None) -> bool:
+        """Delete a goal. With experiment_id, only the scoped row for that
+        experiment is removed; otherwise the project-wide (unscoped) row."""
+        if experiment_id is None:
+            cur = self._conn.execute(
+                "DELETE FROM goals WHERE metric=? AND experiment_id IS NULL",
+                (metric,))
+        else:
+            cur = self._conn.execute(
+                "DELETE FROM goals WHERE metric=? AND experiment_id=?",
+                (metric, experiment_id))
         self._conn.commit()
         return cur.rowcount > 0
 

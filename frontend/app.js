@@ -1609,6 +1609,13 @@ async function loadGoals() {
   try {
     state.goals = (await api(`/api/projects/${state.project}/goals`)).goals || [];
   } catch (e) { state.goals = state.goals || []; }
+  const sel = $("goal-experiment");
+  if (sel) {
+    const cur = sel.value || "";
+    sel.innerHTML = '<option value="">all runs (project-wide)</option>' +
+      (state.expList || []).map((e) =>
+        `<option value="${e.id}"${String(e.id) === cur ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  }
   const el = $("goal-list");
   if (!el) return;
   el.innerHTML = "";
@@ -1616,18 +1623,24 @@ async function loadGoals() {
     el.innerHTML = '<div class="empty">No goals yet — add a target metric and the workbench will flag new bests and progress on each run.</div>';
     return;
   }
+  const expName = (id) => {
+    if (id == null) return "all runs";
+    const e = (state.expList || []).find((x) => x.id === id);
+    return e ? e.name : "experiment #" + id;
+  };
   for (const g of state.goals) {
     const d = document.createElement("div");
     d.className = "goal-chip";
     d.innerHTML = `<b>${esc(g.label || g.metric)}</b>
-      <span class="muted">${esc(g.metric)} ${g.higher_better ? "↑" : "↓"} target ${g.target}</span>
-      <button class="goal-del" data-metric="${esc(g.metric)}" title="remove">✕</button>`;
+      <span class="muted">${esc(g.metric)} ${g.higher_better ? "↑" : "↓"} target ${g.target} · ${esc(expName(g.experiment_id))}</span>
+      <button class="goal-del" data-metric="${esc(g.metric)}" data-eid="${g.experiment_id ?? ""}" title="remove">✕</button>`;
     el.appendChild(d);
   }
   el.querySelectorAll(".goal-del").forEach((b) =>
     b.addEventListener("click", async () => {
+      const q = b.dataset.eid ? `?experiment_id=${b.dataset.eid}` : "";
       try {
-        await api(`/api/projects/${state.project}/goals/${encodeURIComponent(b.dataset.metric)}`, { method: "DELETE" });
+        await api(`/api/projects/${state.project}/goals/${encodeURIComponent(b.dataset.metric)}${q}`, { method: "DELETE" });
         loadGoals();
       } catch (e) { toast("Failed to remove goal: " + e.message); }
     }));
@@ -1637,12 +1650,17 @@ async function addGoal() {
   const metric = $("goal-metric").value.trim();
   const target = parseFloat($("goal-target").value);
   if (!metric || Number.isNaN(target)) { toast("Metric and numeric target are required"); return; }
+  const eid = ($("goal-experiment") && $("goal-experiment").value) || "";
   try {
     await api(`/api/projects/${state.project}/goals`, {
       method: "POST",
-      body: JSON.stringify({ metric, target, higher_better: $("goal-hb").checked }),
+      body: JSON.stringify({
+        metric, target, higher_better: $("goal-hb").checked,
+        experiment_id: eid ? parseInt(eid, 10) : null,
+      }),
     });
     $("goal-metric").value = $("goal-target").value = "";
+    if ($("goal-experiment")) $("goal-experiment").value = "";
     loadGoals();
     toast("Goal saved — progress is checked after every run.");
   } catch (e) { toast("Failed to add goal: " + e.message); }
