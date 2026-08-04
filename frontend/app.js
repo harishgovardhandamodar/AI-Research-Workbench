@@ -1439,7 +1439,9 @@ function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
   let lastDay = "";
-  for (const m of msgs) {
+  let turnUser = "";
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
     const day = fmtDay(m.created_at);
     if (day && day !== lastDay) {
       const sep = document.createElement("div");
@@ -1452,10 +1454,17 @@ function renderMessages(msgs) {
     if (m.role === "user") {
       const { body } = msgContainer("user", mtags, m.created_at);
       body.textContent = m.content;
+      turnUser = m.id;
     } else if (m.role === "assistant") {
-      const { body } = msgContainer("assistant", mtags, m.created_at);
-      body.innerHTML = renderMarkdown(m.content);
-      enhanceCodeBlocks(body);
+      const el = msgContainer("assistant", mtags, m.created_at);
+      el.body.innerHTML = renderMarkdown(m.content);
+      enhanceCodeBlocks(el.body);
+      // Re-attach figures produced during this turn (artifacts are linked to the
+      // turn's user message id) to the final assistant reply of the turn, so
+      // charts survive refreshState() re-renders after execution.
+      const next = msgs[i + 1];
+      const isFinal = !next || next.role === "user";
+      if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
     } else if (m.role === "tool") {
       // tool results persisted; rendered as compact card
       const meta = m.meta || {};
@@ -1472,6 +1481,12 @@ function renderMessages(msgs) {
     }
   }
   scrollBottom();
+}
+
+function attachTurnArtifacts(turnUserMsgId, div) {
+  const arts = (state.artifacts || []).filter((a) =>
+    a.data_type === "png" && String(a.message_id) === String(turnUserMsgId));
+  for (const a of arts) appendInlineFig({ div }, a);
 }
 
 /* ============================ model refresh ============================== */
