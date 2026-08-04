@@ -87,7 +87,7 @@ class ProjectStore:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL, hypothesis TEXT,
                 goal_metric TEXT, goal_target REAL, higher_better INTEGER,
-                status TEXT, created_at REAL, updated_at REAL)"""
+                status TEXT, created_at REAL, updated_at REAL, plan TEXT)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS goals (
@@ -123,6 +123,12 @@ class ProjectStore:
         # privacy_workflow / ...) used by the Experiments traceability UI.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN kind TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate the experiment plan (B1: explicit
+        # experiment-plan step the agent records when creating an experiment).
+        try:
+            c.execute("ALTER TABLE experiments ADD COLUMN plan TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -304,14 +310,14 @@ class ProjectStore:
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",
                           goal_metric: str = "", goal_target: float | None = None,
-                          higher_better: bool = True) -> int:
+                          higher_better: bool = True, plan: str = "") -> int:
         now = time.time()
         cur = self._conn.execute(
             "INSERT INTO experiments (name, hypothesis, goal_metric, goal_target,"
-            " higher_better, status, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?)",
+            " higher_better, status, created_at, updated_at, plan)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (name, hypothesis, goal_metric, goal_target,
-             1 if higher_better else 0, "active", now, now))
+             1 if higher_better else 0, "active", now, now, plan or None))
         self._conn.commit()
         return cur.lastrowid
 
@@ -346,7 +352,8 @@ class ProjectStore:
         return {"id": r["id"], "name": r["name"], "hypothesis": r["hypothesis"],
                 "goal_metric": r["goal_metric"], "goal_target": r["goal_target"],
                 "higher_better": bool(r["higher_better"]), "status": r["status"],
-                "created_at": r["created_at"], "updated_at": r["updated_at"]}
+                "created_at": r["created_at"], "updated_at": r["updated_at"],
+                "plan": r["plan"] or ""}
 
     # -- goals (target metric + direction, for improvement tracking) --------
     def add_goal(self, metric: str, target: float, higher_better: bool,

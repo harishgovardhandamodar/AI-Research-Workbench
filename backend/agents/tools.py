@@ -179,6 +179,7 @@ TOOL_SCHEMAS: list[dict] = [
                 "properties": {
                     "name": {"type": "string", "description": "Short experiment name, e.g. 'DP vs synthetic on income'"},
                     "hypothesis": {"type": "string", "description": "One-sentence hypothesis the experiment tests"},
+                    "plan": {"type": "string", "description": "Concise experiment plan: hypothesis, the goal metric/target, the configs or variables to try (explicit list), and the stopping criteria for the experiment"},
                     "goal_metric": {"type": "string", "description": "Headline metric name, e.g. 'accuracy'"},
                     "goal_target": {"type": "number", "description": "Target value for the goal metric"},
                     "higher_better": {"type": "boolean", "description": "Whether larger goal_metric is better", "default": True},
@@ -406,20 +407,23 @@ async def _save_artifact(ctx: ToolContext, name: str, description: str,
 async def _create_experiment(ctx: ToolContext, name: str, hypothesis: str = "",
                              goal_metric: str = "", goal_target: float | None = None,
                              higher_better: bool = True,
-                             config: dict | None = None) -> str:
+                             config: dict | None = None,
+                             plan: str = "") -> str:
     name = (name or "").strip()
     if not name:
         return "[error] experiment name is required"
     try:
         eid = ctx.store.create_experiment(
             name, hypothesis or "", goal_metric or "",
-            float(goal_target) if goal_target is not None else None, bool(higher_better))
+            float(goal_target) if goal_target is not None else None,
+            bool(higher_better), plan=plan or "")
     except Exception as e:  # noqa: BLE001
         return f"[error] could not create experiment: {e}"
     ctx.experiment_id = str(eid)
     ctx.experiment_config = dict(config or {})
     line = (f"Experiment #{eid} created: {name!r} (runs will be attached to it).\n"
             f"Hypothesis: {hypothesis or '(none)'}\n"
+            f"Plan: {(plan or '(none)').strip()}\n"
             f"Goal: {goal_metric or '(none)'}"
             + (f" target={goal_target}, higher_better={higher_better}" if goal_target is not None else ""))
     if ctx.experiment_config:
@@ -681,9 +685,9 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "run_notebook": lambda notebook, cells="all": _run_notebook(ctx, notebook, cells),
         "create_notebook": lambda name, code="": _create_notebook(ctx, name, code),
         "create_experiment": lambda name, hypothesis="", goal_metric="",
-            goal_target=None, higher_better=True, config=None:
+            goal_target=None, higher_better=True, config=None, plan="":
             _create_experiment(ctx, name, hypothesis, goal_metric, goal_target,
-                               higher_better, config),
+                               higher_better, config, plan),
         "start_run": lambda label, config=None: _start_run(ctx, label, config),
         "finish_run": lambda notes="": _finish_run(ctx, notes),
         "editor__list_files": lambda path=".": _editor_list_files(ctx, path),

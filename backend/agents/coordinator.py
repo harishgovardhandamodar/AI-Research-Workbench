@@ -32,9 +32,12 @@ Working style:
 - Use the save_artifact TOOL (a separate tool call, never inside the Python kernel)
   to persist important tables/summaries/data.
 - When the user asks to run/compare/optimise an experiment, FIRST call
-  create_experiment (hypothesis + goal metric/target + baseline config), then run
-  variants. Inside run_python code, call report_metric("name", value) for each
-  headline number so every run records structured, comparable metrics.
+  create_experiment (hypothesis + goal metric/target + baseline config) and include
+  an explicit PLAN: the hypothesis, the goal metric and target, the exact configs /
+  variable values you intend to try (a short list), and the stopping criteria for
+  the experiment. Then run variants. Inside run_python code, call
+  report_metric("name", value) for each headline number so every run records
+  structured, comparable metrics.
 - For each config point you evaluate, delimit it explicitly: call start_run
   (variant label + config) before running that variant's code and finish_run
   (optional notes) after, so every variant is recorded with its own label, config

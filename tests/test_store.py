@@ -74,6 +74,18 @@ class TestStore(unittest.TestCase):
         self.assertEqual(exp["status"], "active")
         self.assertEqual(self.store.list_experiments()[0]["runs"], 0)
 
+    def test_experiment_plan_roundtrip(self):
+        plan = ("Hypothesis: larger eps trades utility for privacy.\n"
+                "Try configs: eps=0.1, 1.0, 5.0; seeds 1..3.\n"
+                "Stop when accuracy >= 0.9 on the goal metric.")
+        eid = self.store.create_experiment("eps sweep", "h", "accuracy", 0.9,
+                                           True, plan=plan)
+        exp = self.store.get_experiment(eid)
+        self.assertEqual(exp["plan"], plan)
+        # default plan for legacy callers
+        eid2 = self.store.create_experiment("no plan", "h", "acc", 0.5, True)
+        self.assertEqual(self.store.get_experiment(eid2)["plan"], "")
+
     def test_experiment_runs_and_config_linkage(self):
         eid = self.store.create_experiment("var", "hyp", "acc", 0.9, True)
         rid = self.store.add_run("p", "r", "done", 1.0, 2.0,

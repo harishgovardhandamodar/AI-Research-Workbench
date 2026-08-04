@@ -56,7 +56,7 @@ async def project_experiments_graph(name: str):
 
 @router.post("/api/projects/{name}/experiments")
 async def create_project_experiment(name: str, body: dict):
-    """Create an experiment (name + optional hypothesis/goal) and return it."""
+    """Create an experiment (name + optional hypothesis/goal/plan) and return it."""
     store = get_runtime(name).store
     name_str = (body.get("name") or "").strip()
     if not name_str:
@@ -68,7 +68,8 @@ async def create_project_experiment(name: str, body: dict):
     eid = store.create_experiment(
         name_str, body.get("hypothesis") or "",
         body.get("goal_metric") or "", target,
-        bool(body.get("higher_better", True)))
+        bool(body.get("higher_better", True)),
+        plan=body.get("plan") or "")
     return {"experiment": store.get_experiment(eid)}
 
 

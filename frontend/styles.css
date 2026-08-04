@@ -507,6 +507,32 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .nbdesc { font-size: 11px; color: var(--text-dim); margin: 2px 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 /* ---------- experiments (lonewolf graph theme) ---------- */
+.exp-list { margin-bottom: 12px; }
+.exp-list .exp-runs-head { margin-bottom: 6px; }
+#exp-list { display: flex; flex-direction: column; gap: 4px; }
+.exp-new-form {
+  border: 1px dashed var(--border); border-radius: 8px; padding: 8px;
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;
+}
+.exp-new-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.exp-new-row input { font-size: 12px; flex: 1; min-width: 120px; }
+#exp-new-plan { font-size: 12px; width: 100%; resize: vertical; font-family: var(--mono); }
+.exp-card {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.exp-card-head { display: flex; align-items: center; gap: 8px; }
+.exp-card-name { font-size: 12.5px; }
+.exp-card-runs { font-size: 11px; margin-left: auto; }
+.exp-card-hyp { font-size: 11.5px; }
+.exp-plan summary { cursor: pointer; color: var(--accent); font-size: 11.5px; }
+.exp-plan-body { margin-top: 4px; font-size: 11.5px; white-space: pre-wrap; color: var(--text-dim); }
+.exp-badge {
+  font-size: 10px; border-radius: 4px; padding: 1px 5px;
+  border: 1px solid var(--border); color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px;
+}
+.exp-badge.fresh { color: #d29922; border-color: #d29922; }
+.exp-badge.det { color: #b98cff; border-color: #b98cff; }
 .exp-views { display: flex; gap: 6px; margin: 8px 0 6px; }
 .expview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; padding: 3px 10px; cursor: pointer; }
 .expview-btn.active { color: var(--text); border-color: #a974ff; background: rgba(169,116,255,.12); }

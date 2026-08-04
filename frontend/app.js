@@ -1498,6 +1498,11 @@ async function loadExperiments() {
     renderExperiments();
   } catch (e) { /* silent */ }
   try {
+    const rr = await api(`/api/projects/${state.project}/experiments`);
+    state.expList = rr.experiments || [];
+    renderExpList();
+  } catch (e) { state.expList = state.expList || []; }
+  try {
     const rr = await api(`/api/projects/${state.project}/runs`);
     state.agentRuns = rr.runs || [];
   } catch (e) { state.agentRuns = state.agentRuns || []; }
@@ -1596,6 +1601,67 @@ async function addGoal() {
     loadGoals();
     toast("Goal saved — progress is checked after every run.");
   } catch (e) { toast("Failed to add goal: " + e.message); }
+}
+
+function renderExpList() {
+  const el = $("exp-list");
+  if (!el) return;
+  const exps = state.expList || [];
+  if (!exps.length) {
+    el.innerHTML = '<div class="empty">No experiments yet — ask Fox to plan and run one in chat, or create one below.</div>';
+    return;
+  }
+  el.innerHTML = "";
+  for (const e of exps) {
+    const card = document.createElement("div");
+    card.className = "exp-card";
+    const goal = e.goal_metric
+      ? `<span class="muted">goal ${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"} ${e.goal_target != null ? _fmtNum(e.goal_target) : "—"}</span>`
+      : "";
+    let planHtml = "";
+    if (e.plan) {
+      planHtml = `<details class="exp-plan"><summary>Plan</summary><div class="exp-plan-body">${esc(e.plan)}</div></details>`;
+    }
+    card.innerHTML = `<div class="exp-card-head">
+        <b class="exp-card-name">${esc(e.name)}</b>
+        <span class="exp-badge det">${esc(e.status || "active")}</span>
+        <span class="muted exp-card-runs">${e.runs} run(s)</span>
+      </div>
+      ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
+      ${goal}
+      ${planHtml}`;
+    el.appendChild(card);
+  }
+}
+
+async function createExp() {
+  const name = $("exp-new-name").value.trim();
+  if (!name) { toast("Experiment name is required"); return; }
+  let target = null;
+  const t = $("exp-new-goal-target").value.trim();
+  if (t !== "") {
+    target = parseFloat(t);
+    if (Number.isNaN(target)) { toast("Goal target must be a number"); return; }
+  }
+  try {
+    await api(`/api/projects/${state.project}/experiments`, {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        hypothesis: $("exp-new-hypothesis").value.trim(),
+        goal_metric: $("exp-new-goal-metric").value.trim(),
+        goal_target: target,
+        higher_better: $("exp-new-hb").checked,
+        plan: $("exp-new-plan").value.trim(),
+      }),
+    });
+    $("exp-new-name").value = $("exp-new-hypothesis").value = "";
+    $("exp-new-goal-metric").value = $("exp-new-goal-target").value = "";
+    $("exp-new-plan").value = "";
+    $("exp-new-form").classList.add("hidden");
+    await loadExperiments();
+    toast("Experiment created — ask Fox to run variants for it in chat.");
+  } catch (e) { toast("Failed to create experiment: " + e.message); }
 }
 
 function expMetric() { return state.expMetric || ""; }
@@ -2236,6 +2302,8 @@ $("goal-add").addEventListener("click", addGoal);
 $("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("runs-refresh").addEventListener("click", loadExperiments);
+$("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
+$("exp-new-create").addEventListener("click", createExp);
 
 function setExpMetric(v) {
   state.expMetric = v;

@@ -63,6 +63,31 @@
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
       <div id="expmain-detail" class="exp-main-detail"></div>
 
+      <div class="exp-list">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Experiments</span>
+          <span class="spacer"></span>
+          <button id="exp-new-toggle" class="btn subtle small">+ New experiment</button>
+        </div>
+        <div id="exp-new-form" class="exp-new-form hidden">
+          <div class="exp-new-row">
+            <input id="exp-new-name" placeholder="name" />
+            <input id="exp-new-hypothesis" placeholder="hypothesis (one sentence)" />
+          </div>
+          <div class="exp-new-row">
+            <input id="exp-new-goal-metric" placeholder="goal metric (e.g. accuracy)" />
+            <input id="exp-new-goal-target" placeholder="goal target (e.g. 0.9)" type="number" step="any" />
+            <label class="goal-hb"><input id="exp-new-hb" type="checkbox" checked /> higher is better</label>
+          </div>
+          <textarea id="exp-new-plan" rows="3" placeholder="Experiment plan: hypothesis, configs/variables to try, stopping criteria"></textarea>
+          <div class="exp-new-row">
+            <span class="spacer"></span>
+            <button id="exp-new-create" class="btn subtle small">Create</button>
+          </div>
+        </div>
+        <div id="exp-list"></div>
+      </div>
+
       <div class="exp-runs">
         <div class="exp-runs-head">
           <span class="exp-runs-title">Recent runs</span>
@@ -374,7 +399,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v31";
+  window.FOX_VER = "v32";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
