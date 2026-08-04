@@ -1605,9 +1605,55 @@ const graphWrap = $("graph-svg-wrap");
 const graphPan = attachGraphPan(graphWrap, "graph-svg-wrap", () => $("graph-svg"), "[data-node]");
 attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520);
 
+function flatMode() {
+  try { return /[?&]flat=1/.test(window.location.search || ""); } catch (e) { return false; }
+}
+
+// Plain per-message rendering (no grouping) — used with ?flat=1 as a fallback.
+function renderMessagesFlat(msgs, wrap) {
+  let turnUser = "";
+  msgs.forEach((m, i) => {
+    const mtags = (m.meta && m.meta.tags) || [];
+    if (m.role === "user") {
+      const el = msgContainer("user", mtags, m.created_at);
+      el.body.textContent = m.content;
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+      turnUser = m.id;
+    } else if (m.role === "assistant") {
+      if (!(m.content || "").trim()) return;
+      const el = msgContainer("assistant", mtags, m.created_at);
+      el.body.innerHTML = renderMarkdown(m.content);
+      enhanceCodeBlocks(el.body);
+      maybeAttachRepoButtons(el, mtags);
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+      const next = msgs[i + 1];
+      if ((!next || next.role === "user") && turnUser) attachTurnArtifacts(turnUser, el.div);
+    } else if (m.role === "tool") {
+      const meta = m.meta || {};
+      const card = document.createElement("div");
+      card.className = "toolcard";
+      card.innerHTML = `
+        <div class="toolcard-head">
+          <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
+          <span class="tstatus ok">persisted</span>
+        </div>
+        <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
+      card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
+      wrap.appendChild(card);
+    }
+  });
+}
+
 function renderMessages(msgs) {
   const wrap = $("messages");
   wrap.innerHTML = "";
+  if (flatMode()) {
+    renderMessagesFlat(msgs || [], wrap);
+    const st = $("chat-stats");
+    if (st) st.textContent = (window.FOX_VER || "?") + " · flat mode";
+    scrollBottom();
+    return;
+  }
   let lastDay = "";
   let turnUser = "";
   let currentSet = null;
@@ -1681,7 +1727,7 @@ function renderMessages(msgs) {
   const stats = $("chat-stats");
   if (stats) {
     const bodyN = (() => { let n = 0; wrap.querySelectorAll(".mset-body").forEach((b) => n += b.children.length); return n; })();
-    stats.textContent = "v" + (window.FOX_VER || "?") + " · " + setCount + " conversation set(s) · " +
+    stats.textContent = (window.FOX_VER || "?") + " · " + setCount + " conversation set(s) · " +
       (msgs || []).length + " message(s) · " + bodyN + " rendered" + (errCount ? " · " + errCount + " error(s)" : "");
   }
   scrollBottom();
