@@ -576,6 +576,7 @@ _SLASH_INTENTS = {
     "/god": "godmode",
     "/sandbox": "godmode",
     "/improve": "improve_loop",
+    "/autoresearch": "autoresearch",
 }
 
 _SLASH_PROMPTS = {
@@ -583,6 +584,7 @@ _SLASH_PROMPTS = {
     "/god": "Run a thorough experiment with full access and summarize what you did.",
     "/sandbox": "Run a thorough experiment with full access and summarize what you did.",
     "/improve": "Improve the latest experiment toward its goal.",
+    "/autoresearch": "accuracy",
 }
 
 
@@ -615,6 +617,7 @@ HELP_TEXT = """\
 | `/notebook <name>` | Run a project notebook |
 | `/status` | Show model / config / MCP status |
 | `/clear` | Clear this project's conversation |
+| `/autoresearch [metric]` | Run the autonomous research loop over `research/experiment.py` |
 
 UI switches: `?flat=1` plain bubbles (default) · `?sets=1` grouped collapsible sets.
 """
@@ -861,7 +864,9 @@ async def ws_chat(ws: WebSocket, name: str):
                               max_iters=rt.max_iters, mcp=mcp_registry,
                               check_abort=abort_event.is_set)
 
-    async def handle_turn(text: str, intent: str = "", experiment_id: str = ""):
+    async def handle_turn(text: str, intent: str = "", experiment_id: str = "",
+                          msg_extra: dict | None = None):
+        msg_extra = msg_extra or {}
         abort_event.clear()
         async with rt.lock:
             try:
@@ -891,6 +896,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     # quarantined per-turn sandbox folder.
                     god_mode = True
                     user_tags = ["god mode"]
+                elif intent == "autoresearch":
+                    # Autonomous research loop (karpathy/autoresearch style).
+                    user_tags = ["autoresearch"]
                 elif intent == "improve_loop":
                     # B2: reviewer-driven improve loop — bounded iterations of
                     # run → review → apply best suggestion → rerun toward the
@@ -908,6 +916,19 @@ async def ws_chat(ws: WebSocket, name: str):
                     fresh_mode = fresh_requested(text) or rcc
                     if rcc:
                         user_tags = ["privacy workflow", "fresh rerun", "compare runs"]
+                if intent == "autoresearch":
+                    from .autoresearch import run_autoresearch_loop
+
+                    await emit("status", {"message": "Preparing autonomous research loop…"})
+                    cfg = dict(msg_extra.get("autoresearch") or {})
+                    if text and not cfg.get("goal_metric"):
+                        cfg.setdefault("goal_metric", text.strip() or "accuracy")
+                    result = await run_autoresearch_loop(
+                        rt, coordinator, rt.build_llm_messages, cfg,
+                        emit=emit, workflow=rt.workflow)
+                    await emit("status", {"message": ""})
+                    await emit("done", {})
+                    return
                 if intent == "improve_loop":
                     await emit("status", {"message": "Preparing improve loop…"})
                     eid = _resolve_experiment_id(rt, text, experiment_id)
@@ -1080,7 +1101,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 text = (msg.get("content") or "").strip()
                 if text:
                     await handle_turn(text, intent=msg.get("intent") or "",
-                                      experiment_id=msg.get("experiment_id") or "")
+                                      experiment_id=msg.get("experiment_id") or "",
+                                      msg_extra=msg)
     except WebSocketDisconnect:
         pass
     finally:
