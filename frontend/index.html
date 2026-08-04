@@ -204,6 +204,8 @@
                 data-text="Run the privacy workflow with a fresh seed">↻ Fresh rerun</button>
         <button class="btn subtle small quick" data-intent="privacy_compare"
                 data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
+        <button class="btn subtle small quick" data-intent="godmode"
+                data-text="Run the experiment in a quarantined sandbox with full access">⚡ God mode</button>
         <button class="btn subtle small quick" data-intent="improve_loop"
                 data-text="Improve the latest experiment toward its goal">🔁 Improve experiment</button>
         <button class="btn subtle small quick"
@@ -482,7 +484,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v55";
+  window.FOX_VER = "v56";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

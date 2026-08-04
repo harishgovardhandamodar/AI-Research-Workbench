@@ -40,6 +40,9 @@ class ToolContext:
     experiment_id: str = ""
     experiment_config: dict | None = None
     last_metrics: dict | None = None
+    # God mode: when set, shell/agent work is confined to this quarantined
+    # folder (full-access turns).
+    quarantine_dir: str = ""
     # Artifact ids produced by the most recent tool call, so the coordinator can
     # record exact run↔artifact linkage instead of parsing tool text.
     last_artifact_ids: list = dataclasses.field(default_factory=list)
@@ -374,9 +377,10 @@ async def _run_shell(ctx: ToolContext, command: str, timeout: float = 30.0) -> s
         if not temporary:
             ctx.permissions.record("run_shell", command, "allow")
     # Run via a real shell so quoting, pipes and redirects work as the model expects.
+    shell_cwd = ctx.quarantine_dir or str(ctx.kernels.workspace_dir)
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash", "-c", command,
-        cwd=str(ctx.kernels.workspace_dir),
+        cwd=shell_cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

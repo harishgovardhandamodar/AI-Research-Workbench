@@ -30,6 +30,7 @@ from .experiment_loop import run_improve_loop
 from .experiment_repo import maybe_autocommit
 from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
+from .permissions import AllowAllPermissionManager
 from .project_runtime import ProjectRuntime
 from .routers import artifacts, notebooks, projects, runs, system
 from .state import allowed_origins, get_runtime, mcp_registry, origin_allowed, runtimes
@@ -74,6 +75,17 @@ PRIVACY_WORKFLOW = {
         "obfuscation",
     ],
 }
+
+# Injected as a system message for god-mode turns (full access, quarantined).
+GODMODE_SYSTEM = (
+    "You are running in GOD MODE with FULL ACCESS inside a quarantined sandbox. "
+    "All permission checks are auto-approved: you may run any shell command, "
+    "install packages, download data, and run experiments without asking.\n"
+    "CONTAINMENT REQUIREMENT: do ALL work (files, installs, downloads, generated "
+    "artifacts) inside the quarantine folder {dir} — never write outside it.\n"
+    "Run the requested experiment thoroughly, then summarize what you did, the "
+    "results, and the files produced under {dir}."
+)
 
 
 def match_workflow(text: str) -> str | None:
@@ -608,7 +620,7 @@ async def ws_chat(ws: WebSocket, name: str):
                 user_tags = message_tags("user", text)
                 # Explicit intents (from the UI quick-action buttons) route
                 # deterministically instead of relying on keyword matching.
-                workflow_mode = compare_mode = fresh_mode = False
+                workflow_mode = compare_mode = fresh_mode = god_mode = False
                 if intent == "privacy_workflow":
                     workflow_mode = True
                     user_tags = ["privacy workflow"]
@@ -618,6 +630,11 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "privacy_compare":
                     workflow_mode = compare_mode = True
                     user_tags = ["privacy workflow", "compare runs"]
+                elif intent == "godmode":
+                    # God mode: full access (auto-approved) confined to a
+                    # quarantined per-turn sandbox folder.
+                    god_mode = True
+                    user_tags = ["god mode"]
                 elif intent == "improve_loop":
                     # B2: reviewer-driven improve loop — bounded iterations of
                     # run → review → apply best suggestion → rerun toward the
@@ -716,7 +733,30 @@ async def ws_chat(ws: WebSocket, name: str):
                 await emit("status", {"message": "Agent is thinking…"})
                 await rt.maybe_compact()
                 llm_msgs = rt.build_llm_messages()
-                result = await coordinator.run_turn(llm_msgs)
+                # God mode: auto-approve everything and confine shell work to a
+                # quarantined per-turn folder. Restore normal policy afterwards.
+                saved_perms = coordinator.ctx.permissions
+                saved_quar = coordinator.ctx.quarantine_dir
+                god_dir = None
+                try:
+                    if god_mode:
+                        god_dir = rt.dir / "godmode" / str(int(time.time()))
+                        god_dir.mkdir(parents=True, exist_ok=True)
+                        coordinator.ctx.permissions = AllowAllPermissionManager()
+                        coordinator.ctx.quarantine_dir = str(god_dir)
+                        llm_msgs.insert(0, {
+                            "role": "system",
+                            "content": (GODMODE_SYSTEM.format(dir=str(god_dir))),
+                        })
+                        await emit("status", {"message":
+                            f"⚡ GOD MODE — full access in quarantined sandbox {god_dir}…"})
+                    result = await coordinator.run_turn(llm_msgs)
+                finally:
+                    coordinator.ctx.permissions = saved_perms
+                    coordinator.ctx.quarantine_dir = saved_quar
+                if god_mode:
+                    await emit("notice", {"message":
+                        f"⚡ God-mode run finished — sandbox: {god_dir}"})
                 amid = rt.store.add_message(
                     "assistant", result.get("text", ""),
                     {"tags": message_tags("assistant", result.get("text", ""))})

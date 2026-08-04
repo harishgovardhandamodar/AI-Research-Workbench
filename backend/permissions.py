@@ -60,3 +60,17 @@ class PermissionManager:
     def record(self, kind: str, command: str, decision: str):
         norm = self._normalize(command)
         self.store.set_grant(kind, norm, decision)
+
+
+class AllowAllPermissionManager:
+    """God mode: every permission check is granted without prompting.
+
+    Used for quarantined 'god mode' turns where the agent gets full access but is
+    expected to do all work inside the per-turn sandbox folder (which is itself
+    contained inside the workbench project / container)."""
+
+    def check(self, kind: str, command: str) -> str:
+        return "allow"
+
+    def record(self, kind: str, command: str, decision: str):
+        pass
