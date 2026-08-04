@@ -673,7 +673,7 @@ function onError(msg) {
   onTurnDone();
 }
 
-async function sendChat(textOverride, intent) {
+async function sendChat(textOverride, intent, extra) {
   const input = $("input");
   const text = textOverride !== undefined ? textOverride : input.value.trim();
   if (!text || state.busy) return;
@@ -687,6 +687,7 @@ async function sendChat(textOverride, intent) {
   setConn("busy");
   const payload = { type: "chat", content: text };
   if (intent) payload.intent = intent;
+  if (extra) Object.assign(payload, extra);
   send(payload);
 }
 
@@ -1626,12 +1627,19 @@ function renderExpList() {
         <b class="exp-card-name">${esc(e.name)}</b>
         <span class="exp-badge det">${esc(e.status || "active")}</span>
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
+        <span class="spacer"></span>
+        <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}">Improve</button>
       </div>
       ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
       ${goal}
       ${planHtml}`;
     el.appendChild(card);
   }
+  el.querySelectorAll(".exp-improve").forEach((b) =>
+    b.addEventListener("click", () => {
+      sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
+               "improve_loop", { experiment_id: b.dataset.id });
+    }));
 }
 
 async function createExp() {
