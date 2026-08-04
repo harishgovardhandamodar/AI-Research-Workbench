@@ -167,6 +167,9 @@ class ExperimentRepoTests(unittest.TestCase):
         files = _git(self.mgmt, "show", "--name-only", "--format=", "HEAD").split()
         self.assertIn("fox/testproj/experiments.json", files)
         self.assertNotIn("keep.txt", files)
+        self.assertTrue(res["commit"])
+        self.assertTrue(res["committed_at"])
+        self.assertEqual(res["commit_full"], _git(self.mgmt, "rev-parse", "HEAD").strip())
 
     def test_commit_project_no_changes(self):
         er.commit_project(self.rt)
@@ -183,9 +186,21 @@ class ExperimentRepoTests(unittest.TestCase):
         self.assertTrue(er.commit_project(self.rt)["ok"])
         res = er.push()
         self.assertTrue(res["ok"], res)
+        self.assertTrue(res["pushed_at"])
+        self.assertTrue(res["commit"])
         # The pushed branch carries the fox/ snapshot.
         pushed = _git(bare, "log", "--all", "--name-only", "--format=")
         self.assertIn("fox/testproj/experiments.json", pushed)
+
+    def test_commit_web_url_from_github_remote(self):
+        CONFIG["management"]["github_repo"] = "harishg/datasets"
+        url = er._commit_web_url(self.mgmt, "abc123")
+        self.assertEqual(url, "https://github.com/harishg/datasets/commit/abc123")
+        # Non-web remotes (e.g. file://) yield no URL.
+        CONFIG["management"]["github_repo"] = "file:///tmp/bare.git"
+        self.assertIsNone(er._commit_web_url(self.mgmt, "abc123"))
+        CONFIG["management"]["github_repo"] = ""
+        self.assertIsNone(er._commit_web_url(self.mgmt, "abc123"))
 
     def test_commit_project_without_repo(self):
         CONFIG["management"]["repo_dir"] = ""

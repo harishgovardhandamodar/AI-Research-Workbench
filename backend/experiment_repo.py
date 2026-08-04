@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .state import CONFIG
@@ -69,6 +71,34 @@ def github_remote_url() -> str | None:
 def current_remote(repo: Path) -> str | None:
     code, out = _git(repo, "remote", "get-url", "origin")
     return out.strip() if code == 0 else None
+
+
+def _commit_web_url(repo: Path, commit: str) -> str | None:
+    """Human-viewable commit URL for the configured remote (GitHub web page),
+    or None when the remote isn't a web URL we can derive."""
+    url = github_remote_url() or ""
+    if not url or not commit:
+        return None
+    m = re.match(r"^(?:git@|ssh://git@)([^:/]+):(.+?)(?:\.git)?$", url)
+    if not m:
+        m = re.match(r"^https?://([^/]+)/(.+?)(?:\.git)?$", url)
+    if not m:
+        return None
+    host, path = m.group(1), m.group(2)
+    return f"https://{host}/{path}/commit/{commit}"
+
+
+def _head_info(repo: Path) -> dict:
+    """Short/full HEAD hash, commit date and a web URL for it."""
+    _, full = _git(repo, "rev-parse", "HEAD")
+    _, short = _git(repo, "rev-parse", "--short", "HEAD")
+    _, cdate = _git(repo, "log", "-1", "--format=%cI")
+    return {
+        "commit": (short or "").strip(),
+        "commit_full": (full or "").strip(),
+        "committed_at": (cdate or "").strip(),
+        "commit_url": _commit_web_url(repo, (full or "").strip()),
+    }
 
 
 def ensure_remote(repo: Path) -> tuple[bool, str]:
@@ -315,11 +345,13 @@ def commit_project(rt, message: str | None = None,
         code, out = _git(repo, "commit", "-m", msg, "--no-gpg-sign")
         if code not in (0, 1):
             return {"ok": False, "message": f"git commit failed: {out}"}
-        if "nothing to commit" in out:
-            return {"ok": True, "message": "no changes to commit"}
+        committed = "nothing to commit" not in out
         if github_remote_url():
             ensure_remote(repo)
-        return {"ok": True, "message": msg}
+        result = {"ok": True, "message": msg if committed else "no changes to commit",
+                  "committed": committed}
+        result.update(_head_info(repo))
+        return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
@@ -347,6 +379,9 @@ def push(repo: Path | None = None) -> dict:
             code, out = _git(repo, "push", "-u", "origin", "HEAD")
             if code != 0:
                 return {"ok": False, "message": f"push failed: {out}"}
-        return {"ok": True, "message": "pushed"}
+        result = {"ok": True, "message": "pushed",
+                  "pushed_at": datetime.now(timezone.utc).isoformat()}
+        result.update(_head_info(repo))
+        return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}

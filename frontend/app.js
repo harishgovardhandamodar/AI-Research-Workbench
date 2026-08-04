@@ -393,7 +393,14 @@ async function repoAction(kind, bar) {
       body: JSON.stringify({}),
     });
     if (r.ok) {
-      st.textContent = kind === "commit" ? "Committed ✓" : "Pushed ✓";
+      const link = repoCommitLinkHtml(r);
+      if (kind === "commit") {
+        st.innerHTML = "Committed " + link +
+          (r.committed_at ? " · " + esc(fmtDt(r.committed_at)) : "") + " ✓";
+      } else {
+        st.innerHTML = "Pushed " + link +
+          (r.pushed_at ? " on " + esc(fmtDt(r.pushed_at)) : "") + " ✓";
+      }
       if (r.message) st.title = r.message;
     } else {
       st.textContent = r.message || "failed";
@@ -403,6 +410,19 @@ async function repoAction(kind, bar) {
     st.textContent = "Failed: " + e.message;
     st.classList.add("err");
   }
+}
+
+function repoCommitLinkHtml(r) {
+  if (!r || !r.commit) return "";
+  return r.commit_url
+    ? `<a href="${esc(r.commit_url)}" target="_blank" rel="noopener" title="Open commit on GitHub">${esc(r.commit)}</a>`
+    : esc(r.commit);
+}
+
+function fmtDt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
 function scrollBottom() {
@@ -2058,22 +2078,37 @@ async function focusExperiment(eid) {
   await renderExpContext();
 }
 
+let ecMgmtMsgTimer = null;
+
 async function ecManagementAction(kind) {
   const btn = kind === "commit" ? $("ec-commit") : $("ec-push");
   const orig = btn.textContent;
   btn.textContent = kind === "commit" ? "Committing…" : "Pushing…";
   btn.disabled = true;
+  const msg = $("ec-mgmt-msg");
+  clearTimeout(ecMgmtMsgTimer);
   try {
     const endpoint = kind === "commit" ? "commit" : "push";
     const r = await api(`/api/projects/${state.project}/management/${endpoint}`, {
       method: "POST", body: JSON.stringify({}),
     });
-    toast(r.ok ? (kind === "commit" ? "Committed ✓" : "Pushed ✓") : (r.message || "failed"), 4000);
+    if (r.ok) {
+      const link = repoCommitLinkHtml(r);
+      msg.innerHTML = kind === "commit"
+        ? "Committed " + link + (r.committed_at ? " · " + esc(fmtDt(r.committed_at)) : "") + " ✓"
+        : "Pushed " + link + (r.pushed_at ? " on " + esc(fmtDt(r.pushed_at)) : "") + " ✓";
+      msg.classList.remove("err");
+    } else {
+      msg.textContent = r.message || "failed";
+      msg.classList.add("err");
+    }
   } catch (e) {
-    toast("Failed: " + e.message, 4000);
+    msg.textContent = "Failed: " + e.message;
+    msg.classList.add("err");
   }
   btn.textContent = orig;
   btn.disabled = false;
+  ecMgmtMsgTimer = setTimeout(() => { msg.innerHTML = ""; msg.classList.remove("err"); }, 10000);
 }
 
 $("ec-select").addEventListener("change", (e) => focusExperiment(parseInt(e.target.value, 10)));

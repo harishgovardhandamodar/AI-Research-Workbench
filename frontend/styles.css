@@ -282,6 +282,10 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   transition: width .4s ease;
 }
 .ec-runs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.ec-mgmt-msg { font-size: 11px; margin-top: 5px; }
+.ec-mgmt-msg a, .repo-status a { color: var(--accent-2); text-decoration: none; }
+.ec-mgmt-msg a:hover, .repo-status a:hover { text-decoration: underline; }
+.ec-mgmt-msg.err { color: var(--danger); }
 .ec-run-chip {
   font-size: 10.5px; font-family: var(--mono);
   background: rgba(79,140,255,.10); color: var(--accent-2);
