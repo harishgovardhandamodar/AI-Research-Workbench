@@ -3,6 +3,7 @@ workflow progress, and workflow history."""
 
 from __future__ import annotations
 
+import json
 import shutil
 
 from fastapi import APIRouter, HTTPException
@@ -101,8 +102,13 @@ async def project_state(name: str):
         vars_ = await rt.kernels.python.list_variables()
     except Exception:  # noqa: BLE001
         vars_ = {}
+    try:
+        act = rt.store.get_setting("management_last_activity", "")
+        mgmt_activity = json.loads(act) if act else None
+    except Exception:  # noqa: BLE001
+        mgmt_activity = None
     return {"name": name, "messages": msgs, "artifacts": arts, "grants": grants,
-            "env": env, "variables": vars_}
+            "env": env, "variables": vars_, "management_activity": mgmt_activity}
 
 
 @router.get("/api/projects/{name}/workflow")

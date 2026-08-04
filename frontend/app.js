@@ -96,10 +96,12 @@ function renderMarkdown(src) {
   });
 
   text = text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware)
+  // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware);
+  // also accept artifact:<id> URLs the agent sometimes writes.
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
-    const src = /^\/artifacts\//.test(url) ? B(url) : url;
-    const artId = /^\/artifacts\//.test(url) ? url.split("/").pop() : "";
+    const artId = /^\/artifacts\//.test(url) ? url.split("/").pop()
+      : /^artifact:/.test(url) ? url.replace(/^artifact:/, "") : "";
+    const src = artId ? B("/artifacts/" + artId) : url;
     return `<img src="${esc(src)}" alt="${esc(alt)}" class="chat-fig" data-art-id="${esc(artId)}">`;
   });
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -207,9 +209,9 @@ function send(obj) {
 
 function handleEvent(type, p) {
   switch (type) {
-    case "user_message": renderUserMessage(p.content, p.tags, p.created_at); break;
+    case "user_message": renderUserMessage(p.content, p.tags, p.created_at, p.experiment_id); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -281,7 +283,7 @@ async function copyText(text) {
   ta.remove();
 }
 
-function msgContainer(role, tags, ts) {
+function msgContainer(role, tags, ts, target) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const label = document.createElement("div");
@@ -296,19 +298,100 @@ function msgContainer(role, tags, ts) {
   const body = document.createElement("div");
   body.className = "msg-body";
   div.appendChild(body);
-  $("messages").appendChild(div);
+  (target || $("messages")).appendChild(div);
   return { div, body };
 }
 
-function renderUserMessage(content, tags, ts) {
-  const { body } = msgContainer("user", tags, ts);
-  body.textContent = content;
+/* ---- conversation sets: group request + steps + result, collapsible ---- */
+
+function setDt(ts) {
+  try {
+    const n = Number(ts);
+    if (!isFinite(n)) return "";
+    const d = new Date(n * 1000);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString();
+  } catch (e) { return ""; }
+}
+
+function setTitleFor(userMsg) {
+  try {
+    const meta = (userMsg && userMsg.meta) || {};
+    const exp = expOf(meta.experiment_id);
+    const title = exp ? exp.name
+      : (userMsg && userMsg.content ? String(userMsg.content).replace(/\s+/g, " ").slice(0, 60) : "conversation");
+    const it = /iteration\s+(\d+)/i.exec((meta.tags || []).join(" "));
+    return {
+      title,
+      iteration: it ? it[1] : "",
+      expId: meta.experiment_id != null ? meta.experiment_id : null,
+      ts: userMsg ? userMsg.created_at : null,
+    };
+  } catch (e) {
+    return { title: "conversation", iteration: "", expId: null, ts: null };
+  }
+}
+
+function msgSetCreate(userMsg, open) {
+  const wrap = $("messages");
+  const div = document.createElement("div");
+  div.className = "msg-set" + (open ? "" : " collapsed");
+  if (userMsg && userMsg.id != null) div.dataset.userId = userMsg.id;
+  const head = document.createElement("button");
+  head.className = "mset-head";
+  head.type = "button";
+  head.title = "Expand / collapse";
+  const body = document.createElement("div");
+  body.className = "mset-body";
+  div.appendChild(head);
+  div.appendChild(body);
+  wrap.appendChild(div);
+  const setState = { preview: "" };
+  const update = () => {
+    try {
+      const info = setTitleFor(userMsg);
+      const it = info.iteration ? " · iteration " + info.iteration : "";
+      const dt = info.ts ? " · " + setDt(info.ts) : "";
+      const prev = setState.preview
+        ? `<span class="mset-prev">» ${esc(setState.preview)}</span>` : "";
+      head.innerHTML = `<span class="caret">▸</span>`
+        + `<span class="mset-title">${esc(info.title)}</span>`
+        + (it ? `<span class="mset-iter">${esc(it)}</span>` : "")
+        + prev
+        + `<span class="spacer"></span>`
+        + `<span class="mset-time">${esc(dt)}</span>`;
+    } catch (e) {
+      head.textContent = "▸ conversation";
+    }
+  };
+  update();
+  return { div, body, setState, update };
+}
+
+function expandSetOf(el) {
+  const set = el.closest(".msg-set");
+  if (set) set.classList.remove("collapsed");
+}
+
+function renderUserMessage(content, tags, ts, expId) {
+  const userMsg = {
+    content: content || "",
+    tags: tags || [],
+    created_at: ts,
+    meta: { tags: tags || [], experiment_id: expId },
+  };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const el = msgContainer("user", tags, ts, set.body);
+  el.body.textContent = content;
+  tagMessageExperiment(el, expId);
   scrollBottom();
 }
 
 function ensureAssistant(tags) {
   if (curAssistantEl && document.body.contains(curAssistantEl.div)) return curAssistantEl;
-  const el = msgContainer("assistant", tags);
+  if (!state._currentSet) state._currentSet = msgSetCreate(null, true);
+  const el = msgContainer("assistant", tags, null, state._currentSet.body);
   curAssistantEl = el;
   setConn("busy");
   state.streaming = true;
@@ -322,13 +405,14 @@ function streamDelta(text) {
   scrollBottom();
 }
 
-function finalizeAssistant(content, tags, ts) {
+function finalizeAssistant(content, tags, ts, expId) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
     el.body.innerHTML = renderMarkdown(el.raw);
     enhanceCodeBlocks(el.body);
     maybeAttachRepoButtons(el, tags);
+    tagMessageExperiment(el, expId);
     if (ts) {
       const t = el.div.querySelector(".msg-time");
       if (t) t.textContent = fmtClock(ts);
@@ -391,7 +475,15 @@ async function repoAction(kind, bar) {
       body: JSON.stringify({}),
     });
     if (r.ok) {
-      st.textContent = kind === "commit" ? "Committed ✓" : "Pushed ✓";
+      state.mgmtActivity = { action: kind, ...r };
+      const link = repoCommitLinkHtml(r);
+      if (kind === "commit") {
+        st.innerHTML = "Committed " + link +
+          (r.committed_at ? " · " + esc(fmtDt(r.committed_at)) : "") + " ✓";
+      } else {
+        st.innerHTML = "Pushed " + link +
+          (r.pushed_at ? " on " + esc(fmtDt(r.pushed_at)) : "") + " ✓";
+      }
       if (r.message) st.title = r.message;
     } else {
       st.textContent = r.message || "failed";
@@ -401,6 +493,19 @@ async function repoAction(kind, bar) {
     st.textContent = "Failed: " + e.message;
     st.classList.add("err");
   }
+}
+
+function repoCommitLinkHtml(r) {
+  if (!r || !r.commit) return "";
+  return r.commit_url
+    ? `<a href="${esc(r.commit_url)}" target="_blank" rel="noopener" title="Open commit on GitHub">${esc(r.commit)}</a>`
+    : esc(r.commit);
+}
+
+function fmtDt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
 function scrollBottom() {
@@ -548,13 +653,30 @@ async function renderArtifacts() {
   }
 }
 
-function openArtifact(a) {
+async function openArtifact(a) {
   currentArtifact = a;
   $("art-title").textContent = `${a.name} — ${a.kind}`;
   const view = $("art-view");
-  view.innerHTML = a.data_type === "png"
-    ? `<img src="${B(`/artifacts/${a.id}`)}" alt="">`
-    : `<pre>${esc(a.description)}\n\n${esc(a.data_type === "html" ? "(html artifact)" : "")}</pre>`;
+  if (a.data_type === "png") {
+    view.innerHTML = `<img src="${B(`/artifacts/${a.id}`)}" alt="">`;
+  } else {
+    view.innerHTML = '<div class="muted">Loading…</div>';
+    try {
+      const res = await fetch(B(`/artifacts/${a.id}`));
+      const text = await res.text();
+      if (a.data_type === "html") {
+        view.innerHTML = `<iframe class="art-html" srcdoc="${esc(text)}"></iframe>`;
+      } else {
+        const md = document.createElement("div");
+        md.className = "art-md";
+        md.innerHTML = renderMarkdown(text);
+        view.innerHTML = "";
+        view.appendChild(md);
+      }
+    } catch (e) {
+      view.innerHTML = `<pre>${esc(a.description || "")}</pre>`;
+    }
+  }
   $("art-meta").textContent = `${a.kind} · created ${new Date(a.created_at * 1000).toLocaleString()} · ${a.size} bytes`;
   $("art-code").textContent = a.code || "(no code recorded)";
   $("art-env").textContent = a.env && Object.keys(a.env).length ? JSON.stringify(a.env, null, 2) : "(no env snapshot)";
@@ -796,10 +918,21 @@ function onError(msg) {
   onTurnDone();
 }
 
+function setViewParam(kind) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("flat", kind === "flat" ? "1" : "0");
+  url.searchParams.set("sets", kind === "sets" ? "1" : "0");
+  window.location.href = url.toString();
+}
+
 async function sendChat(textOverride, intent, extra) {
   const input = $("input");
   const text = textOverride !== undefined ? textOverride : input.value.trim();
   if (!text || state.busy) return;
+  // Local UI switches (rendering mode).
+  const t = text.trim();
+  if (t === "/flat" || t === "/flat=1") { setViewParam("flat"); return; }
+  if (t === "/sets" || t === "/sets=1") { setViewParam("sets"); return; }
   if (textOverride !== undefined) {
     input.value = "";
     autoResize(input);
@@ -962,6 +1095,10 @@ async function switchProject(name) {
   state.artifacts = [];
   $("messages").innerHTML = "";
   curAssistantEl = null;
+  state._currentSet = null;
+  state.expDetail = {};
+  state.expRanking = {};
+  state.activeExperiment = null;
   await refreshState();
   connect();
 }
@@ -970,11 +1107,13 @@ async function refreshState() {
   try {
     const r = await api(`/api/projects/${state.project}/state`);
     state.artifacts = r.artifacts || [];
+    state.mgmtActivity = r.management_activity || null;
     renderMessages(r.messages || []);
     renderArtifacts();
     renderKernel(r.variables, r.env);
     renderReview(state._lastFindings || [], state._lastSuggestions || []);
     renderGrants(r.grants || []);
+    refreshExpContext();
   } catch (e) { toast("Failed to load state: " + e.message, 4000); }
   refreshNotebooks();
   loadWorkflow();
@@ -1479,39 +1618,35 @@ const graphWrap = $("graph-svg-wrap");
 const graphPan = attachGraphPan(graphWrap, "graph-svg-wrap", () => $("graph-svg"), "[data-node]");
 attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520);
 
-function renderMessages(msgs) {
-  const wrap = $("messages");
-  wrap.innerHTML = "";
-  let lastDay = "";
+function flatMode() {
+  // Flat (plain bubbles) is the default; grouped sets are opt-in via ?sets=1.
+  try {
+    const q = window.location.search || "";
+    if (/[?&]sets=1/.test(q)) return false;
+    return true;
+  } catch (e) { return true; }
+}
+
+// Plain per-message rendering (no grouping) — used with ?flat=1 as a fallback.
+function renderMessagesFlat(msgs, wrap) {
   let turnUser = "";
-  for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i];
-    const day = fmtDay(m.created_at);
-    if (day && day !== lastDay) {
-      const sep = document.createElement("div");
-      sep.className = "day-sep";
-      sep.textContent = day;
-      wrap.appendChild(sep);
-      lastDay = day;
-    }
+  msgs.forEach((m, i) => {
     const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const { body } = msgContainer("user", mtags, m.created_at);
-      body.textContent = m.content;
+      const el = msgContainer("user", mtags, m.created_at);
+      el.body.textContent = m.content;
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       turnUser = m.id;
     } else if (m.role === "assistant") {
+      if (!(m.content || "").trim()) return;
       const el = msgContainer("assistant", mtags, m.created_at);
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
-      // Re-attach figures produced during this turn (artifacts are linked to the
-      // turn's user message id) to the final assistant reply of the turn, so
-      // charts survive refreshState() re-renders after execution.
+      tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       const next = msgs[i + 1];
-      const isFinal = !next || next.role === "user";
-      if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
+      if ((!next || next.role === "user") && turnUser) attachTurnArtifacts(turnUser, el.div);
     } else if (m.role === "tool") {
-      // tool results persisted; rendered as compact card
       const meta = m.meta || {};
       const card = document.createElement("div");
       card.className = "toolcard";
@@ -1524,6 +1659,94 @@ function renderMessages(msgs) {
       card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
       wrap.appendChild(card);
     }
+  });
+}
+
+function renderMessages(msgs) {
+  const wrap = $("messages");
+  wrap.innerHTML = "";
+  if (flatMode()) {
+    renderMessagesFlat(msgs || [], wrap);
+    const st = $("chat-stats");
+    if (st) st.textContent = (window.FOX_VER || "?") + " · flat mode";
+    scrollBottom();
+    return;
+  }
+  let lastDay = "";
+  let turnUser = "";
+  let currentSet = null;
+  let setCount = 0;
+  let errCount = 0;
+  for (let i = 0; i < msgs.length; i++) {
+    try {
+      const m = msgs[i];
+      const mtags = (m.meta && m.meta.tags) || [];
+      if (m.role === "user") {
+        const day = fmtDay(m.created_at);
+        if (day && day !== lastDay) {
+          const sep = document.createElement("div");
+          sep.className = "day-sep";
+          sep.textContent = day;
+          wrap.appendChild(sep);
+          lastDay = day;
+        }
+        currentSet = msgSetCreate(m, true);
+        setCount++;
+        const el = msgContainer("user", mtags, m.created_at, currentSet.body);
+        el.body.textContent = m.content;
+        tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+        turnUser = m.id;
+        continue;
+      }
+      if (!currentSet) currentSet = msgSetCreate(null, true);
+      if (m.role === "assistant") {
+        // Drop empty bubbles (intermediate tool-call rows carry no text; the
+        // tool cards below represent the steps).
+        if (!(m.content || "").trim()) continue;
+        currentSet.setState.preview = String(m.content).replace(/\s+/g, " ").slice(0, 70);
+        currentSet.update();
+        const el = msgContainer("assistant", mtags, m.created_at, currentSet.body);
+        el.body.innerHTML = renderMarkdown(m.content);
+        enhanceCodeBlocks(el.body);
+        maybeAttachRepoButtons(el, mtags);
+        tagMessageExperiment(el, m.meta && m.meta.experiment_id);
+        // Re-attach figures produced during this turn to the final assistant
+        // reply of the turn, so charts survive refreshState() re-renders.
+        const next = msgs[i + 1];
+        const isFinal = !next || next.role === "user";
+        if (isFinal && turnUser) attachTurnArtifacts(turnUser, el.div);
+      } else if (m.role === "tool") {
+        const meta = m.meta || {};
+        const card = document.createElement("div");
+        card.className = "toolcard";
+        card.innerHTML = `
+          <div class="toolcard-head">
+            <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
+            <span class="tstatus ok">persisted</span>
+          </div>
+          <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
+        card.querySelector(".toolcard-head").addEventListener("click", () => card.classList.toggle("open"));
+        currentSet.body.appendChild(card);
+      }
+    } catch (e) {
+      errCount++;
+      // Never blank the conversation: log and fall back to a flat bubble.
+      console.error("renderMessages: message", msgs[i] && msgs[i].id, e);
+      try {
+        const fm = msgs[i];
+        if (!fm) continue;
+        const el = msgContainer(fm.role === "user" ? "user" : "assistant",
+                                (fm.meta && fm.meta.tags) || [], fm.created_at);
+        if (fm.role === "user") { el.body.textContent = fm.content || ""; turnUser = fm.id; }
+        else el.body.innerHTML = renderMarkdown(fm.content || "");
+      } catch (e2) { /* give up on this one */ }
+    }
+  }
+  const stats = $("chat-stats");
+  if (stats) {
+    const bodyN = (() => { let n = 0; wrap.querySelectorAll(".mset-body").forEach((b) => n += b.children.length); return n; })();
+    stats.textContent = (window.FOX_VER || "?") + " · " + setCount + " conversation set(s) · " +
+      (msgs || []).length + " message(s) · " + bodyN + " rendered" + (errCount ? " · " + errCount + " error(s)" : "");
   }
   scrollBottom();
 }
@@ -1594,6 +1817,20 @@ $("messages").addEventListener("click", (e) => {
   const msg = btn.closest(".msg");
   const body = msg && msg.querySelector(".msg-body");
   copyText(body ? body.innerText : "");
+});
+// Clicking a message-set header expands/collapses it (delegated so it always works).
+$("messages").addEventListener("click", (e) => {
+  const head = e.target.closest(".mset-head");
+  if (head) {
+    const set = head.closest(".msg-set");
+    if (set) set.classList.toggle("collapsed");
+    return;
+  }
+  const chip = e.target.closest(".msg-exp");
+  if (!chip) return;
+  const eid = parseInt(chip.dataset.eid, 10);
+  if (!eid) return;
+  focusExperiment(eid);
 });
 $("new-project-btn").addEventListener("click", async () => {
   const name = prompt("New project name:");
@@ -1811,6 +2048,7 @@ async function loadExperiments() {
   populateExpCompare();
   renderRuns();
   loadGoals();
+  refreshExpContext();
 }
 
 async function loadExpRankings() {
@@ -1855,6 +2093,254 @@ function renderExpRankings() {
     host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body">${html}</div></details>`;
   });
 }
+
+/* ============ chat-window experiment navigation (context bar) ============= */
+
+function expName(eid) {
+  const e = (state.expList || []).find((x) => String(x.id) === String(eid));
+  return e ? e.name : (eid != null ? "#" + eid : "");
+}
+
+async function loadExpDetail(eid) {
+  if (state.expDetail && state.expDetail[eid]) return state.expDetail[eid];
+  try {
+    const r = await api(`/api/projects/${state.project}/experiments/${eid}`);
+    state.expDetail = state.expDetail || {};
+    state.expDetail[eid] = r.experiment || {};
+    return state.expDetail[eid];
+  } catch (e) { return { id: eid }; }
+}
+
+function detectActiveExperiment() {
+  const exps = state.expList || [];
+  if (!exps.length) { state.activeExperiment = null; return null; }
+  // Prefer the experiment most recently referenced in the chat (message meta).
+  const msgs = $("messages");
+  if (msgs) {
+    const refs = msgs.querySelectorAll(".msg[data-exp-id]");
+    for (let i = refs.length - 1; i >= 0; i--) {
+      const eid = parseInt(refs[i].dataset.expId, 10);
+      if (eid && exps.some((x) => x.id === eid)) {
+        state.activeExperiment = eid;
+        return eid;
+      }
+    }
+  }
+  // Otherwise the busiest experiment (most runs), tie-break by newest.
+  const pick = exps.slice().sort((a, b) =>
+    (b.runs - a.runs) || (b.id - a.id))[0];
+  state.activeExperiment = pick.id;
+  return pick.id;
+}
+
+async function refreshExpContext() {
+  if (!state.expList || !state.expList.length) {
+    state.activeExperiment = null;
+    $("exp-context").classList.add("hidden");
+    return;
+  }
+  const eid = detectActiveExperiment();
+  await renderExpContext();
+  if (eid == null) $("exp-context").classList.add("hidden");
+}
+
+function ecBestRun(exp, runs) {
+  if (!exp || !exp.goal_metric || !runs || !runs.length) return null;
+  const higher = exp.higher_better !== false;
+  let best = null;
+  for (const r of runs) {
+    const m = r.metrics && r.metrics[exp.goal_metric];
+    if (m == null) continue;
+    if (best === null || (higher ? m > best.v : m < best.v)) best = { v: m, run: r };
+  }
+  return best;
+}
+
+function ecProgress(exp, best) {
+  if (!exp || !exp.goal_metric || exp.goal_target == null || !best) return 0;
+  const target = Number(exp.goal_target);
+  if (!target) return 0;
+  const higher = exp.higher_better !== false;
+  const ratio = higher ? best.v / target : target / best.v;
+  return Math.max(0, Math.min(100, ratio * 100));
+}
+
+async function renderExpContext() {
+  const ctx = $("exp-context");
+  if (!ctx) return;
+  const exps = state.expList || [];
+  if (!exps.length) { ctx.classList.add("hidden"); return; }
+  const sel = $("ec-select");
+  sel.innerHTML = exps.map((e) =>
+    `<option value="${e.id}"${e.id === state.activeExperiment ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  const eid = state.activeExperiment != null ? state.activeExperiment : (exps[0].id);
+  const detail = await loadExpDetail(eid);
+  const exp = detail.id != null ? detail : exps.find((e) => e.id === eid);
+  const runs = detail.runs || [];
+  const best = ecBestRun(exp, runs);
+
+  $("ec-status").textContent = (exp && exp.status) || "active";
+  $("ec-status").className = "exp-badge " +
+    ((exp && exp.status === "completed") ? "ok" : (exp && exp.status === "cancelled") ? "warn" : "det");
+
+  const goal = exp && exp.goal_metric
+    ? `goal ${exp.goal_metric} ${exp.higher_better !== false ? "↑" : "↓"} ${exp.goal_target != null ? _fmtNum(exp.goal_target) : "—"}`
+    : "no goal metric";
+  $("ec-goal").textContent = goal;
+
+  const bestTxt = best
+    ? `best ${_fmtNum(best.v)}${best.run.id != null ? " (run #" + best.run.id + ")" : ""}`
+    : "no runs yet";
+  $("ec-best").textContent = bestTxt;
+  $("ec-fill").style.width = ecProgress(exp, best) + "%";
+
+  // Run chips: click to jump to the improve-loop summary for this experiment.
+  const rc = $("ec-runs");
+  rc.innerHTML = "";
+  if (runs.length) {
+    runs.slice().reverse().forEach((r) => {
+      const chip = document.createElement("button");
+      chip.className = "ec-run-chip";
+      const m = exp && exp.goal_metric ? (r.metrics && r.metrics[exp.goal_metric]) : null;
+      chip.textContent = `#${r.id}${r.label ? " " + r.label : ""}` +
+        (m != null ? " " + _fmtNum(m) : "");
+      chip.title = "Jump to this run's message";
+      chip.dataset.runId = r.id;
+      chip.addEventListener("click", () => jumpToExpMessage(eid, r.id));
+      rc.appendChild(chip);
+    });
+  } else {
+    rc.innerHTML = '<span class="muted">No runs yet — ask the agent to improve it, or create a run.</span>';
+  }
+  ctx.classList.remove("hidden");
+  // Persisted last commit/push (survives page refresh).
+  const mgmtEl = $("ec-mgmt-msg");
+  if (mgmtEl) mgmtEl.innerHTML = mgmtActivityHtml(state.mgmtActivity);
+}
+
+function mgmtActivityHtml(a) {
+  if (!a) return "";
+  const link = repoCommitLinkHtml(a);
+  if (a.action === "push") {
+    const when = a.pushed_at || a.committed_at;
+    return "Last: Pushed " + link + (when ? " on " + esc(fmtDt(when)) : "") + " ✓";
+  }
+  return "Last: Committed " + link +
+    (a.committed_at ? " · " + esc(fmtDt(a.committed_at)) : "") + " ✓";
+}
+
+function tagMessageExperiment(el, expId) {
+  if (!el || expId == null) return;
+  el.div.dataset.expId = expId;
+  const label = el.div.querySelector(".msg-label");
+  if (!label || label.querySelector(".msg-exp")) return;
+  const chip = document.createElement("button");
+  chip.className = "msg-exp";
+  chip.textContent = "⚗ " + expName(expId);
+  chip.title = "Focus this experiment";
+  chip.dataset.eid = expId;
+  label.insertBefore(chip, label.firstChild);
+}
+
+function expMessages(eid) {
+  const msgs = $("messages");
+  if (!msgs) return [];
+  const all = Array.from(msgs.querySelectorAll(".msg"));
+  return all.filter((el) => String(el.dataset.expId) === String(eid));
+}
+
+function jumpToExpMessage(eid, runId) {
+  let targets = expMessages(eid);
+  if (runId != null) {
+    const tagged = targets.find((el) =>
+      el.textContent.indexOf("run #" + runId) >= 0 || el.textContent.indexOf("#" + runId) >= 0);
+    if (tagged) targets = [tagged];
+  }
+  if (!targets.length) {
+    focusExperiment(eid);
+    return;
+  }
+  const el = targets[targets.length - 1];
+  expandSetOf(el);
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.classList.add("exp-flash");
+  setTimeout(() => el.classList.remove("exp-flash"), 1600);
+}
+
+function jumpExpMessage(dir) {
+  const eid = state.activeExperiment;
+  if (eid == null) return;
+  const msgs = expMessages(eid);
+  if (!msgs.length) return;
+  const view = $("messages");
+  const midY = view ? view.getBoundingClientRect().top + view.clientHeight / 2 : 0;
+  let pick = dir < 0 ? msgs[0] : msgs[msgs.length - 1];
+  let bestDist = Infinity;
+  for (const el of msgs) {
+    const d = el.getBoundingClientRect().top - midY;
+    if (dir < 0 ? (d < 0 && midY - el.getBoundingClientRect().bottom < bestDist)
+                : (d > 0 && d < bestDist)) {
+      pick = el;
+      bestDist = dir < 0 ? midY - el.getBoundingClientRect().bottom : d;
+    }
+  }
+  pick.scrollIntoView({ behavior: "smooth", block: "start" });
+  expandSetOf(pick);
+  pick.classList.add("exp-flash");
+  setTimeout(() => pick.classList.remove("exp-flash"), 1600);
+}
+
+async function focusExperiment(eid) {
+  state.activeExperiment = eid;
+  await renderExpContext();
+}
+
+let ecMgmtMsgTimer = null;
+
+async function ecManagementAction(kind) {
+  const btn = kind === "commit" ? $("ec-commit") : $("ec-push");
+  const orig = btn.textContent;
+  btn.textContent = kind === "commit" ? "Committing…" : "Pushing…";
+  btn.disabled = true;
+  const msg = $("ec-mgmt-msg");
+  clearTimeout(ecMgmtMsgTimer);
+  try {
+    const endpoint = kind === "commit" ? "commit" : "push";
+    const r = await api(`/api/projects/${state.project}/management/${endpoint}`, {
+      method: "POST", body: JSON.stringify({}),
+    });
+    if (r.ok) {
+      state.mgmtActivity = { action: kind, ...r };
+      const link = repoCommitLinkHtml(r);
+      msg.innerHTML = kind === "commit"
+        ? "Committed " + link + (r.committed_at ? " · " + esc(fmtDt(r.committed_at)) : "") + " ✓"
+        : "Pushed " + link + (r.pushed_at ? " on " + esc(fmtDt(r.pushed_at)) : "") + " ✓";
+      msg.classList.remove("err");
+    } else {
+      msg.textContent = r.message || "failed";
+      msg.classList.add("err");
+      ecMgmtMsgTimer = setTimeout(() => { msg.textContent = ""; msg.classList.remove("err"); }, 8000);
+    }
+  } catch (e) {
+    msg.textContent = "Failed: " + e.message;
+    msg.classList.add("err");
+    ecMgmtMsgTimer = setTimeout(() => { msg.textContent = ""; msg.classList.remove("err"); }, 8000);
+  }
+  btn.textContent = orig;
+  btn.disabled = false;
+}
+
+$("ec-select").addEventListener("change", (e) => focusExperiment(parseInt(e.target.value, 10)));
+$("ec-prev").addEventListener("click", () => jumpExpMessage(-1));
+$("ec-next").addEventListener("click", () => jumpExpMessage(1));
+$("ec-improve").addEventListener("click", () => {
+  const eid = state.activeExperiment;
+  if (eid == null) return;
+  const name = expName(eid);
+  sendChat(`Improve the experiment "${name}" toward its goal.`, "improve_loop", { experiment_id: eid });
+});
+$("ec-commit").addEventListener("click", () => ecManagementAction("commit"));
+$("ec-push").addEventListener("click", () => ecManagementAction("push"));
 
 function renderRuns() {
   const el = $("runs-list");
@@ -2079,6 +2565,89 @@ function _metricColor(v, min, max) {
   return `rgb(${lerp(79, 201, t)},${lerp(63, 168, t)},${lerp(138, 255, t)})`;
 }
 
+/* ---- experiment grouping + compare-mode helpers (timeline / graph UX) ---- */
+
+const EXP_COLORS = ["#a974ff", "#4f8cff", "#4cd08d", "#d29922", "#e06c6c",
+                    "#00bcd4", "#f48fb1", "#9ccc65"];
+
+function expOf(eid) {
+  if (eid == null) return null;
+  return (state.expList || []).find((e) => String(e.id) === String(eid)) || null;
+}
+
+function expColor(eid) {
+  const idx = (state.expList || []).findIndex((e) => String(e.id) === String(eid));
+  return idx >= 0 ? EXP_COLORS[idx % EXP_COLORS.length] : "#9b93ab";
+}
+
+function expLegend() {
+  const exps = (state.expList || []).filter((e) => e.runs > 0);
+  return exps.map((e) =>
+    `<span class="exp-legend-item"><span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}</span>`).join("");
+}
+
+function expBestRun(runs, metric, higher) {
+  let best = null;
+  for (const r of runs) {
+    const v = r.metrics && r.metrics[metric];
+    if (v == null) continue;
+    if (best === null || (higher ? v > best.v : v < best.v)) best = { v, id: r.id };
+  }
+  return best;
+}
+
+// Compare-mode: click two chart nodes to fill the run comparison.
+let expComparePicks = { a: null, b: null };
+
+function expCompareModeOn() {
+  expComparePicks = { a: null, b: null };
+  $("exp-compare-mode").classList.add("active");
+  $("exp-compare-pick").classList.remove("hidden");
+  updateComparePickBar();
+}
+
+function expCompareModeOff() {
+  $("exp-compare-mode").classList.remove("active");
+  $("exp-compare-pick").classList.add("hidden");
+  expComparePicks = { a: null, b: null };
+}
+
+function updateComparePickBar() {
+  const ra = runsById(expComparePicks.a);
+  const rb = runsById(expComparePicks.b);
+  $("cpk-a").textContent = ra ? "#" + ra.id + " " + (ra.label || "") : "—";
+  $("cpk-b").textContent = rb ? "#" + rb.id + " " + (rb.label || "") : "—";
+}
+
+function runsById(id) {
+  if (id == null) return null;
+  return (state.expRuns || []).find((r) => String(r.id) === String(id)) || null;
+}
+
+function handleExpNodeClick(id) {
+  if (state.expCompareMode) {
+    if (expComparePicks.a == null || expComparePicks.a === id) {
+      expComparePicks.a = expComparePicks.a === id ? null : id;
+    } else if (expComparePicks.b == null || expComparePicks.b === id) {
+      expComparePicks.b = expComparePicks.b === id ? null : id;
+    }
+    updateComparePickBar();
+    if (expComparePicks.a != null && expComparePicks.b != null) {
+      const selA = $("exp-cmp-a"), selB = $("exp-cmp-b");
+      if (selA && selB) {
+        selA.value = String(expComparePicks.a);
+        selB.value = String(expComparePicks.b);
+      }
+      renderExpCompare();
+      expCompareModeOff();
+      const cmp = $("exp-compare");
+      if (cmp) cmp.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    return;
+  }
+  selectRun(id);
+}
+
 // --------------------------------------------------------- run comparison ----
 
 function populateExpCompare() {
@@ -2117,8 +2686,26 @@ async function renderExpCompare() {
   try {
     const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(a)}&run_b=${encodeURIComponent(b)}`);
     const c = r.comparison;
+    const ra = runsById(a), rb = runsById(b);
+    const artCol = (run) => {
+      const arts = (run && run.artifacts) || [];
+      if (!arts.length) return '<div class="muted">no artifacts</div>';
+      return `<div class="cmp-arts">` + arts.map((x) => {
+        const obj = typeof x === "object" ? x : { name: x, id: x, data_type: null };
+        if (obj.id && obj.data_type === "png") {
+          return `<img class="cmp-thumb" src="${B(`/artifacts/${obj.id}`)}" data-art-id="${esc(obj.id)}" title="${esc(obj.name || obj.id)}">`;
+        }
+        return `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+      }).join("") + `</div>`;
+    };
+    let h = `<div class="cmp-head">
+      <div class="cmp-col"><div class="cmp-run">${esc(c.a)}</div>${artCol(ra)}</div>
+      <div class="cmp-vs">vs</div>
+      <div class="cmp-col"><div class="cmp-run">${esc(c.b)}</div>${artCol(rb)}</div>
+    </div>`;
     if (!c.rows.length) {
-      el.innerHTML = `<div class="empty">No shared numeric metrics between <b>${esc(c.a)}</b> and <b>${esc(c.b)}</b>.</div>`;
+      h += `<div class="empty">No shared numeric metrics between <b>${esc(c.a)}</b> and <b>${esc(c.b)}</b>.</div>`;
+      el.innerHTML = h;
       return;
     }
     const sum = c.summary;
@@ -2130,8 +2717,9 @@ async function renderExpCompare() {
         <td class="${cls}">${arrow} ${_fmtNum(row.delta)}</td>
         <td class="${cls}">${row.pct > 0 ? "+" : ""}${_fmtNum(row.pct)}%</td></tr>`;
     }
-    el.innerHTML = `<table class="cmp-table"><tbody>${rows}</tbody></table>
+    h += `<table class="cmp-table"><tbody>${rows}</tbody></table>
       <div class="cmp-summary muted">${sum.shared} shared metric(s) · ${sum.increased} up · ${sum.decreased} down · ${sum.unchanged} unchanged</div>`;
+    el.innerHTML = h;
   } catch (e) {
     el.innerHTML = `<div class="empty">Comparison failed: ${esc(e.message || e)}</div>`;
   }
@@ -2141,7 +2729,7 @@ async function renderExpCompare() {
 
 function buildTimelineSvg(metric, W) {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  const H = 330, padL = 48, padR = 16, padT = 28, padB = 30;
+  const H = 340, padL = 48, padR = 16, padT = 30, padB = 44;
   const vals = nodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   if (!present.length) return '<div class="empty">No numeric values for this metric.</div>';
@@ -2149,6 +2737,24 @@ function buildTimelineSvg(metric, W) {
   const xs = nodes.map((_, i) => nodes.length > 1
     ? padL + i * (W - padL - padR) / (nodes.length - 1) : W / 2);
   const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
+
+  // Per-experiment goal lines (dashed) when this metric is a goal.
+  const goalLines = [];
+  const seenExp = new Set();
+  nodes.forEach((n) => {
+    const exp = expOf(n.experiment_id);
+    if (!exp || seenExp.has(exp.id)) return;
+    seenExp.add(exp.id);
+    if (exp.goal_metric === metric && exp.goal_target != null) {
+      goalLines.push({ v: Number(exp.goal_target), color: expColor(exp.id), name: exp.name });
+    }
+  });
+
+  // Best run for this metric (direction-aware via the goal experiment).
+  const firstExpNode = nodes.find((n) => n.experiment_id != null);
+  const goalExp = expOf(firstExpNode && firstExpNode.experiment_id);
+  const higher = goalExp ? goalExp.higher_better !== false : true;
+  const best = expBestRun(nodes, metric, higher);
 
   let out = `<svg viewBox="0 0 ${W} ${H}">`
     + `<defs><linearGradient id="tlfill" x1="0" y1="0" x2="0" y2="1">`
@@ -2160,10 +2766,12 @@ function buildTimelineSvg(metric, W) {
     out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#332d44" stroke-width="0.5"></line>`;
     out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="#9b93ab">${_fmtNum(v)}</text>`;
   }
-  nodes.forEach((n, i) => {
-    if (vals[i] != null)
-      out += `<text x="${xs[i]}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#9b93ab">#${i + 1}</text>`;
-  });
+  // Goal lines.
+  for (const g of goalLines) {
+    const gy = Math.max(padT, Math.min(H - padB, y(g.v)));
+    out += `<g><line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="${g.color}" stroke-width="1.6" stroke-dasharray="7 5" opacity="0.9"></line>`
+      + `<text x="${W - padR}" y="${gy - 5}" text-anchor="end" font-size="9.5" fill="${g.color}">goal ${esc(g.name)} ${_fmtNum(g.v)}</text></g>`;
+  }
 
   const pts = nodes.map((n, i) => vals[i] == null ? null : `${xs[i]},${y(vals[i])}`).filter(Boolean);
   if (pts.length) {
@@ -2175,18 +2783,30 @@ function buildTimelineSvg(metric, W) {
 
   nodes.forEach((n, i) => {
     if (vals[i] == null) return;
-    const color = n.fresh ? "#d29922" : "#b98cff";
+    const eid = n.experiment_id;
+    const color = eid != null ? expColor(eid) : (n.fresh ? "#d29922" : "#b98cff");
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    const isBest = best && String(best.id) === String(n.id);
+    const sug = reviewSuggestionsFor(n.id).length > 0;
+    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    let mark = "";
+    if (isBest) {
+      mark = `<circle r="12" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
+    }
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
       + `<title>${esc(tip)}</title>`
+      + mark
       + `<circle r="7" fill="${color}" stroke="#19132b" stroke-width="2" filter="drop-shadow(0 0 6px ${color}aa)"></circle>`
-      + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">#${i + 1}</text></g>`;
+      + (isBest ? `<text y="-20" text-anchor="middle" font-size="10">★</text>` : "")
+      + (sug ? `<text y="-28" text-anchor="middle" font-size="10">💡</text>` : "")
+      + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">${_fmtNum(vals[i])}</text>`
+      + `<text y="22" text-anchor="middle" font-size="9" fill="#9b93ab">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
   });
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">${metric.replace(/_/g, " ")} — evolution across runs</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
   out += `</svg>`;
-  return out;
+  const legend = expLegend();
+  return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
 // --------------------------------------------------------- similarity graph --
@@ -2281,7 +2901,7 @@ function buildGraphSvg(metric, W) {
   const H = 580;
   if (!gnodes.length) return '<div class="empty">No runs yet.</div>';
   const nodes = gnodes.map((g, i) => ({
-    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {},
+    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {}, g,
   }));
   const vals = gnodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
@@ -2322,13 +2942,23 @@ function buildGraphSvg(metric, W) {
   nodes.forEach((n, i) => {
     const v = vals[i];
     const color = v == null ? "#9b93ab" : _metricColor(v, vmin, vmax);
+    const ec = expColor(n.g.experiment_id);
     const sel = state.expSelected === n.id ? " selected" : "";
-    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\nclick for full summary`;
+    const bestForMetric = bestRunForMetric(metric);
+    const isBest = bestForMetric && String(bestForMetric.id) === String(n.id);
+    const sug = reviewSuggestionsFor(n.id).length > 0;
+    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
+      + (n.g.experiment_id != null
+        ? `<circle r="21" fill="none" stroke="${ec}" stroke-width="2" opacity="0.75"></circle>` : "")
+      + (isBest ? `<circle r="25" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"></circle>` : "")
       + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
-      + `<text y="-24" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
-      + `<text y="30" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
+      + (v != null ? `<text y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#0a0a0d">${_fmtNum(v)}</text>` : "")
+      + (isBest ? `<text y="-34" text-anchor="middle" font-size="11">★</text>` : "")
+      + (sug ? `<text y="-46" text-anchor="middle" font-size="11">💡</text>` : "")
+      + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
+      + `<text y="34" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
     const subs = expSubNodes(n.run);
     const R = 92;
@@ -2346,7 +2976,7 @@ function buildGraphSvg(metric, W) {
   });
 
   // legend
-  out += `<g transform="translate(${W - 230}, 12)">`
+  out += `<g transform="translate(${W - 290}, 12)">`
     + `<text x="0" y="-4" font-size="9" fill="#9b93ab">${metric.replace(/_/g, " ")}</text>`;
   for (let i = 0; i < 70; i++) {
     const t = i / 69;
@@ -2358,9 +2988,10 @@ function buildGraphSvg(metric, W) {
     + `<text x="78" y="20" font-size="9" fill="#b98cff">● finding</text>`
     + `<text x="78" y="31" font-size="9" fill="#a974ff">● artifact</text></g>`;
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap; ring = experiment)</text>`;
   out += `</svg>`;
-  return out;
+  const legend = expLegend();
+  return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
 function renderExperiments() {
@@ -2591,6 +3222,65 @@ function similarRuns(id) {
   return out.sort((a, b) => (b.similarity || 0) - (a.similarity || 0)).slice(0, 3);
 }
 
+/* ---- experiment run insights: reviewer suggestions + best-run compare ---- */
+
+function reviewOf(runId) {
+  return (state.agentRuns || []).find((r) => String(r.id) === String(runId)) || null;
+}
+
+function reviewSuggestionsFor(runId) {
+  const r = reviewOf(runId);
+  return (r && r.review && r.review.suggestions) || [];
+}
+
+function reviewFindingsFor(runId) {
+  const r = reviewOf(runId);
+  return (r && r.review && r.review.findings) || [];
+}
+
+function bestRunForMetric(metric) {
+  const runs = state.expRuns || [];
+  if (!metric) return null;
+  let best = null;
+  for (const r of runs) {
+    const v = r.metrics && r.metrics[metric];
+    if (v == null) continue;
+    if (best === null || v > best.v) best = { id: r.id, v };
+  }
+  return best;
+}
+
+function suggestionLabel(s) {
+  if (typeof s === "string") return s;
+  if (!s) return "";
+  return s.title || s.action || (typeof s.prompt === "string" ? s.prompt : JSON.stringify(s));
+}
+
+async function compareRunVsBest(runId, outEl) {
+  const metric = expMetric();
+  const best = bestRunForMetric(metric);
+  if (!best) { outEl.textContent = "no runs with the active metric"; return; }
+  if (String(best.id) === String(runId)) {
+    outEl.textContent = "this is the best run for " + metric.replace(/_/g, " ") + " 🏆";
+    return;
+  }
+  outEl.textContent = "Comparing…";
+  try {
+    const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(runId)}&run_b=${encodeURIComponent(best.id)}`);
+    const c = r.comparison;
+    if (!c.rows.length) { outEl.textContent = "no shared metrics vs best"; return; }
+    const rows = c.rows.map((row) => {
+      const cls = row.delta > 0 ? "delta-up" : row.delta < 0 ? "delta-down" : "";
+      const arrow = row.delta > 0 ? "▲" : row.delta < 0 ? "▼" : "—";
+      return `<tr><td>${esc(row.metric)}</td><td>${_fmtNum(row.a)}</td><td>${_fmtNum(row.b)}</td>
+        <td class="${cls}">${arrow} ${_fmtNum(row.delta)}</td>
+        <td class="${cls}">${row.pct > 0 ? "+" : ""}${_fmtNum(row.pct)}%</td></tr>`;
+    }).join("");
+    outEl.innerHTML = `<div class="vs-head">this run vs <b>best</b> (run #${best.id})</div>
+      <table class="cmp-table"><tbody>${rows}</tbody></table>`;
+  } catch (e) { outEl.textContent = "compare failed: " + (e.message || e); }
+}
+
 function renderExpDetail() {
   const el = $("exp-detail");
   const runs = state.expRuns || [];
@@ -2606,6 +3296,12 @@ function renderExpDetail() {
   const time = run.timestamp ? new Date(run.timestamp).toLocaleString() : "—";
   let h = `<div class="ed-head">${esc(run.label || ("Run #" + run.id))} ${badge}</div>`;
   h += `<div class="ed-meta">${esc(time)}</div>`;
+  h += `<div class="ed-actions">
+    ${run.experiment_id != null
+      ? `<button class="btn subtle small ed-improve" data-eid="${esc(run.experiment_id)}" data-rid="${esc(run.id)}" title="Run the improve loop for this experiment">🔁 Improve from here</button>` : ""}
+    <button class="btn subtle small ed-vs-best" data-rid="${esc(run.id)}" title="Compare this run against the best run for the active metric">⇄ Compare vs best</button>
+    <span class="ed-vs-out muted"></span>
+  </div>`;
 
   const mkeys = Object.keys(run.metrics || {});
   if (mkeys.length) {
@@ -2618,18 +3314,40 @@ function renderExpDetail() {
   if (run.prompt) {
     h += `<div class="ed-sec">Prompt</div><div class="ed-find">${esc(run.prompt)}</div>`;
   }
+  const sugs = reviewSuggestionsFor(run.id);
+  if (sugs.length) {
+    h += `<div class="ed-sec">💡 Suggested improvements</div>`;
+    for (const s of sugs.slice(0, 4)) {
+      h += `<div class="ed-find ed-sug">💡 ${esc(String(suggestionLabel(s)).replace(/\s+/g, " ").slice(0, 160))}</div>`;
+    }
+  }
   if ((run.findings || []).length) {
     h += `<div class="ed-sec">Findings</div>`;
     for (const f of run.findings) h += `<div class="ed-find">${esc(f)}</div>`;
+  }
+  const revFindings = reviewFindingsFor(run.id);
+  if (revFindings.length && !(run.findings || []).length) {
+    h += `<div class="ed-sec">Reviewer findings</div>`;
+    for (const f of revFindings.slice(0, 4)) {
+      const t = typeof f === "object" ? (f.message || JSON.stringify(f)) : String(f);
+      h += `<div class="ed-find">${esc(String(t).replace(/\s+/g, " ").slice(0, 160))}</div>`;
+    }
   }
   h += `<div class="ed-sec">Artifacts</div>`;
   const arts = run.artifacts || [];
   if (!arts.length) {
     h += `<div class="muted">none</div>`;
-  }
-  for (const a of arts) {
-    const obj = typeof a === "object" ? a : { name: a, id: null };
-    h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+  } else {
+    h += `<div class="ed-arts">`;
+    for (const a of arts) {
+      const obj = typeof a === "object" ? a : { name: a, id: a, data_type: null };
+      if (obj.id && obj.data_type === "png") {
+        h += `<div class="ed-art-thumb"><img src="${B(`/artifacts/${obj.id}`)}" alt="${esc(obj.name || obj.id)}" data-art-id="${esc(obj.id)}" title="${esc(obj.name || obj.id)}"></div>`;
+      } else {
+        h += `<a class="ed-art" data-art-id="${esc(obj.id || "")}">📄 ${esc(obj.name || obj.id)}</a>`;
+      }
+    }
+    h += `</div>`;
   }
   const sims = similarRuns(run.id);
   if (sims.length) {
@@ -2663,7 +3381,7 @@ EXP_VIEWS.forEach((id) => {
   $(id).addEventListener("click", (e) => {
     if (expPan[id].drag && expPan[id].drag.moved) { expPan[id].drag.moved = false; return; }
     const n = e.target.closest(".exp-node, .exp-subnode");
-    if (n && n.dataset.id) selectRun(n.dataset.id);
+    if (n && n.dataset.id) handleExpNodeClick(n.dataset.id);
   });
 });
 ["exp-detail", "expmain-detail"].forEach((id) => {
@@ -2672,6 +3390,22 @@ EXP_VIEWS.forEach((id) => {
   el.addEventListener("click", (e) => {
     const sim = e.target.closest(".ed-sim-link");
     if (sim) { selectRun(sim.dataset.id); return; }
+    const improve = e.target.closest(".ed-improve");
+    if (improve) {
+      const eid = improve.dataset.eid;
+      const rid = improve.dataset.rid;
+      sendChat(`Improve the experiment toward its goal, continuing from run #${rid}.`,
+               "improve_loop", { experiment_id: eid });
+      return;
+    }
+    const vsBest = e.target.closest(".ed-vs-best");
+    if (vsBest) {
+      const out = vsBest.parentElement.querySelector(".ed-vs-out");
+      if (out) compareRunVsBest(vsBest.dataset.rid, out);
+      return;
+    }
+    const thumb = e.target.closest(".ed-art-thumb img, .cmp-thumb");
+    if (thumb) { openArtifactById(thumb.dataset.artId); return; }
     const art = e.target.closest(".ed-art");
     if (art) openArtifactById(art.dataset.artId);
   });
@@ -2680,6 +3414,16 @@ $("exp-refresh-main").addEventListener("click", loadExperiments);
 $("exp-cmp-go").addEventListener("click", renderExpCompare);
 $("exp-cmp-a").addEventListener("change", renderExpCompare);
 $("exp-cmp-b").addEventListener("change", renderExpCompare);
+$("exp-compare-mode").addEventListener("click", () => {
+  if (state.expCompareMode) { state.expCompareMode = false; expCompareModeOff(); }
+  else { state.expCompareMode = true; expCompareModeOn(); }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.expCompareMode) {
+    state.expCompareMode = false;
+    expCompareModeOff();
+  }
+});
 $("goal-add").addEventListener("click", addGoal);
 $("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });

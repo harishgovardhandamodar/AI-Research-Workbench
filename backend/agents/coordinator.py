@@ -213,6 +213,15 @@ class Coordinator:
         if self.check_abort is not None and self.check_abort():
             raise TurnAborted()
 
+    def _exp_meta(self, base: dict | None = None) -> dict:
+        """Message meta tagged with the experiment this turn belongs to, so the
+        chat window can group and navigate experiment messages."""
+        meta = dict(base or {})
+        eid = getattr(self.ctx, "experiment_id", "")
+        if str(eid).isdigit():
+            meta["experiment_id"] = int(eid)
+        return meta
+
     async def run_turn(self, messages: list[dict]) -> dict:
         """Run one agent turn over `messages` (already ending with the user message).
 
@@ -267,7 +276,7 @@ class Coordinator:
                 }
                 messages.append(assistant_msg)
                 self.persist("assistant", assistant_msg["content"],
-                             {"tool_calls": assistant_msg["tool_calls"]})
+                             self._exp_meta({"tool_calls": assistant_msg["tool_calls"]}))
 
                 for tc in full["tool_calls"]:
                     fn = tc.get("function") or {}
@@ -326,7 +335,7 @@ class Coordinator:
                         "tool_call_id": tc.get("id", ""),
                         "content": result,
                     })
-                    self.persist("tool", result, {"name": name, "tool_call_id": tc.get("id", "")})
+                    self.persist("tool", result, self._exp_meta({"name": name, "tool_call_id": tc.get("id", "")}))
                     self._raise_if_aborted()
 
             if workflow is not None:

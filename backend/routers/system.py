@@ -95,14 +95,34 @@ async def management_link(body: dict):
     return {"ok": ok, "message": msg, "remote": github_remote_url()}
 
 
+def _save_management_activity(rt, action: str, result: dict):
+    """Persist the last commit/push result so the chat window can show it again
+    after a page refresh."""
+    try:
+        rt.store.set_setting("management_last_activity", json.dumps({
+            "action": action,
+            "commit": result.get("commit"),
+            "commit_full": result.get("commit_full"),
+            "committed_at": result.get("committed_at"),
+            "pushed_at": result.get("pushed_at"),
+            "commit_url": result.get("commit_url"),
+            "message": result.get("message"),
+        }))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @router.post("/api/projects/{name}/management/commit")
 async def project_management_commit(name: str, body: dict):
     """Commit this project's experiment artifacts to the management repo."""
     from .. import experiment_repo
 
     rt = get_runtime(name)
-    return await experiment_repo.commit_project_async(
+    result = await experiment_repo.commit_project_async(
         rt, (body.get("message") or "").strip() or None)
+    if result.get("ok"):
+        _save_management_activity(rt, "commit", result)
+    return result
 
 
 @router.post("/api/projects/{name}/management/push")
@@ -110,7 +130,11 @@ async def project_management_push(name: str):
     """Push the management repo's current branch to its GitHub remote."""
     from .. import experiment_repo
 
-    return await asyncio.to_thread(experiment_repo.push)
+    result = await asyncio.to_thread(experiment_repo.push)
+    if result.get("ok"):
+        rt = get_runtime(name)
+        _save_management_activity(rt, "push", result)
+    return result
 
 
 @router.post("/api/projects/{name}/management/commit-and-push")
@@ -124,6 +148,7 @@ async def project_management_commit_and_push(name: str, body: dict):
     if not result.get("ok"):
         return result
     pushed = await asyncio.to_thread(experiment_repo.push)
+    _save_management_activity(rt, "push", {**result, **pushed})
     return {**result, "pushed": pushed}
 
 

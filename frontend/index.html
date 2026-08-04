@@ -55,9 +55,13 @@
           <button class="expview-btn" data-expview="graph">Graph</button>
         </div>
         <select id="exp-metric-main" title="Metric"></select>
+        <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
         <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
         <span class="spacer"></span>
-        <span class="muted exp-hint">Timeline = evolution over runs · Graph = similarity edges (thicker = more similar) · click a node for details</span>
+        <span class="muted exp-hint">Timeline = evolution · Graph = similarity edges · click a node for details · ⇄ Compare = click two runs</span>
+      </div>
+      <div id="exp-compare-pick" class="exp-compare-pick hidden">
+        <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
       </div>
       <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
       <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
@@ -167,6 +171,30 @@
         <div class="workflow-bar"><div id="workflow-fill" class="workflow-fill" style="width:0%"></div></div>
         <div id="workflow-stages" class="workflow-stages"></div>
       </div>
+
+      <!-- Experiment context bar: navigate / act on the active experiment -->
+      <div id="exp-context" class="exp-context hidden">
+        <div class="ec-head">
+          <select id="ec-select" class="ec-select" title="Switch experiment"></select>
+          <span id="ec-status" class="exp-badge det">active</span>
+          <span class="spacer"></span>
+          <button id="ec-prev" class="btn subtle small" title="Previous experiment message">◀</button>
+          <button id="ec-next" class="btn subtle small" title="Next experiment message">▶</button>
+          <button id="ec-improve" class="btn subtle small" title="Run the improve loop for this experiment">Improve</button>
+          <button id="ec-commit" class="btn subtle small" title="Commit experiment artifacts to the management repo">Commit</button>
+          <button id="ec-push" class="btn subtle small" title="Push the management repo to GitHub">Push</button>
+        </div>
+        <div class="ec-goal-row">
+          <span id="ec-goal" class="ec-goal muted">goal —</span>
+          <div class="ec-progress"><div id="ec-fill" class="ec-fill" style="width:0%"></div></div>
+          <span id="ec-best" class="ec-best">best —</span>
+        </div>
+        <div id="ec-runs" class="ec-runs"></div>
+        <div id="ec-mgmt-msg" class="ec-mgmt-msg muted"></div>
+      </div>
+
+      <div id="chat-stats" class="chat-stats muted" title="UI build + render status"></div>
+
       <div id="messages" class="scroll"></div>
       <div id="busy-status" class="busy-status" title="Current activity"></div>
       <div id="quick-actions" class="quick-actions">
@@ -176,6 +204,26 @@
                 data-text="Run the privacy workflow with a fresh seed">↻ Fresh rerun</button>
         <button class="btn subtle small quick" data-intent="privacy_compare"
                 data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
+        <button class="btn subtle small quick" data-intent="godmode"
+                data-text="Run the experiment in a quarantined sandbox with full access">⚡ God mode</button>
+        <button class="btn subtle small quick" data-intent="improve_loop"
+                data-text="Improve the latest experiment toward its goal">🔁 Improve experiment</button>
+        <button class="btn subtle small quick"
+                data-text="Plan and create an experiment to answer a research question">⚗ New experiment</button>
+        <button class="btn subtle small quick"
+                data-text="Run notebook examples/notebooks/01_simple_decay_fit.ipynb">🏃 Run sample notebook</button>
+        <button class="btn subtle small quick"
+                data-text="Compare the last two runs and show the metric deltas">🥇 Compare last 2 runs</button>
+        <button class="btn subtle small quick"
+                data-text="Generate a lab-notebook report for the last run">📊 Report last run</button>
+        <button class="btn subtle small quick"
+                data-text="Summarize our conversation so far">📝 Summarize chat</button>
+        <button class="btn subtle small quick"
+                data-text="Import the Kaggle dataset alexisbcook/titanic into the project">📥 Import Kaggle dataset</button>
+        <button class="btn subtle small quick"
+                data-text="Show the best run so far and why it wins">🏆 Best run so far</button>
+        <button class="btn subtle small quick"
+                data-text="List all experiments with their status and best metric">🗂 Experiments</button>
       </div>
       <div id="composer">
         <span id="activity" class="activity hidden" title="Generating"></span>
@@ -436,7 +484,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v42";
+  window.FOX_VER = "v58";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

@@ -54,7 +54,7 @@ class TestUnifyRecord(unittest.TestCase):
     def test_artifact_ids_resolved_via_store(self):
         class FakeArtifacts:
             def get(self, aid):
-                return type("A", (), {"name": "report.md"})()
+                return type("A", (), {"name": "report.md", "data_type": "text"})()
 
         u = experiments.unify_record(
             _agent_run(1, {"x": 1.0}, "l"), artifact_store=FakeArtifacts())
@@ -62,7 +62,8 @@ class TestUnifyRecord(unittest.TestCase):
 
         rec = {"id": 5, "kind": "agent_run", "artifact_ids": ["abc"], "metrics": {}}
         u = experiments.unify_record(rec, artifact_store=FakeArtifacts())
-        self.assertEqual(u["artifacts"], [{"id": "abc", "name": "report.md"}])
+        self.assertEqual(u["artifacts"],
+                         [{"id": "abc", "name": "report.md", "data_type": "text"}])
 
 
 class TestMetricsFindings(unittest.TestCase):

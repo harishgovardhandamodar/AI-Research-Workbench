@@ -7,6 +7,7 @@ an environment snapshot, and a link to the conversation message that led to it.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -15,6 +16,14 @@ from pathlib import Path
 from ..store import connect_project_db
 
 ARTIFACT_KINDS = {"figure", "table", "structure", "text", "notebook", "data"}
+
+
+def _normalize_artifact_name(name: str) -> str:
+    """Strip report-injected figure decorations: 'new_<base>_seed<digits>' ->
+    '<base>', so /artifacts/new_fig_x_seed123 resolves to artifact fig_x."""
+    n = re.sub(r"^new_", "", name)
+    n = re.sub(r"_seed\d+$", "", n)
+    return n
 
 
 class Artifact:
@@ -126,6 +135,29 @@ class ArtifactStore:
         row = self._conn.execute(
             "SELECT * FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
         return self._row_artifact(row) if row else None
+
+    def find_by_name(self, name: str) -> Artifact | None:
+        """Resolve an artifact by its display name (figures referenced by name
+        in reports, e.g. 'new_fig_peer_coverage_seed...')."""
+        if not name:
+            return None
+        cands = [name, _normalize_artifact_name(name)]
+        seen = set()
+        for cand in cands:
+            if not cand or cand in seen:
+                continue
+            seen.add(cand)
+            row = self._conn.execute(
+                "SELECT * FROM artifacts WHERE name=? ORDER BY created_at DESC "
+                "LIMIT 1", (cand,)).fetchone()
+            if row:
+                return self._row_artifact(row)
+            row = self._conn.execute(
+                "SELECT * FROM artifacts WHERE name LIKE ? ORDER BY created_at "
+                "DESC LIMIT 1", (f"{cand}%",)).fetchone()
+            if row:
+                return self._row_artifact(row)
+        return None
 
     def data(self, artifact_id: str) -> bytes | None:
         art = self.get(artifact_id)
