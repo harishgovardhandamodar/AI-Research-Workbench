@@ -193,6 +193,8 @@
         <div id="ec-mgmt-msg" class="ec-mgmt-msg muted"></div>
       </div>
 
+      <div id="chat-stats" class="chat-stats muted" title="UI build + render status"></div>
+
       <div id="messages" class="scroll"></div>
       <div id="busy-status" class="busy-status" title="Current activity"></div>
       <div id="quick-actions" class="quick-actions">
@@ -462,7 +464,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v50";
+  window.FOX_VER = "v51";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

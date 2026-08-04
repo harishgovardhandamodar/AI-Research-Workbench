@@ -1611,6 +1611,8 @@ function renderMessages(msgs) {
   let lastDay = "";
   let turnUser = "";
   let currentSet = null;
+  let setCount = 0;
+  let errCount = 0;
   for (let i = 0; i < msgs.length; i++) {
     try {
       const m = msgs[i];
@@ -1625,6 +1627,7 @@ function renderMessages(msgs) {
           lastDay = day;
         }
         currentSet = msgSetCreate(m, true);
+        setCount++;
         const el = msgContainer("user", mtags, m.created_at, currentSet.body);
         el.body.textContent = m.content;
         tagMessageExperiment(el, m.meta && m.meta.experiment_id);
@@ -1662,6 +1665,7 @@ function renderMessages(msgs) {
         currentSet.body.appendChild(card);
       }
     } catch (e) {
+      errCount++;
       // Never blank the conversation: log and fall back to a flat bubble.
       console.error("renderMessages: message", msgs[i] && msgs[i].id, e);
       try {
@@ -1673,6 +1677,12 @@ function renderMessages(msgs) {
         else el.body.innerHTML = renderMarkdown(fm.content || "");
       } catch (e2) { /* give up on this one */ }
     }
+  }
+  const stats = $("chat-stats");
+  if (stats) {
+    const bodyN = (() => { let n = 0; wrap.querySelectorAll(".mset-body").forEach((b) => n += b.children.length); return n; })();
+    stats.textContent = "v" + (window.FOX_VER || "?") + " · " + setCount + " conversation set(s) · " +
+      (msgs || []).length + " message(s) · " + bodyN + " rendered" + (errCount ? " · " + errCount + " error(s)" : "");
   }
   scrollBottom();
 }
