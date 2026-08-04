@@ -6,20 +6,42 @@ so your data never leaves home unless you explicitly approve a network command.
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
-- **Chat + tool-calling agent** against local models (OpenAI-compatible)
-- **Persistent, sandboxed Python kernel** — variables, dataframes and figures
-  survive across turns
-- **Artifact system with full provenance** — every figure/table records its exact
-  code + environment snapshot, stored in SQLite + filesystem
-- **Background reviewer agent** that checks claims against the execution history
-- **Experiment Tracking** - Artifacts and experiments tracked as knowledge graphs helps in tracking metrices between run ![Experiment tracking view](docs/images/experiment-tracking.png) ![Experiment timeline view](docs/images/experiment-timeline.png) ![Experiment graph view](docs/images/experiment-graph.png)
+## Top features
+
+- **Agentic experimentation** — the agent plans experiments, runs variants, and a
+  background **reviewer** suggests improvements; the **improve loop** iterates
+  run → review → apply → rerun toward a goal metric until it's reached.
+- **Experiment tracking cockpit** — timeline + similarity graph with experiment
+  coloring, goal lines, best-run highlight, per-run **suggestions 💡**, and
+  one-click **compare vs best** / **improve from here**.
+  ![Experiment tracking view](docs/images/experiment-tracking.png) ![Experiment timeline view](docs/images/experiment-timeline.png) ![Experiment graph view](docs/images/experiment-graph.png)
 - **Experiment source control** — version experiments, runs and artifacts in a
-  sibling git repo (e.g. `personal-experiments`) with auto-commit/push to GitHub;
-  see [HOW-to-USE.md → Experiment source control](HOW-to-USE.md#experiment-source-control-management-repo)
-- **Permission model** — shell commands ask before running; network is deny-by-default
-- **Project workspaces** — SQLite-backed sessions, per-project kernels
-- **Figure annotation / regeneration** — "remove the gridlines" regenerates the figure
-- **Built in - VS code Editor** - edit agent generated scripts with built in VS code editor
+  sibling git repo (e.g. `personal-experiments`) with **auto-commit/push to
+  GitHub** and manual Commit/Push buttons; see
+  [HOW-to-USE.md → Experiment source control](HOW-to-USE.md#experiment-source-control-management-repo).
+- **⚡ God mode** — run an experiment with full access (shell/network/MCP
+  auto-approved) inside a quarantined per-turn sandbox.
+- **Slash commands** — `/godmode`, `/improve`, `/compare`, `/commit`, `/push`,
+  `/kaggle`, `/notebook`, `/status`, `/help` and more; see [commands.md](commands.md).
+- **GitHub MCP server** — status / commit / push / pull tools the agent can call,
+  plus sibling-repo discovery for the management repo.
+- **Kaggle dataset import** — pull any public dataset into the project
+  (`/kaggle alexisbcook/titanic` or the Files panel).
+- **Chat + tool-calling agent** against local models (OpenAI-compatible), with
+  live streaming, Stop button, copy, timestamps, and grouped/navigable sets.
+- **Persistent, sandboxed Python kernel** — variables, dataframes and figures
+  survive across turns.
+- **Artifact system with full provenance** — every figure/table records its exact
+  code + environment snapshot, stored in SQLite + filesystem.
+- **Background reviewer agent** that checks claims against the execution history.
+- **Permission model** — shell commands ask before running; network is deny-by-default.
+- **Project workspaces** — SQLite-backed sessions, per-project kernels.
+- **Figure annotation / regeneration** — "remove the gridlines" regenerates the figure.
+- **Built-in VS Code editor** — edit agent-generated scripts in-app.
+- **Workflow progress panel** — live per-stage progress for improve loops, arXiv
+  replication, the privacy workflow, notebooks, and any agent tool run.
+- **Built-in workflows** — privacy peer-exploitation / red-team / DP-robustness,
+  and arXiv ingestion → knowledge graph → replication.
 
 ## Architecture
 
