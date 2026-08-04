@@ -27,13 +27,14 @@ from .agents.reviewer import Reviewer
 from .artifacts.store import Artifact
 from .experiments import findings_from_run, metrics_from_run
 from .experiment_loop import run_improve_loop
-from .experiment_repo import maybe_autocommit
+from .experiment_repo import management_repo_dir, maybe_autocommit
 from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import AllowAllPermissionManager
 from .project_runtime import ProjectRuntime
 from .routers import artifacts, notebooks, projects, runs, system
-from .state import allowed_origins, get_runtime, mcp_registry, origin_allowed, runtimes
+from .state import (CONFIG, allowed_origins, get_runtime, mcp_registry,
+                    origin_allowed, runtimes)
 
 
 # ------------------------------------------------------------------ app -----
@@ -532,6 +533,219 @@ def _autocommit_ready(run: dict) -> bool:
     return bool(run.get("experiment_id"))
 
 
+# ------------------------------------------------------------------ commands --
+
+# Slash commands that map onto existing turn intents (rewritten, then flow into
+# the normal handling below).
+_SLASH_INTENTS = {
+    "/godmode": "godmode",
+    "/god": "godmode",
+    "/sandbox": "godmode",
+    "/improve": "improve_loop",
+}
+
+_SLASH_PROMPTS = {
+    "/godmode": "Run a thorough experiment with full access and summarize what you did.",
+    "/god": "Run a thorough experiment with full access and summarize what you did.",
+    "/sandbox": "Run a thorough experiment with full access and summarize what you did.",
+    "/improve": "Improve the latest experiment toward its goal.",
+}
+
+
+def _slash_to_intent(text: str) -> str | None:
+    cmd = (text or "").strip().split(maxsplit=1)[0].lower()
+    return _SLASH_INTENTS.get(cmd)
+
+
+def _slash_arg(text: str) -> str:
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return _SLASH_PROMPTS.get(parts[0].lower(), "")
+    return parts[1].strip()
+
+
+HELP_TEXT = """\
+**Fox slash commands** (type one in the chat box):
+
+| Command | What it does |
+|---|---|
+| `/help` | Show this command list |
+| `/godmode <request>` | Full access in a quarantined sandbox — run the experiment freely |
+| `/improve [name]` | Run the improve loop for the latest (or named) experiment |
+| `/experiments` | List experiments with status, goal and best metric |
+| `/compare <a> <b>` | Compare two runs by id (metric deltas) |
+| `/report [run_id]` | Generate a lab-notebook report for the last (or given) run |
+| `/commit` | Commit this project's experiment artifacts to the management repo |
+| `/push` | Push the management repo to GitHub |
+| `/kaggle <owner/dataset>` | Import a public Kaggle dataset |
+| `/notebook <name>` | Run a project notebook |
+| `/status` | Show model / config / MCP status |
+| `/clear` | Clear this project's conversation |
+
+UI switches: `?flat=1` plain bubbles (default) · `?sets=1` grouped collapsible sets.
+"""
+
+
+async def _run_slash_command(rt: ProjectRuntime, emit, coordinator,
+                             text: str) -> bool:
+    """Handle a slash command. Returns True when fully handled (chat turn ends)."""
+    parts = text.strip().split(maxsplit=1)
+    cmd = parts[0].lower()
+    arg = (parts[1] if len(parts) > 1 else "").strip()
+
+    async def reply(content: str, tags=None):
+        amid = rt.store.add_message("assistant", content, {"tags": tags or ["command"]})
+        await emit("assistant_message", {"id": amid, "content": content,
+                                         "tags": tags or ["command"]})
+        await emit("done", {})
+
+    if cmd == "/help":
+        await reply(HELP_TEXT, ["help"])
+        return True
+
+    if cmd == "/status":
+        cfg = CONFIG
+        content = [
+            "**Fox status**",
+            "",
+            f"- Project: **{rt.name}**",
+            f"- Model: **{cfg['llm'].get('model')}** (gateway {cfg['llm'].get('base_url')})",
+            f"- Tool endpoint: {cfg['llm'].get('tool_base_url')}",
+            f"- Reviewer: {'on' if cfg['agent'].get('reviewer_enabled') else 'off'} · "
+            f"max_iters: {cfg['agent'].get('max_iters')}",
+            f"- Experiment repo: {management_repo_dir() or 'not configured'}",
+        ]
+        try:
+            statuses = await mcp_registry.statuses()
+            ok = sum(1 for s in statuses if s["ok"])
+            content.append(f"- MCP servers: {ok}/{len(statuses)} connected")
+        except Exception:  # noqa: BLE001
+            pass
+        await reply("\n".join(content), ["status"])
+        return True
+
+    if cmd == "/experiments":
+        exps = rt.store.list_experiments()
+        if not exps:
+            await reply("No experiments yet — ask Fox to plan and run one.", ["experiments"])
+            return True
+        lines = ["**Experiments**", ""]
+        for e in exps:
+            runs = rt.store.experiment_runs(e["id"], limit=1)
+            best = None
+            if runs and e.get("goal_metric"):
+                vals = [r["metrics"].get(e["goal_metric"]) for r in
+                        rt.store.experiment_runs(e["id"], limit=50)
+                        if r["metrics"].get(e["goal_metric"]) is not None]
+                if vals:
+                    best = max(vals) if e.get("higher_better", True) else min(vals)
+            goal = f"{e.get('goal_metric') or '—'} target {e.get('goal_target') or '—'}"
+            best_txt = f"{best:.4g}" if best is not None else "—"
+            lines.append(f"- **{e['name']}** (#{e['id']}, {e.get('status')}) — "
+                         f"{goal} · best {best_txt}")
+        await reply("\n".join(lines), ["experiments"])
+        return True
+
+    if cmd == "/compare":
+        if not arg:
+            runs = rt.store.list_runs()
+            if len(runs) < 2:
+                await reply("Not enough runs to compare. Run an experiment first.",
+                            ["compare"])
+                return True
+            a, b = str(runs[-2]["id"]), str(runs[-1]["id"])
+        else:
+            ids = arg.split()
+            if len(ids) < 2:
+                await reply("Usage: /compare <run_a> <run_b> (or bare /compare for the last two).",
+                            ["compare"])
+                return True
+            a, b = ids[0], ids[1]
+        from .experiments import compare_runs
+
+        def resolve(ref):
+            return rt.store.get_run(int(ref)) if str(ref).isdigit() else None
+
+        ra, rb = resolve(a), resolve(b)
+        if ra is None or rb is None:
+            await reply("Could not resolve those run ids.", ["compare"])
+            return True
+        c = compare_runs(ra, rb)
+        lines = [f"**Compare** run {a} vs {b}", ""]
+        if not c["rows"]:
+            lines.append("No shared numeric metrics.")
+        for row in c["rows"]:
+            arrow = "▲" if row["delta"] > 0 else ("▼" if row["delta"] < 0 else "—")
+            lines.append(f"- **{row['metric']}**: {row['a']:.4g} → {row['b']:.4g} "
+                         f"({arrow} {row['delta']:+.4g}, {row['pct']:+.1f}%)")
+        lines.append("")
+        lines.append(f"{c['summary']['shared']} shared · {c['summary']['increased']} up · "
+                     f"{c['summary']['decreased']} down")
+        await reply("\n".join(lines), ["compare"])
+        return True
+
+    if cmd == "/report":
+        from .routers.runs import build_run_report
+
+        rid = int(arg) if arg.isdigit() else None
+        run = rt.store.get_run(rid) if rid is not None else (
+            rt.store.list_runs()[-1] if rt.store.list_runs() else None)
+        if run is None:
+            await reply("No runs to report on.", ["report"])
+            return True
+        report = await build_run_report(rt, run)
+        await reply(report, ["report", f"run #{run['id']}"])
+        return True
+
+    if cmd in ("/commit", "/push"):
+        from . import experiment_repo
+
+        result = await experiment_repo.commit_project_async(rt) if cmd == "/commit" \
+            else await asyncio.to_thread(experiment_repo.push)
+        await reply((result.get("message") or "") if result.get("ok")
+                    else ("Failed: " + (result.get("message") or "")),
+                    ["command", "repo"])
+        return True
+
+    if cmd == "/kaggle":
+        if not arg:
+            await reply("Usage: /kaggle <owner/dataset> (e.g. /kaggle alexisbcook/titanic)",
+                        ["kaggle"])
+            return True
+        from .kaggle import has_credentials, import_dataset, validate_slug
+
+        try:
+            validate_slug(arg)
+        except ValueError as e:
+            await reply(f"Invalid slug: {e}", ["kaggle"])
+            return True
+        if not has_credentials():
+            await reply("Kaggle credentials are not configured (Settings).", ["kaggle"])
+            return True
+        await emit("status", {"message": f"Importing Kaggle dataset {arg}…"})
+        result = await asyncio.to_thread(import_dataset, rt, arg)
+        await reply(f"Imported **{result['dataset']}** — {len(result['files'])} file(s) "
+                    f"into `{result['dir']}`.", ["kaggle"])
+        return True
+
+    if cmd == "/notebook":
+        if not arg:
+            await reply("Usage: /notebook <name> (e.g. /notebook 01_simple_decay_fit)",
+                        ["notebook"])
+            return True
+        await emit("status", {"message": f"Executing notebook {arg}…"})
+        result = await run_notebook_intent(rt, emit, arg, False, message_id="")
+        await reply(result, ["notebook"])
+        return True
+
+    if cmd == "/clear":
+        rt.store.clear_messages()
+        await reply("Conversation cleared.", ["command"])
+        return True
+
+    return False
+
+
 def _msg_created_at(rt: ProjectRuntime, mid: int) -> float | None:
     """Timestamp for a WS message event (so live chat can show times)."""
     row = rt.store.get_message(mid)
@@ -617,6 +831,14 @@ async def ws_chat(ws: WebSocket, name: str):
         abort_event.clear()
         async with rt.lock:
             try:
+                # Slash commands (e.g. "/godmode run x", "/commit", "/help").
+                if text.startswith("/"):
+                    slash_intent = _slash_to_intent(text)
+                    if slash_intent is not None:
+                        intent = slash_intent
+                        text = _slash_arg(text)
+                    elif await _run_slash_command(rt, emit, coordinator, text):
+                        return
                 user_tags = message_tags("user", text)
                 # Explicit intents (from the UI quick-action buttons) route
                 # deterministically instead of relying on keyword matching.

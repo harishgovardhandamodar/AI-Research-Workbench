@@ -918,10 +918,21 @@ function onError(msg) {
   onTurnDone();
 }
 
+function setViewParam(kind) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("flat", kind === "flat" ? "1" : "0");
+  url.searchParams.set("sets", kind === "sets" ? "1" : "0");
+  window.location.href = url.toString();
+}
+
 async function sendChat(textOverride, intent, extra) {
   const input = $("input");
   const text = textOverride !== undefined ? textOverride : input.value.trim();
   if (!text || state.busy) return;
+  // Local UI switches (rendering mode).
+  const t = text.trim();
+  if (t === "/flat" || t === "/flat=1") { setViewParam("flat"); return; }
+  if (t === "/sets" || t === "/sets=1") { setViewParam("sets"); return; }
   if (textOverride !== undefined) {
     input.value = "";
     autoResize(input);
