@@ -238,15 +238,20 @@ async def project_goals_add(name: str, body: dict):
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="target must be numeric")
     rt = get_runtime(name)
+    eid = body.get("experiment_id")
+    eid = int(eid) if str(eid).isdigit() else None
+    if eid is not None and rt.store.get_experiment(eid) is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
     rt.store.add_goal(metric, target, bool(body.get("higher_better", True)),
-                      str(body.get("label", "")))
+                      str(body.get("label", "")), experiment_id=eid)
     return {"goals": rt.store.list_goals()}
 
 
 @router.delete("/api/projects/{name}/goals/{metric}")
-async def project_goals_delete(name: str, metric: str):
+async def project_goals_delete(name: str, metric: str, experiment_id: str = ""):
     rt = get_runtime(name)
-    deleted = rt.store.delete_goal(metric)
+    eid = int(experiment_id) if str(experiment_id).isdigit() else None
+    deleted = rt.store.delete_goal(metric, eid)
     if not deleted:
         raise HTTPException(status_code=404, detail="goal not found")
     return {"goals": rt.store.list_goals()}

@@ -450,16 +450,35 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
 
 
 def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
-    """Human-readable goal-progress / new-best notices for a freshly recorded run."""
+    """Human-readable goal-progress / new-best notices for a freshly recorded run.
+
+    Goals scoped to an experiment only fire for that experiment's runs; an
+    experiment's own goal_metric (in the experiments table) takes precedence over
+    a project-wide goal on the same metric.
+    """
     goals = rt.store.list_goals()
     if not goals:
         return []
     metrics = run.get("metrics") or {}
     if not metrics:
         return []
+    eid = run.get("experiment_id")
+    exp_metric = None
+    if eid is not None:
+        exp = rt.store.get_experiment(eid)
+        exp_metric = (exp or {}).get("goal_metric")
     runs = rt.store.list_runs()
     notices = []
     for g in goals:
+        scope = g.get("experiment_id")
+        if eid is not None:
+            if scope is not None and scope != eid:
+                continue
+            if scope is None and exp_metric and g["metric"] == exp_metric:
+                continue
+        else:
+            if scope is not None:
+                continue
         m = g["metric"]
         if m not in metrics:
             continue
