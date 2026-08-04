@@ -73,6 +73,14 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    {
+        "name": "autoresearch",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["mcp_servers/autoresearch_tools.py"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
