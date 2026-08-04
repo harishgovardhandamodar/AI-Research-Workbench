@@ -393,6 +393,7 @@ async function repoAction(kind, bar) {
       body: JSON.stringify({}),
     });
     if (r.ok) {
+      state.mgmtActivity = { action: kind, ...r };
       const link = repoCommitLinkHtml(r);
       if (kind === "commit") {
         st.innerHTML = "Committed " + link +
@@ -995,6 +996,7 @@ async function refreshState() {
   try {
     const r = await api(`/api/projects/${state.project}/state`);
     state.artifacts = r.artifacts || [];
+    state.mgmtActivity = r.management_activity || null;
     renderMessages(r.messages || []);
     renderArtifacts();
     renderKernel(r.variables, r.env);
@@ -2012,6 +2014,20 @@ async function renderExpContext() {
     rc.innerHTML = '<span class="muted">No runs yet — ask the agent to improve it, or create a run.</span>';
   }
   ctx.classList.remove("hidden");
+  // Persisted last commit/push (survives page refresh).
+  const mgmtEl = $("ec-mgmt-msg");
+  if (mgmtEl) mgmtEl.innerHTML = mgmtActivityHtml(state.mgmtActivity);
+}
+
+function mgmtActivityHtml(a) {
+  if (!a) return "";
+  const link = repoCommitLinkHtml(a);
+  if (a.action === "push") {
+    const when = a.pushed_at || a.committed_at;
+    return "Last: Pushed " + link + (when ? " on " + esc(fmtDt(when)) : "") + " ✓";
+  }
+  return "Last: Committed " + link +
+    (a.committed_at ? " · " + esc(fmtDt(a.committed_at)) : "") + " ✓";
 }
 
 function tagMessageExperiment(el, expId) {
@@ -2093,6 +2109,7 @@ async function ecManagementAction(kind) {
       method: "POST", body: JSON.stringify({}),
     });
     if (r.ok) {
+      state.mgmtActivity = { action: kind, ...r };
       const link = repoCommitLinkHtml(r);
       msg.innerHTML = kind === "commit"
         ? "Committed " + link + (r.committed_at ? " · " + esc(fmtDt(r.committed_at)) : "") + " ✓"
@@ -2101,14 +2118,15 @@ async function ecManagementAction(kind) {
     } else {
       msg.textContent = r.message || "failed";
       msg.classList.add("err");
+      ecMgmtMsgTimer = setTimeout(() => { msg.textContent = ""; msg.classList.remove("err"); }, 8000);
     }
   } catch (e) {
     msg.textContent = "Failed: " + e.message;
     msg.classList.add("err");
+    ecMgmtMsgTimer = setTimeout(() => { msg.textContent = ""; msg.classList.remove("err"); }, 8000);
   }
   btn.textContent = orig;
   btn.disabled = false;
-  ecMgmtMsgTimer = setTimeout(() => { msg.innerHTML = ""; msg.classList.remove("err"); }, 10000);
 }
 
 $("ec-select").addEventListener("change", (e) => focusExperiment(parseInt(e.target.value, 10)));
