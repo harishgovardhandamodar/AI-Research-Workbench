@@ -1773,8 +1773,11 @@ function autoResize(ta) {
 
 $("send-btn").addEventListener("click", sendChat);
 document.querySelectorAll(".quick").forEach((b) =>
-  b.addEventListener("click", () =>
-    sendChat(b.dataset.text || "", b.dataset.intent || "")));
+  b.addEventListener("click", () => {
+    let extra = null;
+    if (b.dataset.extra) { try { extra = JSON.parse(b.dataset.extra); } catch (e) { extra = null; } }
+    sendChat(b.dataset.text || "", b.dataset.intent || "", extra);
+  }));
 // Clicking a figure rendered inside a chat message opens its artifact modal.
 $("messages").addEventListener("click", (e) => {
   const img = e.target.closest("img.chat-fig");
