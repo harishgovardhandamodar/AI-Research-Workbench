@@ -794,12 +794,18 @@ async def ws_chat(ws: WebSocket, name: str):
 # ------------------------------------------------------------ static files ---
 
 class NoCacheStaticFiles(StaticFiles):
-    """Serve frontend assets with no-cache headers so UI changes always apply."""
+    """Serve frontend assets with no-cache headers so UI changes always apply.
+
+    index.html is served with Cache-Control: no-store so the versioned asset
+    URLs it references are always re-read (defeats stale browser caches)."""
 
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         if response.status_code == 200:
-            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            if not path or path in ("index.html", "index.htm"):
+                response.headers["Cache-Control"] = "no-store"
+            else:
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
 

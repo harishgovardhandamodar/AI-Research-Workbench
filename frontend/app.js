@@ -302,18 +302,32 @@ function msgContainer(role, tags, ts, target) {
 
 /* ---- conversation sets: group request + steps + result, collapsible ---- */
 
+function setDt(ts) {
+  try {
+    const n = Number(ts);
+    if (!isFinite(n)) return "";
+    const d = new Date(n * 1000);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString();
+  } catch (e) { return ""; }
+}
+
 function setTitleFor(userMsg) {
-  const meta = (userMsg && userMsg.meta) || {};
-  const exp = expOf(meta.experiment_id);
-  const title = exp ? exp.name
-    : (userMsg && userMsg.content ? String(userMsg.content).replace(/\s+/g, " ").slice(0, 60) : "message");
-  const it = /iteration\s+(\d+)/i.exec((meta.tags || []).join(" "));
-  return {
-    title,
-    iteration: it ? it[1] : "",
-    expId: meta.experiment_id != null ? meta.experiment_id : null,
-    ts: userMsg ? userMsg.created_at : null,
-  };
+  try {
+    const meta = (userMsg && userMsg.meta) || {};
+    const exp = expOf(meta.experiment_id);
+    const title = exp ? exp.name
+      : (userMsg && userMsg.content ? String(userMsg.content).replace(/\s+/g, " ").slice(0, 60) : "conversation");
+    const it = /iteration\s+(\d+)/i.exec((meta.tags || []).join(" "));
+    return {
+      title,
+      iteration: it ? it[1] : "",
+      expId: meta.experiment_id != null ? meta.experiment_id : null,
+      ts: userMsg ? userMsg.created_at : null,
+    };
+  } catch (e) {
+    return { title: "conversation", iteration: "", expId: null, ts: null };
+  }
 }
 
 function msgSetCreate(userMsg, open) {
@@ -332,17 +346,21 @@ function msgSetCreate(userMsg, open) {
   wrap.appendChild(div);
   const setState = { preview: "" };
   const update = () => {
-    const info = setTitleFor(userMsg);
-    const it = info.iteration ? " · iteration " + info.iteration : "";
-    const dt = info.ts ? " · " + new Date(info.ts * 1000).toLocaleString() : "";
-    const prev = setState.preview
-      ? `<span class="mset-prev">» ${esc(setState.preview)}</span>` : "";
-    head.innerHTML = `<span class="caret">▸</span>`
-      + `<span class="mset-title">${esc(info.title)}</span>`
-      + (it ? `<span class="mset-iter">${esc(it)}</span>` : "")
-      + prev
-      + `<span class="spacer"></span>`
-      + `<span class="mset-time">${esc(dt)}</span>`;
+    try {
+      const info = setTitleFor(userMsg);
+      const it = info.iteration ? " · iteration " + info.iteration : "";
+      const dt = info.ts ? " · " + setDt(info.ts) : "";
+      const prev = setState.preview
+        ? `<span class="mset-prev">» ${esc(setState.preview)}</span>` : "";
+      head.innerHTML = `<span class="caret">▸</span>`
+        + `<span class="mset-title">${esc(info.title)}</span>`
+        + (it ? `<span class="mset-iter">${esc(it)}</span>` : "")
+        + prev
+        + `<span class="spacer"></span>`
+        + `<span class="mset-time">${esc(dt)}</span>`;
+    } catch (e) {
+      head.textContent = "▸ conversation";
+    }
   };
   update();
   return { div, body, setState, update };
@@ -1644,8 +1662,16 @@ function renderMessages(msgs) {
         currentSet.body.appendChild(card);
       }
     } catch (e) {
-      // A single malformed message must not blank the whole conversation.
-      console.error("renderMessages: skipping message", msgs[i] && msgs[i].id, e);
+      // Never blank the conversation: log and fall back to a flat bubble.
+      console.error("renderMessages: message", msgs[i] && msgs[i].id, e);
+      try {
+        const fm = msgs[i];
+        if (!fm) continue;
+        const el = msgContainer(fm.role === "user" ? "user" : "assistant",
+                                (fm.meta && fm.meta.tags) || [], fm.created_at);
+        if (fm.role === "user") { el.body.textContent = fm.content || ""; turnUser = fm.id; }
+        else el.body.innerHTML = renderMarkdown(fm.content || "");
+      } catch (e2) { /* give up on this one */ }
     }
   }
   scrollBottom();
