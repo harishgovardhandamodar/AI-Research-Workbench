@@ -533,7 +533,39 @@ class ResearchWorkbench:
             lines.append("\n".join(block))
             if len("\n\n".join(lines)) > max_chars:
                 break
+        if include_experiments:
+            sc = self.get(sid)
+            if sc and sc.get("replication", {}).get("results"):
+                table = self._replication_table(sc["replication"]["results"])
+                if table:
+                    lines.append(
+                        "Workbench replication results (mean of N runs, Δ vs paper "
+                        "reported value):\n" + table)
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _replication_table(results: list[dict[str, Any]]) -> str:
+        """Render scenario replication results as a Markdown table for fold-back
+        into the synthesis report (Phase 4)."""
+        if not results:
+            return ""
+        head = ("| Paper | Metric | Workbench best | Paper-reported | "
+                "Δ vs paper | Runs |")
+        sep = "|---|---|---|---|---|---|"
+        rows = []
+        for r in results:
+            paper = (r.get("paper_id") or "").replace("_", "/")
+            paper_reported = r.get("paper_reported")
+            pr = f"{paper_reported:.4g}" if isinstance(paper_reported, (int, float)) else "—"
+            delta = r.get("delta_vs_paper")
+            dv = f"{delta:+.4g}" if isinstance(delta, (int, float)) else "—"
+            best = r.get("best_value")
+            bv = f"{best:.4g}" if isinstance(best, (int, float)) else "—"
+            rows.append(
+                f"| [{paper}] | {r.get('metric') or '—'} | {bv} | {pr} | {dv} | "
+                f"{r.get('num_runs') or '—'} |"
+            )
+        return head + "\n" + sep + "\n" + "\n".join(rows)
 
     # ------------------------------------------------- synthesis loop --------
 
@@ -738,6 +770,14 @@ class ResearchWorkbench:
                                f"{audit.get('cited', 0)} verified, "
                                f"{audit.get('removed', 0)} removed")
 
+        # Phase 4 fold-back: embed the quantitative replication table.
+        replication_table = ""
+        if include_experiments:
+            rep = sc.get("replication", {}).get("results") or []
+            replication_table = self._replication_table(rep)
+            if replication_table:
+                best_src = self._embed_replication_section(best_src, replication_table)
+
         report_path = self._report_path(sid)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(best_src, encoding="utf-8")
@@ -755,7 +795,21 @@ class ResearchWorkbench:
 
         return {"status": "ok", "best_score": best, "iterations": history,
                 "early_stopped": early_stopped, "citation_audit": audit,
-                "report_path": str(report_path)}
+                "report_path": str(report_path),
+                "replication_table": replication_table or None}
+
+    @staticmethod
+    def _embed_replication_section(report: str, table: str) -> str:
+        """Append (or refresh) the quantitative replication section in a report."""
+        marker = "\n\n## Replication Results (Workbench)\n\n"
+        section = marker + table + "\n"
+        if "## Replication Results (Workbench)" in report:
+            head, _sep, tail = report.partition("## Replication Results (Workbench)")
+            # Drop the old table body: keep only what follows the next heading.
+            rest = tail.split("\n## ", 1)
+            tail = ("\n## " + rest[1]) if len(rest) > 1 else ""
+            return head + marker + table + "\n" + tail
+        return report.rstrip() + section
 
     # ---------------------------------------------- replication experiments ----
 
@@ -1005,6 +1059,7 @@ class ResearchWorkbench:
             exp_dir.mkdir(parents=True, exist_ok=True)
             outcome = self._improve_experiment(sid, n.id, exp_dir, code, specs[0],
                                                cfg, model=model)
+            outcome["paper_id"] = n.id
             self._append_replication_note(n.id, outcome)
             self._record_run(sid, "replication", f"replicate {n.id}",
                              outcome.get("best_value"), outcome.get("metric") or "")

@@ -217,6 +217,62 @@ class ReplicationQualityTests(unittest.TestCase):
         self.assertIn("0.85", final_code)
 
 
+class FoldBackTests(unittest.TestCase):
+    """C3: quantitative replication table rendered and folded into the report."""
+
+    @staticmethod
+    def _reviews(*scores):
+        return [{"score": s, "feedback": [], "improvements": []} for s in scores]
+
+    def _sample_results(self):
+        return [
+            {"paper_id": "2401.00001", "metric": "acc", "best_value": 0.85,
+             "paper_reported": 0.80, "delta_vs_paper": 0.05, "num_runs": 3},
+            {"paper_id": "2402.00002", "metric": "acc", "best_value": None,
+             "paper_reported": None, "delta_vs_paper": None, "num_runs": 3},
+        ]
+
+    def test_replication_table_rows(self):
+        table = ResearchWorkbench._replication_table(self._sample_results())
+        self.assertIn("| Paper | Metric | Workbench best | Paper-reported |", table)
+        self.assertIn("| [2401.00001] | acc | 0.85 | 0.8 | +0.05 | 3 |", table)
+        self.assertIn("| [2402.00002] | acc | — | — | — | 3 |", table)
+
+    def test_replication_table_empty(self):
+        self.assertEqual(ResearchWorkbench._replication_table([]), "")
+
+    def test_embed_replication_section_appends(self):
+        report = "# Synthesis\n\nBody text.\n"
+        out = ResearchWorkbench._embed_replication_section(report, "TBL")
+        self.assertIn("## Replication Results (Workbench)", out)
+        self.assertIn("TBL", out)
+        self.assertTrue(out.endswith("\n"))
+
+    def test_embed_replication_section_refreshes(self):
+        report = ("# Synthesis\n\nBody.\n"
+                  "## Replication Results (Workbench)\n\nSTALE\n\n## Old\n")
+        out = ResearchWorkbench._embed_replication_section(report, "FRESH")
+        self.assertNotIn("STALE", out)
+        self.assertIn("FRESH", out)
+        self.assertIn("## Old", out)
+
+    def test_fold_back_embeds_table_into_report(self):
+        tmp = Path(tempfile.mkdtemp())
+        llm = _FakeLLM(reports=["# Draft\n[arXiv:2401.00001]\n", "keep"],
+                       reviews=self._reviews(90, 91))
+        wb = _make_wb(tmp / "wb", llm, corpus_ids=("2401.00001",))
+        sc = wb.get("autonomous-agents-security")
+        sc["replication"] = {"results": self._sample_results(), "ran_at": "now"}
+        wb._save(sc)
+        result = wb.run_synthesis(
+            "autonomous-agents-security", include_experiments=True, model=None)
+        report = (Path(result["report_path"])).read_text(encoding="utf-8")
+        self.assertIn("## Replication Results (Workbench)", report)
+        self.assertIn("| [2401.00001] | acc | 0.85 | 0.8 | +0.05 | 3 |", report)
+        self.assertIn("replication_table", result)
+        self.assertIsNotNone(result["replication_table"])
+
+
 class SynthesisLoopTests(unittest.IsolatedAsyncioTestCase):
     def _reviews(self, *scores):
         return [{"score": s, "feedback": [], "improvements": []} for s in scores]
