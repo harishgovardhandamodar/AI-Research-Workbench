@@ -52,8 +52,9 @@ class Config:
                 return default
         return d if d != {} else default
 
-    def _dir(self, key: str) -> Path:
-        return Path(self._get("directories", key, default=""))
+    def _dir(self, key: str) -> Path | None:
+        raw = self._get("directories", key, default="")
+        return Path(raw) if raw else None
 
     @property
     def root_dir(self) -> Path:
