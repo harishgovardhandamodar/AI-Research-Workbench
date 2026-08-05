@@ -156,6 +156,7 @@ async def run_obfuscation_experiments(name: str, body: dict):
 
     now = time.time()
     run_ids = []
+    fig_by_title = {}
     for r in results:
         art_ids = []
         fig = r.get("fig")
@@ -170,6 +171,7 @@ async def run_obfuscation_experiments(name: str, body: dict):
                            message_id="")
             rt.artifacts.add_artifact(art, data=png, data_type="png")
             art_ids.append(art.id)
+            fig_by_title[r.get("title")] = art.id
         table_md = r.get("table_md") or ""
         if table_md:
             art = Artifact(kind="text",
@@ -198,6 +200,8 @@ async def run_obfuscation_experiments(name: str, body: dict):
             kind="obfuscation")
         run_ids.append(rid)
 
+    _record_obfuscation_chat(rt, eid, df, results, fig_by_title, seed, n_rows)
+
     return {"experiment": store.get_experiment(eid),
             "runs": [store.get_run(rid) for rid in run_ids],
             "count": len(run_ids)}
@@ -222,6 +226,44 @@ def _jsonable(value):
     except Exception:  # noqa: BLE001
         pass
     return str(value)
+
+
+def _record_obfuscation_chat(rt, eid: int, df, results: list[dict],
+                             fig_by_title: dict, seed: int, n_rows: int) -> None:
+    """Write the bank-obfuscation run as chat messages so the results and
+    transactions appear in the chat window (not just the Experiments panel).
+
+    One user turn summarises the run; one assistant message per scenario
+    carries the figure, its metrics and the masked-vs-raw transactions table.
+    """
+    store = rt.store
+    store.add_message(
+        "user",
+        f"Run the bank-transaction obfuscation scenario suite on "
+        f"{n_rows:,} synthetic transactions (seed={seed}).",
+        {"tags": ["obfuscation"], "experiment_id": eid})
+
+    for r in results:
+        title = r.get("title") or "?"
+        technique = r.get("technique", "")
+        metrics = r.get("metrics") or {}
+        lines = [f"### {title}", ""]
+        if technique:
+            lines.append(f"**Technique:** {technique}")
+        if metrics:
+            lines += ["", "| metric | value |", "|---|---|"]
+            for k, v in metrics.items():
+                lines.append(f"| {k} | {v} |")
+        fig_id = fig_by_title.get(title)
+        if fig_id:
+            lines += ["", f"![{title}](/artifacts/{fig_id})"]
+        table_md = r.get("table_md") or ""
+        if table_md:
+            lines += ["", table_md]
+        if r.get("error"):
+            lines += ["", f"> error: {r['error']}"]
+        store.add_message("assistant", "\n".join(lines),
+                          {"tags": ["obfuscation"], "experiment_id": eid})
 
 
 @router.post("/api/projects/{name}/experiments/{eid}/link")

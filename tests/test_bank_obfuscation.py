@@ -102,13 +102,14 @@ class RunObfuscationEndpointTests(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls._patched = []
         from backend import paths as backend_paths
-        from backend import project_runtime, routers, state as backend_state
+        from backend import project_runtime, state as backend_state
+        from backend.routers import projects as projects_router
 
         # Several backend modules bind PROJECTS_DIR / WORKBENCH_DIR at import
         # time (before this suite may have set FOX_WORKBENCH_DIR), so patch
         # every module-level reference directly to keep tests hermetic.
         tmp = Path(cls._tmp.name)
-        for mod in (backend_paths, project_runtime, routers.projects):
+        for mod in (backend_paths, project_runtime, projects_router):
             for attr in ("WORKBENCH_DIR", "PROJECTS_DIR"):
                 if not hasattr(mod, attr):
                     continue
@@ -151,6 +152,23 @@ class RunObfuscationEndpointTests(unittest.TestCase):
         mine = [e for e in exps if e["name"] == "obfuscation (bank)"]
         self.assertEqual(len(mine), 1)
         self.assertEqual(mine[0]["runs"], 9)
+
+    def test_run_obfuscation_writes_chat_messages(self):
+        name = "obf-chat"
+        self.client.post("/api/projects", json={"name": name})
+        r = self.client.post(
+            f"/api/projects/{name}/experiments/run-obfuscation",
+            json={"n_rows": 60, "seed": 42})
+        self.assertEqual(r.status_code, 200, r.text)
+        msgs = self.client.get(f"/api/projects/{name}/state").json()["messages"]
+        roles = [m["role"] for m in msgs]
+        self.assertEqual(roles[0], "user")
+        self.assertEqual(roles.count("assistant"), 9)
+        # assistant messages carry the scenario title + a transactions table
+        joined = "\n".join(m["content"] for m in msgs if m["role"] == "assistant")
+        self.assertIn("Targeted BEC", joined)
+        self.assertIn("masked", joined)
+        self.assertIn("|", joined)
 
     def test_run_obfuscation_reuses_experiment(self):
         name = "obf-reuse"
