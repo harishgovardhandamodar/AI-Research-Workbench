@@ -1001,15 +1001,20 @@ class ResearchWorkbench:
                     continue
         return None
 
-    def _append_replication_note(self, pid: str, result: dict[str, Any]) -> None:
+    def _replication_note_path(self, pid: str) -> Path | None:
+        """Vault note file for a paper, if it exists."""
         n = self.kg.get_paper(pid)
         if not n:
-            return
+            return None
         from .pipeline import _sanitize_id
 
         safe = _sanitize_id(n.label) or pid
         note_file = Path(self.config.vault_dir) / safe / "00_notes.md"
-        if not note_file.exists():
+        return note_file if note_file.exists() else None
+
+    def _append_replication_note(self, pid: str, result: dict[str, Any]) -> None:
+        note_file = self._replication_note_path(pid)
+        if not note_file:
             return
         try:
             with open(note_file, "a") as f:

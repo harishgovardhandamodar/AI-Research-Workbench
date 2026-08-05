@@ -321,5 +321,104 @@ class SynthesisLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("corpus", result["reason"])
 
 
+class ExperimentLoopTests(unittest.TestCase):
+    """D1: end-to-end run_experiments with a mocked LLM + subprocess runner."""
+
+    def _mk_wb(self):
+        tmp = Path(tempfile.mkdtemp())
+        llm = _FakeLLM(reports=["```python\nprint('METRIC acc=0.82')\n```"])
+        wb = _make_wb(tmp, llm, corpus_ids=("2401.00001", "2401.00002"))
+        return tmp, llm, wb
+
+    def test_run_experiments_replicates_ranked_papers(self):
+        tmp, _llm, wb = self._mk_wb()
+        # Create the vault note so the replication block can be appended.
+        note = wb._replication_note_path("2401.00001")
+        self.assertIsNone(note)
+        from backend.research_knowledge_graphs.pipeline import _sanitize_id
+        n = wb.kg.get_paper("2401.00001")
+        safe = _sanitize_id(n.label)
+        note_dir = Path(wb.config.vault_dir) / safe
+        note_dir.mkdir(parents=True, exist_ok=True)
+        (note_dir / "00_notes.md").write_text("# Notes\n", encoding="utf-8")
+        with mock.patch.object(ResearchWorkbench, "_experiment_specs") as specs, \
+             mock.patch.object(ResearchWorkbench, "_generate_experiment_code") as gen, \
+             mock.patch("backend.autoresearch.run_research_experiment",
+                        return_value={"ok": True, "output": "METRIC acc=0.82",
+                                      "metric": ("acc", 0.82)}):
+            specs.return_value = [{"goal": "accuracy", "baselines": "0.80"}]
+            gen.return_value = "print('METRIC acc=0.82')"
+            result = wb.run_experiments("autonomous-agents-security")
+        outcomes = result["results"]
+        self.assertEqual(result["status"], "ok")
+        self.assertGreaterEqual(len(outcomes), 1)
+        self.assertEqual(outcomes[0]["paper_id"], "2401.00001")
+        self.assertAlmostEqual(outcomes[0]["best_value"], 0.82)
+        self.assertEqual(outcomes[0]["num_runs"], 3)
+        # Replication results were persisted for fold-back.
+        sc = wb.get("autonomous-agents-security")
+        self.assertIn("replication", sc)
+        self.assertEqual(sc["replication"]["results"], outcomes)
+        # The vault experiment note got the replication block appended.
+        note = wb._replication_note_path("2401.00001")
+        self.assertIsNotNone(note)
+        text = note.read_text(encoding="utf-8")
+        self.assertIn("Replication (Research Workbench)", text)
+
+    def test_run_experiments_skips_papers_without_specs(self):
+        tmp, _llm, wb = self._mk_wb()
+        with mock.patch.object(ResearchWorkbench, "_experiment_specs",
+                               return_value=[]):
+            result = wb.run_experiments("autonomous-agents-security")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["results"], [])
+
+
+class FullLoopTests(unittest.TestCase):
+    """D1: run_full_loop chains build → synth → experiments → fold back."""
+
+    def test_full_loop_chains_phases_and_records_last_loop(self):
+        tmp = Path(tempfile.mkdtemp())
+        llm = _FakeLLM(reports=["# Draft\n\nBody.\n", "# Improved\n\nBody.\n"])
+        wb = _make_wb(tmp, llm, corpus_ids=("2401.00001", "2401.00002"))
+        called = []
+        with mock.patch.object(ResearchWorkbench, "_experiment_specs") as specs, \
+             mock.patch.object(ResearchWorkbench, "_generate_experiment_code") as gen, \
+             mock.patch("backend.autoresearch.run_research_experiment",
+                        return_value={"ok": True, "output": "METRIC acc=0.8",
+                                      "metric": ("acc", 0.8)}), \
+             mock.patch.object(ResearchWorkbench, "run_synthesis",
+                               side_effect=_wrap_chain(called)):
+            specs.return_value = [{"goal": "accuracy"}]
+            gen.return_value = "print('METRIC acc=0.8')"
+            result = wb.run_full_loop("autonomous-agents-security")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(called, ["synthesis", "foldback"])
+        self.assertIn("last_loop", wb.get("autonomous-agents-security"))
+        last = wb.get("autonomous-agents-security")["last_loop"]
+        self.assertEqual(last["experiments"], 2)
+        self.assertEqual(last["imported"], 0)
+        # Fold-back synthesis ran with include_experiments=True.
+        self.assertTrue(result["update"]["foldback"])
+
+    def test_full_loop_fails_on_empty_corpus(self):
+        tmp = Path(tempfile.mkdtemp())
+        llm = _FakeLLM(reports=["# Draft\n\nBody.\n"])
+        wb = _make_wb(tmp, llm, corpus_ids=())
+        result = wb.run_full_loop("autonomous-agents-security")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("corpus", result["reason"])
+
+
+def _wrap_chain(called):
+    """Side effect that records run_synthesis invocations and returns canned
+    results matching what run_full_loop consumes (foldback flag preserved)."""
+    def _run(sid, include_experiments=False, model=None):
+        called.append("foldback" if include_experiments else "synthesis")
+        return {"status": "ok", "best_score": 90.0, "foldback": include_experiments}
+    return _run
+
+
 if __name__ == "__main__":
     unittest.main()
