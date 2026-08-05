@@ -1257,6 +1257,17 @@ async function addPaper(){
     const model=getSelectedModel();
     if(model)body.model=model;
     const r=await api('/api/rkg/add','POST',body);
+    if(r.id){ // async job — poll until it completes
+      const job=await pollJob(r.id, 'Adding '+id+' (this can take several minutes)...');
+      const res=job.result||{};
+      if(job.status==='error'){addLog('Add failed: '+(job.error||'unknown error'),'ERROR')}
+      else if(res.status==='added'){addLog('Done: '+res.paper_id+' ('+res.concepts+' concepts, '+res.tags+' tags'+(res.rag_chunks?', '+res.rag_chunks+' rag chunks':'')+')','DONE')}
+      else if(res.status==='exists'){addLog('Already exists: '+id,'WARN')}
+      else if(res.status==='error'){addLog(res.message||'arXiv API error','ERROR')}
+      else{addLog('Error: '+(res.message||JSON.stringify(res)),'ERROR')}
+      refreshAll();
+      return;
+    }
     if(r.status==='added'){addLog('Done: '+r.paper_id+' ('+r.concepts+' concepts, '+r.tags+' tags'+(r.rag_chunks?', '+r.rag_chunks+' rag chunks':'')+')','DONE')}
     else if(r.status==='exists'){addLog('Already exists: '+id,'WARN')}
     else if(r.status==='error'){addLog(r.message||'arXiv API error','ERROR')}
@@ -1276,6 +1287,25 @@ async function ingestWeb(){
     const model=getSelectedModel();
     if(model)body.model=model;
     const r=await api('/api/rkg/web/add','POST',body);
+    if(r.id){
+      const job=await pollJob(r.id, 'Ingesting web page (this can take a few minutes)...');
+      const res=job.result||{};
+      if(job.status==='error'){addLog('Web ingest failed: '+(job.error||'unknown'),'ERROR')}
+      else if(res.status==='added'){
+        addLog('Web link added: '+res.title.substring(0,60)+' ('+res.concepts+' concepts, '+res.tags+' tags)','DONE');
+        el('webResult').innerHTML='<div class="card" style="margin-top:8px"><h4 style="color:var(--accent);margin-bottom:4px">'+esc(res.title)+'</h4>'+
+          (res.summary?'<p style="font-size:12px;color:var(--text2)">'+esc(res.summary.substring(0,300))+'</p>':'')+
+          (res.tags&&res.tags.length?'<div style="margin-top:4px">'+res.tags.map(t=>'<span class="pool-tag">'+esc(t)+'</span>').join('')+'</div>':'')+
+          '</div>';
+        refreshAll();
+      }else if(res.status==='exists'){
+        addLog('Web link already exists','WARN');
+      }else{
+        addLog('Error: '+(res.message||JSON.stringify(res)),'ERROR');
+      }
+      loadWebList();
+      return;
+    }
     if(r.status==='added'){
       addLog('Web link added: '+r.title.substring(0,60)+' ('+r.concepts+' concepts, '+r.tags+' tags)','DONE');
       el('webResult').innerHTML='<div class="card" style="margin-top:8px"><h4 style="color:var(--accent);margin-bottom:4px">'+esc(r.title)+'</h4>'+
@@ -1340,9 +1370,19 @@ async function importSearch(){
     const model=getSelectedModel();
     if(model)body.model=model;
     const r=await api('/api/rkg/import','POST',body);
-    const added=r.filter(x=>x.status==='added').length;
-    const exists=r.filter(x=>x.status==='exists').length;
-    addLog('Imported: '+added+' new, '+exists+' already existed','DONE');
+    if(r.id){
+      const job=await pollJob(r.id, 'Importing papers (this can take several minutes)...');
+      const res=job.result||[];
+      const arr=Array.isArray(res)?res:[];
+      const added=arr.filter(x=>x.status==='added').length;
+      const exists=arr.filter(x=>x.status==='exists').length;
+      if(job.status==='error'){addLog('Import failed: '+(job.error||'unknown'),'ERROR')}
+      else{addLog('Imported: '+added+' new, '+exists+' already existed','DONE')}
+    }else{
+      const added=r.filter(x=>x.status==='added').length;
+      const exists=r.filter(x=>x.status==='exists').length;
+      addLog('Imported: '+added+' new, '+exists+' already existed','DONE');
+    }
     el('searchResults').innerHTML='';el('importBtn').style.display='none';
     refreshAll();
   }catch(e){addLog('Error: '+e,'ERROR')}
@@ -2058,13 +2098,23 @@ function updatePoolImportBtn(){
 async function importSelectedFromPool(){
   const ids=[..._poolSelected];
   if(!ids.length)return;
-  addLog('Importing '+ids.length+' papers from pool...','INPROGRESS');
+  addLog('Importing '+ids.length+' papers from pool (this can take several minutes)...','INPROGRESS');
   try{
     const r=await api('/api/rkg/pool/import_batch','POST',{arxiv_ids:ids});
-    const results=r.results||[];
-    const added=results.filter(x=>x.status==='added').length;
-    const existed=results.filter(x=>x.status==='exists').length;
-    addLog('Pool import: '+added+' new, '+existed+' already in KB','DONE');
+    if(r.id){
+      const job=await pollJob(r.id, 'Importing '+ids.length+' papers from pool...');
+      if(job.status==='error'){addLog('Pool batch import failed: '+(job.error||'unknown'),'ERROR');return}
+      const res=job.result||{};
+      const results=res.results||[];
+      const added=results.filter(x=>x.status==='added').length;
+      const existed=results.filter(x=>x.status==='exists').length;
+      addLog('Pool import: '+added+' new, '+existed+' already in KB','DONE');
+    }else{
+      const results=r.results||[];
+      const added=results.filter(x=>x.status==='added').length;
+      const existed=results.filter(x=>x.status==='exists').length;
+      addLog('Pool import: '+added+' new, '+existed+' already in KB','DONE');
+    }
     _poolSelected=[];
     document.querySelectorAll('.pool-cb').forEach(cb=>cb.checked=false);
     updatePoolImportBtn();
@@ -2072,6 +2122,18 @@ async function importSelectedFromPool(){
     loadPoolGraph();
     refreshAll();
   }catch(e){addLog('Pool batch import error: '+e,'ERROR')}
+}
+
+async function pollJob(jobId, label){
+  addLog((label||'Waiting for job...')+' (this runs in the background — the dashboard stays responsive)','INPROGRESS');
+  for(let i=0;i<600;i++){
+    try{
+      const j=await api('/api/rkg/jobs/'+jobId);
+      if(j.status==='done'||j.status==='error')return j;
+    }catch(_){}
+    await new Promise(res=>setTimeout(res,4000));
+  }
+  return {status:'error',error:'Timed out waiting for job to finish'};
 }
 
 async function loadPoolList(){
@@ -2098,7 +2160,7 @@ function updatePoolStats(papers){
 }
 
 async function importPoolPaper(aid){
-  addLog('Importing '+aid+' from pool...','INPROGRESS');
+  addLog('Importing '+aid+' from pool (this can take several minutes)...','INPROGRESS');
   try{
     const r=await api('/api/rkg/pool/import','POST',{arxiv_id:aid});
     if(r.status==='added'||r.status==='exists'){
@@ -2106,9 +2168,23 @@ async function importPoolPaper(aid){
       loadPoolList();
       loadPoolGraph();
       refreshAll();
-    }else{
-      addLog('Import failed: '+(r.message||JSON.stringify(r)),'ERROR');
+      return;
     }
+    if(r.status==='running'||r.status==='done'){
+      const job=await pollJob(r.id, 'Importing '+aid+' from pool...');
+      if(job.status==='error'){addLog('Import failed: '+(job.error||'unknown error'),'ERROR');return}
+      const res=job.result||{};
+      if(res.status==='added'||res.status==='exists'){
+        addLog('Imported: '+aid,'DONE');
+      }else{
+        addLog('Import failed: '+(res.message||JSON.stringify(res)),'ERROR');
+      }
+      loadPoolList();
+      loadPoolGraph();
+      refreshAll();
+      return;
+    }
+    addLog('Import failed: '+(r.message||JSON.stringify(r)),'ERROR');
   }catch(e){addLog('Import error: '+e,'ERROR')}
 }
 

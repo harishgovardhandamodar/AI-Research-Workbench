@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +32,54 @@ router = APIRouter()
 _org: Organizer | None = None
 _gpu_mgr: GPUManager | None = None
 _VIEWS = Path(__file__).parent / "views"
+
+# ------------------------------------------------------------------ jobs -----
+# Paper ingestion (arXiv download + LLM analysis + lineage + embeddings) can
+# take many minutes, which would kill a browser fetch held open that long. Long
+# operations are therefore started as background jobs: the endpoint returns a
+# job id immediately and the dashboard polls GET /api/rkg/jobs/{id} until done.
+_jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
+
+
+def _new_job(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id, "kind": kind, "label": label,
+        "status": "running", "result": None, "error": None,
+        "started_at": time.time(), "finished_at": None,
+    }
+    with _jobs_lock:
+        _jobs[job_id] = job
+
+    def _run():
+        try:
+            result = target(*args, **kwargs)
+            with _jobs_lock:
+                job["result"] = result
+                job["status"] = "done"
+                job["finished_at"] = time.time()
+        except Exception as e:  # noqa: BLE001
+            with _jobs_lock:
+                job["error"] = f"{type(e).__name__}: {e}"
+                job["status"] = "error"
+                job["finished_at"] = time.time()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return job
+
+
+def _job_view(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": job["id"], "kind": job["kind"], "label": job["label"],
+        "status": job["status"], "error": job["error"],
+        "started_at": job["started_at"], "finished_at": job["finished_at"],
+        "result": job["result"],
+    }
+
+
+def _submit(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
+    return _job_view(_new_job(kind, label, target, *args, **kwargs))
 
 
 def get_org() -> Organizer:
@@ -367,6 +418,23 @@ async def rkg_pool_topics():
     return await _org_thread(lambda: {"topics": get_org().pool.get_topics()})
 
 
+# ------------------------------------------------------------- job status ----
+
+@router.get("/api/rkg/jobs/{job_id}")
+async def rkg_job_status(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return JSONResponse({"error": "job not found"}, status_code=404)
+        return _job_view(job)
+
+
+@router.get("/api/rkg/jobs")
+async def rkg_jobs():
+    with _jobs_lock:
+        return [_job_view(j) for j in list(_jobs.values())[-50:]]
+
+
 # ----------------------------------------------------------- POST API --------
 
 @router.post("/api/rkg/add")
@@ -376,7 +444,7 @@ async def rkg_add(data: dict = Body(default={})):
         return JSONResponse({"error": "missing id"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return await _org_thread(org.add_by_id, arxiv_id, model=model)
+    return _submit("add", f"Add paper {arxiv_id}", org.add_by_id, arxiv_id, model=model)
 
 
 @router.post("/api/rkg/search")
@@ -394,7 +462,8 @@ async def rkg_import(data: dict = Body(default={})):
         return JSONResponse({"error": "missing query"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return await _org_thread(org.add_by_search, query, model=model)
+    return _submit("import", f"Import papers: {query[:40]}",
+                   org.add_by_search, query, model=model)
 
 
 @router.post("/api/rkg/query")
@@ -420,7 +489,7 @@ async def rkg_web_add(data: dict = Body(default={})):
         return JSONResponse({"error": "missing url"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return await _org_thread(org.web.ingest, url, model=model)
+    return _submit("web_add", f"Ingest web page {url[:50]}", org.web.ingest, url, model=model)
 
 
 @router.post("/api/rkg/similarity")
@@ -451,12 +520,12 @@ async def rkg_paper_refresh(data: dict = Body(default={})):
 
 @router.post("/api/rkg/graph/detail")
 async def rkg_graph_detail():
-    return await _org_thread(get_org().detail_graph)
+    return _submit("graph_detail", "Detail graph edges", get_org().detail_graph)
 
 
 @router.post("/api/rkg/definitions")
 async def rkg_definitions():
-    return await _org_thread(get_org().generate_definitions)
+    return _submit("definitions", "Generate concept definitions", get_org().generate_definitions)
 
 
 @router.post("/api/rkg/pool/topics/add")
@@ -484,13 +553,17 @@ async def rkg_pool_import(data: dict = Body(default={})):
     if not arxiv_id:
         return JSONResponse({"error": "missing arxiv_id"}, status_code=400)
     org = get_org()
-    try:
-        result = await _org_thread(org.add_by_id, arxiv_id)
-    except Exception as e:  # noqa: BLE001
-        result = {"status": "error", "paper_id": arxiv_id, "message": f"{type(e).__name__}: {e}"}
-    if result.get("status") in ("added", "exists"):
-        org.pool.mark_imported(arxiv_id)
-    return result
+
+    def _do():
+        try:
+            result = org.add_by_id(arxiv_id)
+        except Exception as e:  # noqa: BLE001
+            result = {"status": "error", "paper_id": arxiv_id, "message": f"{type(e).__name__}: {e}"}
+        if result.get("status") in ("added", "exists"):
+            org.pool.mark_imported(arxiv_id)
+        return result
+
+    return _submit("pool_import", f"Import {arxiv_id} from pool", _do)
 
 
 @router.post("/api/rkg/pool/import_batch")
@@ -499,14 +572,18 @@ async def rkg_pool_import_batch(data: dict = Body(default={})):
     if not arxiv_ids:
         return JSONResponse({"error": "missing arxiv_ids"}, status_code=400)
     org = get_org()
-    results = []
-    for aid in arxiv_ids:
-        try:
-            r = await _org_thread(org.add_by_id, aid)
-        except Exception as e:  # noqa: BLE001
-            r = {"status": "error", "paper_id": aid, "message": f"{type(e).__name__}: {e}"}
-        if r.get("status") in ("added", "exists"):
-            org.pool.mark_imported(aid)
-        results.append({"arxiv_id": aid, "status": r.get("status"),
-                        "message": r.get("message") if r.get("status") == "error" else ""})
-    return {"results": results}
+
+    def _do():
+        results = []
+        for aid in arxiv_ids:
+            try:
+                r = org.add_by_id(aid)
+            except Exception as e:  # noqa: BLE001
+                r = {"status": "error", "paper_id": aid, "message": f"{type(e).__name__}: {e}"}
+            if r.get("status") in ("added", "exists"):
+                org.pool.mark_imported(aid)
+            results.append({"arxiv_id": aid, "status": r.get("status"),
+                            "message": r.get("message") if r.get("status") == "error" else ""})
+        return {"results": results}
+
+    return _submit("pool_import_batch", f"Import {len(arxiv_ids)} papers from pool", _do)
