@@ -34,7 +34,7 @@ flowchart LR
     FOX --> RES["research<br/>list|status|report|build|synthesize|experiments|loop"]
     FOX --> G[graph]
     FOX --> PAPERS["papers<br/>list|search|add"]
-    FOX --> JOBS[jobs [id]]
+    FOX --> JOBS["jobs [id]"]
     FOX --> SCHED[scheduler]
     FOX --> POOL["pool<br/>topics|import"]
     FOX --> MGMT["manage<br/>status|commit|push"]
