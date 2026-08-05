@@ -595,9 +595,76 @@ class ResearchWorkbench:
             logger.error("report improvement failed: %s", exc)
             return ""
 
+    # ------------------------------------------------- citation audit --------
+
+    @staticmethod
+    def _extract_citations(report: str) -> list[str]:
+        """All [arXiv:xxxx] citation ids mentioned in a report (deduped, order
+        preserved)."""
+        import re
+
+        ids: list[str] = []
+        for m in re.finditer(r"\[arXiv:\s*([0-9]{4}\.[0-9]{4,5})\s*\]", report):
+            if m.group(1) not in ids:
+                ids.append(m.group(1))
+        return ids
+
+    def _audit_citations(self, sid: str, report: str) -> tuple[str, dict[str, Any]]:
+        """Verify every [arXiv:xxxx] citation in `report` exists in the corpus.
+
+        Returns (report, audit). Citations that are not in the corpus are
+        stripped from the report and logged so ungrounded claims do not ship.
+        """
+        corpus = {self._normalize_arxiv_id(n.id) for n in self._corpus_papers(sid)}
+        cited = self._extract_citations(report)
+        if not cited:
+            return report, {"cited": 0, "verified": 0, "removed": 0,
+                            "missing": []}
+        verified, removed = [], []
+        for cid in cited:
+            if self._normalize_arxiv_id(cid) in corpus:
+                verified.append(cid)
+            else:
+                removed.append(cid)
+        if removed:
+            self._log(sid, "WARN",
+                      f"Citation audit: {len(removed)} ungrounded citation(s) removed: "
+                      + ", ".join(removed))
+            report = self._strip_citations(report, set(removed))
+        audit = {"cited": len(cited), "verified": len(verified),
+                 "removed": len(removed), "missing": removed}
+        return report, audit
+
+    @staticmethod
+    def _normalize_arxiv_id(value: str) -> str:
+        """Normalize an arXiv id to its canonical slash-free form.
+
+        The pipeline stores ids with '/' replaced by '_' (e.g. 'cs_9301111');
+        citations are written as [arXiv:cs/9301111]. Both must compare equal.
+        """
+        return str(value or "").replace("_", "/")
+
+    @staticmethod
+    def _strip_citations(report: str, missing: set[str]) -> str:
+        """Remove [arXiv:xxxx] markers whose id is not in the corpus. Keeps the
+        surrounding sentence but drops the bracket so the claim is not left
+        citing nothing (and the text stays fluent)."""
+        import re
+
+        def _drop(m):
+            return "" if m.group(1) in missing else m.group(0)
+
+        return re.sub(r"\[arXiv:\s*([0-9]{4}\.[0-9]{4,5})\s*\]", _drop, report)
+
     def run_synthesis(self, sid: str, include_experiments: bool = False,
                       model: str | None = None) -> dict[str, Any]:
-        """Phase 2 (and 4): autorefine the domain report; metric = reviewer score."""
+        """Phase 2 (and 4): autorefine the domain report; metric = reviewer score.
+
+        Stops improving early once the score reaches the scenario's
+        ``review_target`` or plateaus for ``plateau_iters`` consecutive
+        iterations (default 2), then audits every [arXiv:xxxx] citation against
+        the corpus before persisting the accepted report.
+        """
         self._reset_live(sid)
         sc = self.get(sid)
         if not sc:
@@ -609,6 +676,12 @@ class ResearchWorkbench:
 
         cfg = sc.get("loop", {})
         max_iters = max(1, min(int(cfg.get("max_iters", 5)), 10))
+        plateau_iters = max(0, int(cfg.get("plateau_iters", 2)))
+        review_target = cfg.get("review_target")
+        try:
+            review_target = float(review_target) if review_target is not None else None
+        except (TypeError, ValueError):
+            review_target = None
         phase = "updating" if include_experiments else "synthesizing"
 
         self._set(sid, phase, 0.03, "Gathering corpus context…")
@@ -627,6 +700,8 @@ class ResearchWorkbench:
         history: list[dict[str, Any]] = []
         self._log(sid, "INFO", f"Initial report score: {best}")
 
+        no_improve = 0
+        early_stopped = None
         for i in range(1, max_iters + 1):
             self._set(sid, phase, 0.1 + 0.85 * i / max_iters,
                       f"Iteration {i}/{max_iters}: improving report…")
@@ -646,17 +721,40 @@ class ResearchWorkbench:
                                    f"{'kept' if keep else 'discarded'}")
             if keep:
                 best, best_src = new_score, improved
+                no_improve = 0
+            else:
+                no_improve += 1
+
+            if review_target is not None and best is not None and best >= review_target:
+                early_stopped = f"reached review_target {review_target}"
+                break
+            if plateau_iters and no_improve >= plateau_iters:
+                early_stopped = f"no improvement for {plateau_iters} iterations"
+                break
+
+        # Citation audit: strip ungrounded [arXiv:xxxx] before persisting.
+        best_src, audit = self._audit_citations(sid, best_src)
+        self._log(sid, "INFO", f"Citation audit: {audit.get('verified', 0)}/"
+                               f"{audit.get('cited', 0)} verified, "
+                               f"{audit.get('removed', 0)} removed")
 
         report_path = self._report_path(sid)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(best_src, encoding="utf-8")
         sc["best_score"] = best
+        sc["citation_audit"] = audit
         self._save(sc)
         self._record_run(sid, "synthesis", "synthesis summary", best,
                          f"best report_score={best} over {len(history)} iterations")
-        self._set(sid, "done", 1.0, f"Synthesis complete — best report score {best}")
+        done_msg = f"Synthesis complete — best report score {best}"
+        if early_stopped:
+            done_msg += f" (early stop: {early_stopped})"
+        if audit.get("removed"):
+            done_msg += f"; {audit.get('removed')} ungrounded citation(s) removed"
+        self._set(sid, "done", 1.0, done_msg)
 
         return {"status": "ok", "best_score": best, "iterations": history,
+                "early_stopped": early_stopped, "citation_audit": audit,
                 "report_path": str(report_path)}
 
     # ---------------------------------------------- replication experiments ----
