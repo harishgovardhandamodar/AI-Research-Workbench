@@ -15,7 +15,7 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
   agent edits a single target script, the harness runs it under a fixed time
   budget, and keeps a change only when the goal metric improves (else reverts),
   logging every attempt. See the
-  [Kaggle Titanic workflow demo](fox-autonomous-reserch-kaggle-workflow.md)
+  [Kaggle Titanic workflow demo](sample-reports/fox-autonomous-reserch-kaggle-workflow.md)
   (screenshots) and [`examples/autoresearch/`](examples/autoresearch/README.md).
   ![Autoresearch timeline](docs/images/ar-timeline.png)
 - **Experiment tracking cockpit** — timeline + similarity graph with experiment

@@ -21,7 +21,7 @@ kept runs to the experiment management repo when configured.
 | Demo | Dataset | Goal metric | Report |
 |---|---|---|---|
 | **Titanic** (`titanic/`) | classic Titanic survival | accuracy | — |
-| **Credit-card fraud** (`creditcard/`) | Kaggle creditcardfraud (284,807 × 31, Git-LFS) | roc_auc | [run report](../../credit-card-fraud-autonomous-autoresearch-run-report.md) |
+| **Credit-card fraud** (`creditcard/`) | Kaggle creditcardfraud (284,807 × 31, Git-LFS) | roc_auc | [run report](../../sample-reports/credit-card-fraud-autonomous-autoresearch-run-report.md) |
 
 ### Titanic
 
