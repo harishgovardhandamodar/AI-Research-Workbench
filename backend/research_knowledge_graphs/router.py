@@ -11,6 +11,7 @@ blocks on Ollama / GPU / pool probing.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,12 @@ def get_org() -> Organizer:
         _gpu_mgr = GPUManager(config)
         _org = Organizer(config, _gpu_mgr)
     return _org
+
+
+async def _org_thread(call, *args, **kwargs):
+    """Run a blocking Organizer call (LLM / arXiv / PDF work) in a worker
+    thread so the FastAPI event loop never blocks on it."""
+    return await asyncio.to_thread(call, *args, **kwargs)
 
 
 def _sanitize_id(label: str) -> str:
@@ -75,7 +82,7 @@ async def rkg_similarity(paper_ids: str | None = Query(default=None),
                          algorithm: str = "combined"):
     org = get_org()
     pids = [x.strip() for x in paper_ids.split(",") if x.strip()] if paper_ids else None
-    return org.similarity(paper_ids=pids, algorithm=algorithm)
+    return await _org_thread(org.similarity, paper_ids=pids, algorithm=algorithm)
 
 
 @router.get("/api/rkg/papers")
@@ -342,22 +349,22 @@ async def rkg_logs(n: int = 100):
 
 @router.get("/api/rkg/pool")
 async def rkg_pool():
-    return get_org().pool.get()
+    return await _org_thread(get_org().pool.get)
 
 
 @router.get("/api/rkg/pool/papers")
 async def rkg_pool_papers():
-    return get_org().pool.get_observed_papers()
+    return await _org_thread(get_org().pool.get_observed_papers)
 
 
 @router.get("/api/rkg/pool/graph")
 async def rkg_pool_graph():
-    return get_org().pool.get_pool_graph()
+    return await _org_thread(get_org().pool.get_pool_graph)
 
 
 @router.get("/api/rkg/pool/topics")
 async def rkg_pool_topics():
-    return {"topics": get_org().pool.get_topics()}
+    return await _org_thread(lambda: {"topics": get_org().pool.get_topics()})
 
 
 # ----------------------------------------------------------- POST API --------
@@ -369,7 +376,7 @@ async def rkg_add(data: dict = Body(default={})):
         return JSONResponse({"error": "missing id"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return org.add_by_id(arxiv_id, model=model)
+    return await _org_thread(org.add_by_id, arxiv_id, model=model)
 
 
 @router.post("/api/rkg/search")
@@ -377,7 +384,7 @@ async def rkg_search(data: dict = Body(default={})):
     query = data.get("query", "")
     if not query:
         return JSONResponse({"error": "missing query"}, status_code=400)
-    return get_org().search(query)
+    return await _org_thread(get_org().search, query)
 
 
 @router.post("/api/rkg/import")
@@ -387,7 +394,7 @@ async def rkg_import(data: dict = Body(default={})):
         return JSONResponse({"error": "missing query"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return org.add_by_search(query, model=model)
+    return await _org_thread(org.add_by_search, query, model=model)
 
 
 @router.post("/api/rkg/query")
@@ -395,7 +402,7 @@ async def rkg_query(data: dict = Body(default={})):
     question = data.get("question", "")
     if not question:
         return JSONResponse({"error": "missing question"}, status_code=400)
-    return get_org().query_rag(question)
+    return await _org_thread(get_org().query_rag, question)
 
 
 @router.post("/api/rkg/lineage")
@@ -403,7 +410,7 @@ async def rkg_lineage(data: dict = Body(default={})):
     arxiv_id = data.get("arxiv_id", "")
     if not arxiv_id:
         return JSONResponse({"error": "missing arxiv_id"}, status_code=400)
-    return get_org().fetch_lineage(arxiv_id)
+    return await _org_thread(get_org().fetch_lineage, arxiv_id)
 
 
 @router.post("/api/rkg/web/add")
@@ -413,7 +420,7 @@ async def rkg_web_add(data: dict = Body(default={})):
         return JSONResponse({"error": "missing url"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return org.web.ingest(url, model=model)
+    return await _org_thread(org.web.ingest, url, model=model)
 
 
 @router.post("/api/rkg/similarity")
@@ -422,14 +429,14 @@ async def rkg_similarity_post(data: dict = Body(default={})):
     algorithm = data.get("algorithm", "combined")
     if isinstance(paper_ids, str):
         paper_ids = [x.strip() for x in paper_ids.split(",") if x.strip()]
-    return get_org().similarity(paper_ids=paper_ids, algorithm=algorithm)
+    return await _org_thread(get_org().similarity, paper_ids=paper_ids, algorithm=algorithm)
 
 
 @router.post("/api/rkg/refresh")
 async def rkg_refresh(data: dict = Body(default={})):
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return org.refresh_papers(model=model)
+    return await _org_thread(org.refresh_papers, model=model)
 
 
 @router.post("/api/rkg/papers/refresh")
@@ -439,17 +446,17 @@ async def rkg_paper_refresh(data: dict = Body(default={})):
         return JSONResponse({"error": "missing paper_id"}, status_code=400)
     org = get_org()
     model = org.config.resolve_model(data.get("model"))
-    return org.refresh_paper(paper_id, model=model)
+    return await _org_thread(org.refresh_paper, paper_id, model=model)
 
 
 @router.post("/api/rkg/graph/detail")
 async def rkg_graph_detail():
-    return get_org().detail_graph()
+    return await _org_thread(get_org().detail_graph)
 
 
 @router.post("/api/rkg/definitions")
 async def rkg_definitions():
-    return get_org().generate_definitions()
+    return await _org_thread(get_org().generate_definitions)
 
 
 @router.post("/api/rkg/pool/topics/add")
@@ -458,7 +465,7 @@ async def rkg_pool_topics_add(data: dict = Body(default={})):
     query = data.get("query", "")
     if not name or not query:
         return JSONResponse({"error": "missing name or query"}, status_code=400)
-    get_org().pool.add_topic(name, query)
+    await _org_thread(get_org().pool.add_topic, name, query)
     return {"status": "ok"}
 
 
@@ -477,7 +484,10 @@ async def rkg_pool_import(data: dict = Body(default={})):
     if not arxiv_id:
         return JSONResponse({"error": "missing arxiv_id"}, status_code=400)
     org = get_org()
-    result = org.add_by_id(arxiv_id)
+    try:
+        result = await _org_thread(org.add_by_id, arxiv_id)
+    except Exception as e:  # noqa: BLE001
+        result = {"status": "error", "paper_id": arxiv_id, "message": f"{type(e).__name__}: {e}"}
     if result.get("status") in ("added", "exists"):
         org.pool.mark_imported(arxiv_id)
     return result
@@ -491,8 +501,12 @@ async def rkg_pool_import_batch(data: dict = Body(default={})):
     org = get_org()
     results = []
     for aid in arxiv_ids:
-        r = org.add_by_id(aid)
+        try:
+            r = await _org_thread(org.add_by_id, aid)
+        except Exception as e:  # noqa: BLE001
+            r = {"status": "error", "paper_id": aid, "message": f"{type(e).__name__}: {e}"}
         if r.get("status") in ("added", "exists"):
             org.pool.mark_imported(aid)
-        results.append({"arxiv_id": aid, "status": r.get("status")})
+        results.append({"arxiv_id": aid, "status": r.get("status"),
+                        "message": r.get("message") if r.get("status") == "error" else ""})
     return {"results": results}

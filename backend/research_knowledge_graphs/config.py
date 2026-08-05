@@ -15,6 +15,25 @@ DEFAULT_CONFIG_PATH = Path("config.yaml")
 _DEFAULT_DATA_ROOT = WORKBENCH_DIR / "research_knowledge_graphs"
 
 
+def _workbench_ollama() -> dict[str, str]:
+    """Fall back to the workbench's own LLM wiring (CONFIG) so the vendored
+    app reaches Ollama in the same way as the rest of the workbench — e.g.
+    inside the Docker image where Ollama is reachable via the relay at
+    host.docker.internal:11435, not localhost:11434."""
+    try:
+        from ..state import CONFIG
+
+        llm = CONFIG.get("llm", {})
+        base = str(llm.get("tool_base_url", "")).rstrip("/")
+        # The vendored LLM client speaks the native Ollama API (/api/chat,
+        # /api/embed), not the OpenAI-compatible /v1 path.
+        if base.endswith("/v1"):
+            base = base[:-3]
+        return {"base_url": base, "model": str(llm.get("model", ""))}
+    except Exception:
+        return {}
+
+
 class Config:
     def __init__(self, path: str | Path = DEFAULT_CONFIG_PATH) -> None:
         self.data: dict[str, Any] = {}
@@ -63,20 +82,28 @@ class Config:
 
     @property
     def ollama_base_url(self) -> str:
-        return os.environ.get("OLLAMA_BASE_URL") or str(
-            self._get("ollama", "base_url", default="http://localhost:11434")
-        )
+        env = os.environ.get("OLLAMA_BASE_URL")
+        if env:
+            return env
+        yml = self._get("ollama", "base_url", default="")
+        if yml:
+            return str(yml)
+        return _workbench_ollama().get("base_url") or "http://localhost:11434"
 
     @property
     def ollama_model(self) -> str:
-        return os.environ.get("OLLAMA_MODEL") or str(
-            self._get("ollama", "model", default="llama3.2:3b")
-        )
+        env = os.environ.get("OLLAMA_MODEL")
+        if env:
+            return env
+        yml = self._get("ollama", "model", default="")
+        if yml:
+            return str(yml)
+        return _workbench_ollama().get("model") or "llama3.2:3b"
 
     @property
     def ollama_fast_model(self) -> str:
         return os.environ.get("OLLAMA_FAST_MODEL") or str(
-            self._get("ollama", "fast_model", default="llama3.2:3b")
+            self._get("ollama", "fast_model", default=self.ollama_model)
         )
 
     @property
