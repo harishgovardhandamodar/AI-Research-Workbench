@@ -123,6 +123,25 @@ Consequences observed:
     `run_full_loop` phase chaining without Ollama.
   - Verify: `python -m unittest tests.test_research_loop -v` green.
 
+## Phase E — Integration surface
+
+- [x] **E1 · Expose gap discovery via the API**
+  - `GET /api/rkg/scenarios/{sid}/gaps` returns B2's ranked suggestions
+    (type, evidence, hypothesis, arXiv query) for the dashboard/agent.
+  - Verify: router tests (suggestions shape + all fields, 404 on unknown sid).
+- [x] **E2 · Scheduler observability + manual tick**
+  - `GET /api/rkg/scheduler/status` (enabled/check_minutes/synthesize/active/
+    due_scenarios) and `POST /api/rkg/scheduler/tick` (force a cadence run,
+    409 when disabled). `router.set_scheduler()` registered by `main.py`
+    lifespan so the API reaches the running scheduler.
+  - Verify: router tests (disabled state shape, tick 409).
+- [x] **E3 · Agent↔RKG integration tests**
+  - `tests/test_rkg_agent_tools.py` installs a real workbench into the router
+    singletons and drives `rkg__*` tools through the real `_rkg_runtime()`
+    wiring with no mocks: query_rag, paper_notes (found + missing),
+    scenario_status, scenario_report, shared-graph assertion.
+  - Verify: `python -m unittest tests.test_rkg_agent_tools` green.
+
 ---
 
 ## Notes
