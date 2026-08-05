@@ -92,6 +92,26 @@ python3 -m venv .venv
 Open http://127.0.0.1:8765, pick a model (Settings → Test connection), and chat.
 Everything is stored under `workbench/projects/<name>/` (SQLite + artifacts).
 
+## Command-line interface (`fox`)
+
+A zero-dependency terminal CLI (opencode-style UI) for the same backend:
+
+```bash
+./bin/fox                 # animated fox splash + interactive `>` shell
+fox status                # server / model / research overview
+fox projects list         # manage projects (new/show/rm/fork)
+fox runs <project>        # agent runs
+fox experiments <proj>    # list / start experiments
+fox research list         # research scenarios
+fox research loop <sid>   # run a full autoresearch loop
+fox graph                 # knowledge-graph stats (papers/concepts/relations)
+fox manual                # the manual (or: fox manual <section>)
+```
+
+Subcommands accept `--help`; run `fox` with no arguments for the interactive
+shell. Point it at a remote server with `FOX_URL` or `--url`. See `fox manual`
+or `cli/manual.md` for the full reference.
+
 ## Run with Docker (persistent data)
 
 Builds the workbench into a container. Projects, artifacts and config live in the

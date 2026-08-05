@@ -24,8 +24,13 @@ dependencies = [
 [project.optional-dependencies]
 jupyter = ["jupyter_server>=2.0"]
 
+[project.scripts]
+fox = "cli.main:main"
+
 [project.entry-points."jupyter_server.extension"]
 fox = "jupyter_fox"
 
 [tool.setuptools]
-packages = ["jupyter_fox"]
+packages = ["jupyter_fox", "cli"]
+[tool.setuptools.package-data]
+cli = ["manual.md"]
