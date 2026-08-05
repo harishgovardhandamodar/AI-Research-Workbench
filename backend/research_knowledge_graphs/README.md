@@ -82,15 +82,19 @@ A scenario's chained loop (implemented in `research_loop.py`) runs four phases:
 2. **Synthesize** — an LLM writes a domain research report (key findings,
    security-lapses catalog, method taxonomy, trends, open problems, references)
    grounded in the corpus. An LLM reviewer scores it 0–100; the loop iterates
-   and keeps only score-improving revisions (the research analog of the
-   experiment.py autoresearch loop).
+   and keeps only score-improving revisions. **Plateau early-stop** halts the
+   loop once the score reaches the scenario's `review_target` or after
+   `plateau_iters` (default 2) flat iterations; every `[arXiv:xxxx]` citation
+   is **audited** against the corpus and ungrounded ones are stripped.
 3. **Experiments** — the strongest corpus papers (by graph degree + recency)
    are ranked, their extracted experiment specs become runnable `experiment.py`
-   files, and each runs a bounded improve loop (propose → run under budget →
-   keep/revert on the `METRIC` line). Results are appended to the paper's
-   vault note and the scenario's `results.md`.
-4. **Fold back** — synthesis re-runs with the replication results so the final
-   report reflects the experiments.
+   files, and each runs a bounded improve loop (propose → run N times → keep/
+   revert on the **mean** `METRIC` over `num_runs` runs, default 3). Results
+   record mean/stdev, best-effort paper-reported value, and `delta_vs_paper`,
+   appended to the paper's vault note and the scenario's `results.md`.
+4. **Fold back** — synthesis re-runs with a **replication results table**
+   (paper, metric, workbench best, paper-reported, Δ vs paper, N runs) which the
+   final report embeds under *Replication Results (Workbench)*.
 
 Per-scenario state lives under `<root>/scenarios/<scenario_id>/`:
 `scenario.json` (config + corpus + results), `report.md` (best report),
@@ -99,7 +103,18 @@ the workbench's `ProjectStore`, attached to a per-scenario experiment).
 
 All long phases are background jobs — the dashboard polls
 `/api/rkg/jobs/{id}` and the live per-scenario status at
-`/api/rkg/scenarios/{sid}/status` (phase, progress, message, log tail).
+`/api/rkg/scenarios/{sid}/status` (phase, progress, message, log tail). The
+job registry and per-scenario live state are **persisted** to disk (atomic
+writes) so a restart marks interrupted work rather than losing it, and a
+scenario that already has a `running` long job **refuses** a second one
+(HTTP 409).
+
+An opt-in **scenario scheduler** (`scheduler.py`, default off) runs with the
+app lifespan: every `schedule.check_minutes` (default 60) it refreshes
+scenarios whose newest activity is older than their `schedule.interval_hours`
+(global `schedule.enabled` + per-scenario `schedule.enabled` both required;
+never queues onto a busy scenario). Status and manual runs are exposed via
+`GET /api/rkg/scheduler/status` and `POST /api/rkg/scheduler/tick`.
 
 ### Scenario API (`/api/rkg/scenarios*`)
 
@@ -109,10 +124,25 @@ All long phases are background jobs — the dashboard polls
 | `GET /api/rkg/scenarios/{sid}` | scenario detail |
 | `GET /api/rkg/scenarios/{sid}/status` | live loop status |
 | `GET /api/rkg/scenarios/{sid}/report` | best domain report (markdown) |
+| `GET /api/rkg/scenarios/{sid}/gaps` | ranked research-gap suggestions (type, evidence, hypothesis, arXiv query) |
 | `POST /api/rkg/scenarios/{sid}/build` | phase 1 (job) |
 | `POST /api/rkg/scenarios/{sid}/synthesize` | phase 2 / 4 (job) |
 | `POST /api/rkg/scenarios/{sid}/experiments` | phase 3 (job) |
 | `POST /api/rkg/scenarios/{sid}/loop` | full chained loop (job) |
+
+`ResearchWorkbench.gaps(sid)` inspects the graph for research gaps — untouched
+pool topics (zero imported corpus papers), papers with no concept edges,
+orphan concepts, and corpus papers without an experiment spec — and returns
+each suggestion with a candidate hypothesis and a ready-to-run arXiv query.
+
+### Agent ↔ RKG bridge
+
+The chat agent can use the graph via `rkg__*` tools (`backend/agents/tools.py`):
+`rkg__query_rag`, `rkg__paper_notes`, `rkg__scenario_status`,
+`rkg__scenario_report`. They resolve the **same** Organizer/Workbench
+singletons as the router, so the agent and dashboard share one corpus and
+graph; if RKG is unavailable the tools return a clear `[error] RKG
+unavailable: …` message instead of crashing the turn.
 
 ## Dependencies
 

@@ -143,7 +143,7 @@ flowchart LR
 Node types and edge semantics:
 
 | Node / edge | Meaning |
-|---|---|
+|---|---|---|
 | `PAPER` | an ingested (or lineage-fetched) arXiv paper |
 | `CONCEPT` | an extracted domain concept with a definition |
 | `WEB` | a web page ingested via URL |
@@ -152,7 +152,30 @@ Node types and edge semantics:
 
 ---
 
-## 3. Paper ingestion pipeline
+## 3. Agent ↔ RKG bridge (A1)
+
+The chat agent can now *see and use* the knowledge graph in the same way the
+dashboard does. `backend/agents/tools.py` registers four `rkg__*` tools that
+resolve the **same** lazily-built Organizer/Workbench singletons as the router
+(`get_org()` / `get_workbench()`), so agent and dashboard share one corpus,
+graph, RAG index, and scenario set:
+
+| Tool | Purpose |
+|---|---|
+| `rkg__query_rag` | answer a research question against the RKG RAG index |
+| `rkg__paper_notes` | fetch a paper node + vault notes by arXiv id |
+| `rkg__scenario_status` | live phase / progress / best score of a scenario loop |
+| `rkg__scenario_report` | read a scenario's best domain report |
+
+The coordinator's system prompt tells the agent to ground answers with
+`rkg__query_rag` / `rkg__paper_notes` and to check existing domain reports via
+`rkg__scenario_status` / `rkg__scenario_report` before answering. The tools are
+best-effort: if RKG is unavailable (no data root, Ollama down) they return a
+clear `[error] RKG unavailable: …` message instead of crashing the turn.
+
+---
+
+## 4. Paper ingestion pipeline
 
 The path from an arXiv id to a fully analyzed, graph-linked paper:
 
@@ -192,7 +215,7 @@ Per paper, the LLM extracts:
 
 ---
 
-## 4. Research pool (arXiv topic monitor)
+## 5. Research pool (arXiv topic monitor)
 
 `pool.py` maintains a SQLite database of **topics** (name → arXiv query). Every
 12h (and on demand) it searches arXiv for each topic, records every observed
@@ -220,7 +243,7 @@ sample Research Workbench domains.
 
 ---
 
-## 5. RAG search
+## 6. RAG search
 
 Each imported paper's full text is chunked, embedded with
 `nomic-embed-text` (via Ollama), and stored in an in-memory vector index. A
@@ -237,7 +260,7 @@ flowchart LR
 
 ---
 
-## 6. Research Workbench — autoresearch loops
+## 7. Research Workbench — autoresearch loops
 
 The flagship: a **scenario** is a research domain (arXiv topics + a research
 lens). Two sample scenarios ship with the tool:
@@ -302,10 +325,10 @@ keep/revert loop over `experiment.py`:
 ```mermaid
 flowchart TD
     SPEC[experiment spec from vault] -->|LLM| CODE[experiment.py]
-    CODE --> RUN[run under fixed budget]
+    CODE --> RUN[run N times under fixed budget]
     RUN --> METRIC{METRIC line?}
-    METRIC -- yes --> IMP{improved?}
-    IMP -- yes --> KEEP[keep change, record best]
+    METRIC -- yes --> IMP{mean improved?}
+    IMP -- yes --> KEEP[keep change, record mean + stdev]
     IMP -- no --> REV[revert to snapshot]
     KEEP --> ITER{iterations left?}
     REV --> ITER
@@ -313,6 +336,25 @@ flowchart TD
     PROPOSE --> RUN
     ITER -- no --> OUT[results.md + vault note + project store run]
 ```
+
+**Research-quality guardrails** baked into the loop:
+
+- **Plateau early-stop** (`C1`): synthesis stops as soon as the reviewer score
+  reaches the scenario's `review_target`, or after `plateau_iters` consecutive
+  iterations with no improvement (default 2) — the loop doesn't burn LLM calls
+  once it has converged.
+- **Citation audit** (`C1`): every `[arXiv:xxxx]` citation in the accepted
+  report is checked against the corpus. Ungrounded citations are stripped and
+  logged; the audit counts (`cited` / `verified` / `removed`) are persisted in
+  `scenario.json` and returned with the synthesis result.
+- **Multi-run replication** (`C2`): each candidate `experiment.py` is run
+  `num_runs` times (default 3) and keep/revert decisions are made on the
+  **mean** metric (not a single run). Results record mean + stdev, best-effort
+  paper-reported value, and `delta_vs_paper`.
+- **Quantitative fold-back** (`C3`): the fold-back synthesis
+  (`include_experiments=True`) is fed a **replication results table** (paper,
+  metric, workbench best, paper-reported, Δ vs paper, N runs) and the accepted
+  report deterministically embeds it under *Replication Results (Workbench)*.
 
 Every loop run is recorded in the scenario's **project store**
 (`scenarios/<id>/project/workbench.db`) as runs attached to a per-scenario
@@ -331,7 +373,7 @@ project/          ProjectStore DB (runs, messages, experiments)
 
 ---
 
-## 7. Background jobs
+## 8. Background jobs, resilience & scheduling
 
 Paper ingestion and the research-loop phases take minutes (arXiv + multiple LLM
 calls + embeddings). Holding a browser fetch open that long fails with a
@@ -359,9 +401,35 @@ sequenceDiagram
     UI->>API: GET /scenarios/{sid}/status (final phase + log tail)
 ```
 
+**Persistence & concurrency (A2):**
+
+- The job registry is persisted to `<data_root>/jobs.json` (atomic write), so a
+  server restart does not lose the job list — jobs that were running get marked
+  `interrupted` and stay visible.
+- Each scenario's live loop state is persisted to
+  `<data_root>/scenarios/<sid>/status.json`; after a crash a mid-run phase is
+  restored as `interrupted` rather than stuck `running`.
+- **Per-scenario guard:** a scenario that already has a `running` build /
+  synthesize / experiments / loop job refuses a second long operation (HTTP
+  409) — nothing queues up on top of itself.
+
+**Scenario scheduler (B1):** an opt-in background task started with the app
+lifespan. Every `schedule.check_minutes` (default 60) it checks each
+scenario's freshness and triggers `build_corpus` (and, unless disabled,
+`run_synthesis`) for scenarios whose newest activity is older than their
+`schedule.interval_hours` — or that have never run. The scheduler is
+conservative: global `schedule.enabled` **and** per-scenario
+`schedule.enabled` must both be on, and it honours the per-scenario guard above
+(never queues onto a busy scenario).
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `GET /api/rkg/scheduler/status` | GET | enabled / check_minutes / synthesize / whether the task is active / which scenarios are due |
+| `POST /api/rkg/scheduler/tick` | POST | force an immediate cadence run (409 when disabled) |
+
 ---
 
-## 8. API reference (`/api/rkg/*`)
+## 9. API reference (`/api/rkg/*`)
 
 ### Research pool & papers
 
@@ -398,6 +466,7 @@ sequenceDiagram
 | `/api/rkg/scenarios/{sid}` | GET | scenario detail |
 | `/api/rkg/scenarios/{sid}/status` | GET | live loop status (phase, progress, log) |
 | `/api/rkg/scenarios/{sid}/report` | GET | best domain report (markdown) |
+| `/api/rkg/scenarios/{sid}/gaps` | GET | ranked research-gap suggestions (type, evidence, hypothesis, arXiv query) |
 | `/api/rkg/scenarios/{sid}/build` | POST | phase 1 — build corpus (job) |
 | `/api/rkg/scenarios/{sid}/synthesize` | POST | phase 2/4 — synthesize report (job) |
 | `/api/rkg/scenarios/{sid}/experiments` | POST | phase 3 — replication experiments (job) |
@@ -412,7 +481,7 @@ sequenceDiagram
 
 ---
 
-## 9. Configuration
+## 10. Configuration
 
 Runtime data root (default `<FOX_WORKBENCH_DIR>/research_knowledge_graphs/`),
 Ollama endpoints, arXiv behavior and GPU settings all come from `config.py`.
@@ -436,11 +505,22 @@ ollama:
   model: qwen3.6:35b                 # or OLLAMA_MODEL
   fast_model: llama3.2:3b            # or OLLAMA_FAST_MODEL
   embed_model: nomic-embed-text      # or OLLAMA_EMBED_MODEL
+
+schedule:                            # scenario scheduler (B1), default off
+  enabled: false
+  check_minutes: 60                  # cadence of freshness checks
+  synthesize: true                   # also run synthesis on a scheduled build
+```
+
+Per-scenario scheduling is configured inside the scenario's `scenario.json`:
+
+```json
+"schedule": {"enabled": true, "interval_hours": 24}
 ```
 
 ---
 
-## 10. Running it
+## 11. Running it
 
 ```bash
 # dev server
