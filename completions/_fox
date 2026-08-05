@@ -1,0 +1,45 @@
+#compdef fox
+# zsh completion for the `fox` CLI.
+# Place on your fpath, e.g.  mkdir -p ~/.zfunc && cp completions/_fox ~/.zfunc/ \
+# then add  fpath=(~/.zfunc $fpath)  and  autoload -Uz compinit && compinit  in .zshrc
+
+_fox() {
+  local -a subcommands
+  subcommands=(splash version status doctor serve graph papers projects runs
+               run experiments experiment compare research manage jobs
+               scheduler pool manual)
+
+  local -A actions
+  actions[projects]="list new show rm fork"
+  actions[run]="show report"
+  actions[experiments]="list start run-obfuscation"
+  actions[experiment]="show ranking"
+  actions[research]="list status report build synthesize experiments loop"
+  actions[manage]="repos status link commit push commit-and-push"
+  actions[papers]="list search add"
+  actions[pool]="list topics topics-add topics-rm import"
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '--version[show version]' \
+    '--url[server base URL]:url:' \
+    '--json[machine-readable JSON output]' \
+    '--quiet[suppress spinner output]' \
+    '--debug[debug logging to stderr]' \
+    '1:command:->cmd' \
+    '*::arg:->args'
+
+  case $state in
+    cmd)
+      _describe 'command' subcommands
+      ;;
+    args)
+      local cmd="${words[1]}"
+      if (( CURRENT == 2 )); then
+        compadd ${(z)actions[$cmd]} 2>/dev/null
+      fi
+      ;;
+  esac
+}
+
+_fox "$@"

@@ -305,6 +305,25 @@ Ask the agent to improve an experiment toward its goal, e.g.:
 
 > "Improve experiment 'my_experiment' toward its goal."
 
+### From the command line
+
+The same experiment workflows run from the `fox` CLI (see
+[docs/CLI.md](docs/CLI.md) for the full reference):
+
+```bash
+fox experiments <project>                       # list experiments
+fox experiments <project> start --name "eps sweep" \
+    --hypothesis "…" --goal-metric accuracy --goal-target 0.9
+fox experiments <project> run-obfuscation       # bank obfuscation suite
+fox run <project> <id>                          # run detail
+fox run <project> <id> report                   # lab-notebook report
+fox experiment <project> <id> ranking           # leaderboard (Δ vs best)
+fox compare <project> <run_a> <run_b>           # metric deltas
+```
+
+`--json` prints machine-readable output for scripting; `--debug` traces HTTP
+calls to stderr.
+
 The bounded loop (max 5 iterations) runs a variant, has the reviewer suggest
 the next change, applies the best suggestion, and reruns — stopping when the
 goal is reached, the reviewer has no further suggestions, or the budget is

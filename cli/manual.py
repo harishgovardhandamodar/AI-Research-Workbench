@@ -10,8 +10,18 @@ _SECTION_HEADERS = {
     "quickstart": "## Quick start",
     "status": "### `fox status`",
     "projects": "### `fox projects`",
+    "runs": "### `fox runs",
+    "run": "### `fox run <project> <id>",
+    "experiments": "### `fox experiments",
+    "experiment": "### `fox experiment <project> <id>",
+    "compare": "### `fox compare",
     "research": "### `fox research`",
     "graph": "### `fox graph`",
+    "papers": "### `fox papers",
+    "jobs": "### `fox jobs",
+    "scheduler": "### `fox scheduler`",
+    "pool": "### `fox pool",
+    "manage": "### `fox manage",
     "manual": "## Subcommands",
 }
 
@@ -37,11 +47,14 @@ class Manual:
                 f"{ui.err()} {ui.dim('unknown manual section')} — "
                 f"try: {known}")
         lines = self.text.splitlines()
+        # `##`-anchored sections stop at the next `##`; `### fox`-anchored
+        # sections stop at the next `### fox` command heading.
+        stop = "## " if header.startswith("##") else "### `fox "
         out, on = [], False
         for ln in lines:
             if ln.strip().startswith(header):
                 on = True
-            elif on and ln.strip().startswith("## "):
+            elif on and ln.strip().startswith(stop):
                 break
             if on:
                 out.append(ln)

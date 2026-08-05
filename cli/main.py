@@ -9,6 +9,7 @@ import argparse
 import sys
 
 from . import commands, ui
+from .log import log as _log
 from .splash import render_splash_panel
 
 PROG = "fox"
@@ -27,6 +28,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default=None,
                         help="server base URL (default $FOX_URL or "
                              "http://127.0.0.1:8765)")
+    parser.add_argument("--json", action="store_true",
+                        help="machine-readable JSON output on stdout")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress spinner/progress output")
+    parser.add_argument("--debug", action="store_true",
+                        help="debug logging to stderr (also: FOX_DEBUG=1)")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     sub.add_parser("splash", help="render the fox splash panel")
@@ -40,7 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_graph = sub.add_parser("graph", help="knowledge-graph summary")
 
-    p_papers = sub.add_parser("papers", help="list ingested papers")
+    p_papers = sub.add_parser("papers", help="list / search / ingest papers")
+    p_papers.add_argument("action", nargs="?", default="list",
+                          choices=["list", "search", "add"])
+    p_papers.add_argument("query", nargs="?", default=None,
+                          help="search term, arXiv id, or URL (search/add)")
 
     p_projects = sub.add_parser("projects", help="manage projects")
     p_projects.add_argument("action", nargs="?", default="list",
@@ -54,14 +65,44 @@ def _build_parser() -> argparse.ArgumentParser:
     p_runs = sub.add_parser("runs", help="list runs of a project")
     p_runs.add_argument("project")
 
+    p_run = sub.add_parser("run", help="inspect a run / generate report")
+    p_run.add_argument("project")
+    p_run.add_argument("rid", help="run id")
+    p_run.add_argument("action", nargs="?", default="show",
+                       choices=["show", "report"])
+
     p_exp = sub.add_parser("experiments", help="list / start experiments")
     p_exp.add_argument("project")
     p_exp.add_argument("action", nargs="?", default="list",
                        choices=["list", "start", "run-obfuscation"])
+    p_exp.add_argument("--name", default=None,
+                       help="experiment name (start; default '<project> experiment')")
+    p_exp.add_argument("--hypothesis", default="",
+                       help="hypothesis (start)")
+    p_exp.add_argument("--goal-metric", default="",
+                       help="goal metric name (start)")
+    p_exp.add_argument("--goal-target", type=float, default=None,
+                       help="goal target value (start)")
+    p_exp.add_argument("--plan", default="",
+                       help="experiment plan (start)")
     p_exp.add_argument("--n-rows", type=int, default=2000,
                        help="synthetic bank transactions (run-obfuscation)")
     p_exp.add_argument("--seed", type=int, default=42,
                        help="RNG seed (run-obfuscation)")
+
+    p_experiment = sub.add_parser("experiment",
+                                  help="inspect an experiment / ranking")
+    p_experiment.add_argument("project")
+    p_experiment.add_argument("eid", help="experiment id")
+    p_experiment.add_argument("action", nargs="?", default="show",
+                              choices=["show", "ranking"])
+    p_experiment.add_argument("--metric", default="",
+                              help="ranking metric (default: goal_metric)")
+
+    p_compare = sub.add_parser("compare", help="metric delta between two runs")
+    p_compare.add_argument("project")
+    p_compare.add_argument("run_a")
+    p_compare.add_argument("run_b")
 
     p_res = sub.add_parser("research", help="research scenarios + autoresearch")
     p_res.add_argument("action", nargs="?", default="list",
@@ -69,6 +110,33 @@ def _build_parser() -> argparse.ArgumentParser:
                                 "build", "synthesize", "experiments", "loop"])
     p_res.add_argument("scenario", nargs="?", default=None,
                        help="scenario id")
+
+    p_manage = sub.add_parser("manage", help="experiment management repo")
+    p_manage.add_argument("action", nargs="?", default="status",
+                          choices=["repos", "status", "link",
+                                   "commit", "push", "commit-and-push"])
+    p_manage.add_argument("project", nargs="?", default=None,
+                          help="project name (commit / push)")
+    p_manage.add_argument("github_repo", nargs="?",
+                          help="owner/repo (link)")
+    p_manage.add_argument("-m", "--message", default="",
+                          help="commit message (commit / commit-and-push)")
+
+    p_jobs = sub.add_parser("jobs", help="list / inspect RKG background jobs")
+    p_jobs.add_argument("job_id", nargs="?", default=None)
+
+    p_sched = sub.add_parser("scheduler", help="research scheduler status")
+
+    p_pool = sub.add_parser("pool", help="research pool (papers + topics)")
+    p_pool.add_argument("action", nargs="?", default="list",
+                        choices=["list", "topics", "topics-add", "topics-rm",
+                                 "import"])
+    p_pool.add_argument("name", nargs="?", default=None,
+                        help="topic name (topics-add / topics-rm)")
+    p_pool.add_argument("query", nargs="?", default=None,
+                        help="arxiv search query (topics-add)")
+    p_pool.add_argument("arxiv_id", nargs="?", default=None,
+                        help="arxiv id (import)")
 
     p_man = sub.add_parser("manual", help="print the manual")
     p_man.add_argument("topic", nargs="?", default=None,
@@ -79,6 +147,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _ns_url(ns: argparse.Namespace) -> argparse.Namespace:
     ns.url = getattr(ns, "url", None) or None
+    if getattr(ns, "debug", False):
+        _log.set_level("DEBUG")
     return ns
 
 
@@ -99,10 +169,17 @@ def main(argv: list[str] | None = None) -> int:
         "serve": commands.cmd_serve,
         "projects": commands.cmd_projects,
         "runs": commands.cmd_runs,
+        "run": commands.cmd_run,
         "experiments": commands.cmd_experiments,
+        "experiment": commands.cmd_experiment,
+        "compare": commands.cmd_compare,
         "research": commands.cmd_research,
         "graph": commands.cmd_graph,
         "papers": commands.cmd_papers,
+        "jobs": commands.cmd_jobs,
+        "scheduler": commands.cmd_scheduler,
+        "pool": commands.cmd_pool,
+        "manage": commands.cmd_manage,
         "manual": commands.cmd_manual,
     }
     handler = handlers.get(cmd)

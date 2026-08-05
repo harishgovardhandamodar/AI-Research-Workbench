@@ -99,18 +99,34 @@ A zero-dependency terminal CLI (opencode-style UI) for the same backend:
 ```bash
 ./bin/fox                 # animated fox splash + interactive `>` shell
 fox status                # server / model / research overview
+fox doctor                # environment + server health checks
+fox serve                 # launch the workbench server
+
 fox projects list         # manage projects (new/show/rm/fork)
 fox runs <project>        # agent runs
-fox experiments <proj>    # list / start experiments
+fox run <project> <id>    # single run detail  (… report = lab-notebook report)
+fox experiments <proj>    # list experiments (… start, run-obfuscation)
+fox experiment <p> <id>   # experiment detail  (… ranking = leaderboard)
+fox compare <p> <a> <b>   # metric delta between two runs
+
 fox research list         # research scenarios
 fox research loop <sid>   # run a full autoresearch loop
 fox graph                 # knowledge-graph stats (papers/concepts/relations)
+fox papers search <q>     # search the KG;  papers add <arxiv|url|query> ingests
+fox jobs                  # background job list
+fox scheduler             # research scheduler status
+fox pool                  # research pool / topics / imports
+
+fox manage status         # experiment management repo (commit/push/link)
 fox manual                # the manual (or: fox manual <section>)
 ```
 
-Subcommands accept `--help`; run `fox` with no arguments for the interactive
-shell. Point it at a remote server with `FOX_URL` or `--url`. Full user guide:
-[docs/CLI.md](docs/CLI.md), or `fox manual` / `cli/manual.md`.
+Every data command emits machine-readable JSON with `--json` (stable exit
+codes for scripting); `--debug` logs HTTP tracing to stderr. Subcommands accept
+`--help`; run `fox` with no arguments for the interactive shell (tab completes
+commands). Point it at a remote server with `FOX_URL` or `--url`. Full user
+guide: [docs/CLI.md](docs/CLI.md), or `fox manual` / `cli/manual.md`.
+Completion scripts for bash/zsh ship in [`completions/`](completions/).
 
 ## Run with Docker (persistent data)
 

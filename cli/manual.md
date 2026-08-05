@@ -27,6 +27,9 @@ FOX_URL=http://host:8765 fox status
 | option       | meaning                                     |
 |--------------|---------------------------------------------|
 | `--url URL`  | server base URL (default `$FOX_URL` or `http://127.0.0.1:8765`) |
+| `--json`     | machine-readable JSON on stdout (no panels/ANSI) |
+| `--quiet`    | suppress spinner/progress output            |
+| `--debug`    | debug logging to stderr (also `FOX_DEBUG=1`)|
 | `--help`     | show help                                   |
 | `--version`  | show version                                |
 
@@ -53,13 +56,40 @@ fox projects fork <name> <target>     # fork a project
 ```
 
 ### `fox runs <project>`
-Recent agent runs for a project (model, status, iteration count, duration).
+Recent agent runs for a project (id, label, status, best metric, started).
+
+### `fox run <project> <id> [report]`
+Inspect a single run (metrics, prompt, review findings, artifacts), or
+`report` to generate + print its lab-notebook report.
 
 ### `fox experiments <project>`
+List, launch, or run experiments for a project (requires a running server and
+an existing project).
+
 ```
-fox experiments <project>             # list experiments
-fox experiments <project> start       # launch a new experiment
+fox experiments <project>                        # list experiments
+fox experiments <project> start                  # launch a new experiment
+fox experiments <project> start --name "eps sweep" --hypothesis "…" \
+    --goal-metric accuracy --goal-target 0.9
+fox experiments <project> run-obfuscation        # bank obfuscation suite
+fox experiments <project> run-obfuscation --n-rows 5000 --seed 7
 ```
+
+`start` creates an experiment (named `<project> experiment` by default;
+override with `--name`, plus `--hypothesis` / `--goal-metric` /
+`--goal-target` / `--plan`) and returns its id. `run-obfuscation` runs the synthetic
+bank-transaction scenario suite and records each scenario as a run under an
+`obfuscation (bank)` experiment (`--n-rows` dataset size, default 2000;
+`--seed` RNG seed, default 42). Pair with `fox runs <project>` to inspect
+results.
+
+### `fox experiment <project> <id> [ranking]`
+Experiment detail (goal, hypothesis, plan, its runs), or `ranking` for the
+leaderboard (rank, metric, Δ vs best) — `--metric m` overrides the goal metric.
+
+### `fox compare <project> <run_a> <run_b>`
+Metric delta between two runs (value, Δ, %) plus a shared/increased/decreased
+summary.
 
 ### `fox research`
 Scenario-driven autoresearch loops over a domain corpus.
@@ -79,8 +109,44 @@ Background jobs are polled live; a `job completed` line marks success.
 ### `fox graph`
 Knowledge-graph summary (papers / concepts / relations).
 
-### `fox papers`
-Latest ingested papers with concept counts.
+### `fox papers [list|search|add]`
+```
+fox papers                       # latest ingested papers
+fox papers search <query>        # search the knowledge graph
+fox papers add <ref>             # ingest: arXiv id, URL, or free-text query
+```
+
+`add` submits a background job and reports the outcome (papers added with
+concept counts). arXiv ids are matched as `\d{4}.\d{4,5}`, URLs are ingested
+as web pages, anything else runs as an arXiv search.
+
+### `fox jobs [id]`
+List recent background jobs, or inspect one job.
+
+### `fox scheduler`
+Research scheduler status (enabled, cadence, synthesize, active, due
+scenarios).
+
+### `fox pool [action]`
+```
+fox pool                     # topic -> paper counts
+fox pool topics              # topic -> search query
+fox pool topics add <name> <query>
+fox pool topics rm <name>
+fox pool import <arxiv_id>   # ingest a pool paper (background job)
+```
+
+### `fox manage [action]`
+Experiment management repo (source control for experiments/artifacts).
+
+```
+fox manage status                          # repo dir / github / remote
+fox manage repos                           # sibling git repos found
+fox manage link <owner/repo>               # set the GitHub remote
+fox manage commit <project> [-m msg]
+fox manage push <project>
+fox manage commit-and-push <project> [-m msg]
+```
 
 ### `fox splash`
 Render the fox splash panel (static).
@@ -92,6 +158,12 @@ Print this manual, or one section (e.g. `fox manual research`).
 
 The CLI itself is configuration-free; server settings (LLM endpoint, model,
 agent knobs) live in the workbench `config.json`, which `fox status` reflects.
+Debug tracing is enabled with `--debug` or `FOX_DEBUG=1`.
+
+## Completion
+
+bash / zsh tab-completion scripts ship in `completions/` (`fox.bash`,
+`_fox`). The interactive shell (`fox`) also completes commands and actions.
 
 ## Exit codes
 

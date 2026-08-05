@@ -25,13 +25,20 @@ flowchart LR
     FOX --> STATUS[status]
     FOX --> DOC[doctor]
     FOX --> SERVE[serve]
-    FOX --> P[projects<br/>list|new|show|rm|fork]
+    FOX --> P["projects<br/>list|new|show|rm|fork"]
     FOX --> RUNS[runs &lt;project&gt;]
-    FOX --> EXP[experiments<br/>list|start]
-    FOX --> RES[research<br/>list|status|report|build|synthesize|experiments|loop]
+    FOX --> RUN[run &lt;p&gt; &lt;id&gt;<br/>show|report]
+    FOX --> EXP["experiments<br/>list|start|run-obfuscation"]
+    FOX --> EXPERIMENT[experiment &lt;p&gt; &lt;id&gt;<br/>show|ranking]
+    FOX --> COMPARE[compare &lt;p&gt; &lt;a&gt; &lt;b&gt;]
+    FOX --> RES["research<br/>list|status|report|build|synthesize|experiments|loop"]
     FOX --> G[graph]
-    FOX --> PAPERS[papers]
-    FOX --> MAN[manual [section]]
+    FOX --> PAPERS["papers<br/>list|search|add"]
+    FOX --> JOBS[jobs [id]]
+    FOX --> SCHED[scheduler]
+    FOX --> POOL["pool<br/>topics|import"]
+    FOX --> MGMT["manage<br/>status|commit|push"]
+    FOX --> MAN["manual [section]"]
 ```
 
 Every subcommand accepts `--help`. Global `--url` (or `FOX_URL`) selects the
@@ -115,13 +122,59 @@ fox projects fork <name> <target>  # fork
 ```
 
 ### `fox runs <project>`
-Recent agent runs for a project: run id, model, status, iteration count,
-duration, started-at.
+Recent agent runs for a project: run id, label, status, best metric,
+started-at.
+
+### `fox run <project> <id> [report]`
+Inspect a single run: metrics, prompt, review findings, artifacts. Append
+`report` to generate + print its lab-notebook report.
+
+```
+fox run <project> <id>
+fox run <project> <id> report
+```
 
 ### `fox experiments <project>`
+List, launch, or run experiments for a project. Prerequisites: the workbench
+server must be running (`fox serve` or `./run.sh`) and the project must exist
+(`fox projects new <name>`).
+
 ```
-fox experiments <project>           # list experiments
-fox experiments <project> start     # launch a new experiment
+fox experiments <project>                        # list experiments
+fox experiments <project> start                  # launch a new experiment
+fox experiments <project> start --name "eps sweep" \
+    --hypothesis "smaller eps improves acc" --goal-metric accuracy --goal-target 0.9
+fox experiments <project> run-obfuscation        # bank obfuscation suite
+fox experiments <project> run-obfuscation --n-rows 5000 --seed 7
+```
+
+`start` submits an experiment (named `<project> experiment` unless you pass
+`--name`) and prints its id. Optional fields: `--hypothesis`,
+`--goal-metric`, `--goal-target`, `--plan`. The
+`run-obfuscation` action runs the synthetic bank-transaction scenario suite
+locally and records each scenario as a run (metrics + figure + masked-vs-raw
+transactions) under an `obfuscation (bank)` experiment, which the app's
+Experiments panel then displays. Use `--n-rows` to size the synthetic dataset
+(default 2000) and `--seed` for reproducibility (default 42).
+
+Check results with the runs listing and drill-down commands:
+
+```
+fox runs <project>                 # recent agent runs
+fox run <project> <id>             # single run detail
+fox run <project> <id> report      # lab-notebook report
+fox experiment <project> <id>      # experiment detail + its runs
+fox experiment <project> <id> ranking   # leaderboard (Δ vs best)
+fox compare <project> <a> <b>      # metric delta between two runs
+```
+
+The same commands work inside the interactive shell:
+
+```
+  fox > experiments <project>
+  fox > experiments <project> start --name "eps sweep"
+  fox > runs <project>
+  fox > run <project> 8 report
 ```
 
 ### `fox research`
@@ -155,15 +208,54 @@ $ fox research list
 Knowledge-graph summary: papers, concepts, relations, RAG chunks/embedding
 dimension, and GPU availability.
 
-### `fox papers`
-Latest ingested papers with concept counts.
+### `fox papers [list|search|add]`
+```
+fox papers                       # latest ingested papers
+fox papers search <query>        # search the knowledge graph
+fox papers add <ref>             # ingest: arXiv id, URL, or free-text query
+```
+
+`add` routes by reference shape: a `\d{4}.\d{4,5}` arXiv id → pool import, an
+`http(s)://` URL → web ingest, anything else → arXiv search import. Each runs
+as a background job (polled live; `job completed` marks success).
+
+### `fox jobs [id]`
+List recent background jobs, or inspect one job (kind, status, timeline).
+
+### `fox scheduler`
+Research scheduler status: enabled, check cadence, synthesize flag, active,
+due scenarios.
+
+### `fox pool [action]`
+```
+fox pool                          # topic -> paper counts
+fox pool topics                   # topic -> search query
+fox pool topics add <name> <query>
+fox pool topics rm <name>
+fox pool import <arxiv_id>        # ingest a pool paper (background job)
+```
+
+### `fox manage [action]`
+Experiment management repo — snapshot + version experiments/artifacts in a
+sibling git repo (see HOW-to-USE.md § Experiment source control).
+
+```
+fox manage status                          # repo dir / github repo / remote
+fox manage repos                           # sibling git repos found
+fox manage link <owner/repo>               # set the GitHub remote
+fox manage commit <project> [-m msg]       # snapshot + commit
+fox manage push <project>                  # push to remote
+fox manage commit-and-push <project> [-m msg]
+```
 
 ### `fox splash`
 Static splash panel (no animation).
 
 ### `fox manual [section]`
 Print the full manual, or one section:
-`quickstart | status | projects | research | graph | manual`.
+`quickstart | status | projects | runs | run | experiments | experiment |
+compare | research | graph | papers | jobs | scheduler | pool | manage |
+manual`.
 
 ---
 
@@ -176,11 +268,36 @@ Print the full manual, or one section:
 - **Job polling**: research actions poll `/api/rkg/jobs/{id}` every 4s; the
   spinner label shows the latest log line.
 
+## 5b. Scripting (`--json`)
+
+Every data command emits machine-readable JSON on stdout with `--json`
+(panels and spinners suppressed, stderr untouched):
+
+```
+fox --json projects
+fox --json experiments <project>
+fox --json research list | jq -r '.[].id'
+fox --json scheduler
+```
+
+`--quiet` suppresses the spinner without switching output format. Combine with
+`--url` for remote hosts. Exit codes are stable for scripting (see §7).
+
 ## 6. Configuration
 
 The CLI is configuration-free; all server settings (LLM endpoint, model, agent
 knobs, research data root) live in the workbench `config.json`, surfaced by
 `fox status`. Connection is selected by `FOX_URL` or `--url`.
+
+Debug tracing (request/response logging to stderr) is enabled with `--debug`
+or `FOX_DEBUG=1`:
+
+```
+FOX_DEBUG=1 fox status         # [fox:debug] GET /api/config -> 200 …
+```
+
+Shell tab-completion scripts ship in `completions/` (`fox.bash` for bash,
+`_fox` for zsh); the interactive shell completes commands and actions natively.
 
 ## 7. Exit codes
 
@@ -198,3 +315,5 @@ knobs, research data root) live in the workbench `config.json`, surfaced by
 - `cli/commands.py` — subcommand implementations
 - `cli/interactive.py` — `>` shell (`fox` with no args)
 - `cli/splash.py` — animated fox splash
+- `cli/log.py` — leveled stderr logging (`--debug` / `FOX_DEBUG=1`)
+- `completions/fox.bash`, `completions/_fox` — bash / zsh tab-completion
