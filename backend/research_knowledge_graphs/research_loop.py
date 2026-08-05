@@ -1078,6 +1078,90 @@ class ResearchWorkbench:
 
     # ------------------------------------------------------- full loop -------
 
+    def gaps(self, sid: str) -> dict[str, Any]:
+        """Inspect the scenario's graph for research gaps.
+
+        Each suggestion carries a gap type, evidence, a candidate hypothesis,
+        and a ready-to-run arXiv query so the dashboard/agent can act on it.
+        """
+        sc = self.get(sid)
+        if not sc:
+            return {"status": "error", "reason": f"unknown scenario {sid}"}
+        corpus_ids = set(self._corpus_ids(sid))
+        corpus_papers = self._corpus_papers(sid)
+        sc_topics = sc.get("topics", [])
+        lens = sc.get("lens", "")
+
+        suggestions: list[dict[str, Any]] = []
+
+        # Gap 1: pool topics with no imported corpus paper.
+        observed = self.pool.get_observed_papers()
+        imported_topic_papers: dict[str, int] = {}
+        topic_query: dict[str, str] = {t["name"]: t["query"] for t in sc_topics}
+        for p in observed:
+            for t in p.get("topics", []):
+                if t in topic_query and p.get("imported"):
+                    imported_topic_papers[t] = imported_topic_papers.get(t, 0) + 1
+        for t in sc_topics:
+            name = t["name"]
+            if imported_topic_papers.get(name, 0) == 0:
+                suggestions.append({
+                    "type": "untouched_topic",
+                    "evidence": f"no corpus paper imports for topic '{name}'",
+                    "hypothesis": (
+                        f"Work by the lens '{lens}' may be under-represented for "
+                        f"topic '{name}'."),
+                    "arxiv_query": topic_query.get(name, name),
+                })
+
+        # Gap 2: papers not connected to any scenario concept.
+        if sc_topics:
+            for n in corpus_papers:
+                concepts = [e.target for e in self.kg._hive.edges
+                            if e.source == n.id]
+                if not concepts:
+                    suggestions.append({
+                        "type": "unlinked_paper",
+                        "evidence": f"paper {n.id} has no concept edges",
+                        "hypothesis": "The paper's contribution may not be "
+                                      "related to the scenario lens yet.",
+                        "arxiv_query": f"{lens}",
+                    })
+
+        # Gap 3: concept nodes with zero connected papers (orphan concepts).
+        concept_ids = {c.id for c in self.kg.concepts}
+        linked_papers: set[str] = set()
+        for e in self.kg._hive.edges:
+            if e.source in concept_ids:
+                linked_papers.add(e.source)
+        for c in self.kg.concepts:
+            if c.id not in linked_papers:
+                suggestions.append({
+                    "type": "orphan_concept",
+                    "evidence": f"concept '{c.label}' has no linked papers",
+                    "hypothesis": (
+                        f"Explore papers operationalizing '{c.label}' in the "
+                        f"scenario context."),
+                    "arxiv_query": f"{lens} {c.label}",
+                })
+
+        # Gap 4: corpus papers with no experiment replication yet.
+        for n in corpus_papers:
+            if not self._experiment_specs(n.id):
+                suggestions.append({
+                    "type": "no_experiment",
+                    "evidence": f"paper {n.id} has no experiment spec",
+                    "hypothesis": "Replicating this paper would quantify a "
+                                  "claim with a runnable experiment.",
+                    "arxiv_query": f"{lens}",
+                })
+
+        suggestions.sort(key=lambda s: (s["type"], s["evidence"]))
+        return {"status": "ok", "suggestions": suggestions,
+                "count": len(suggestions), "scenario": sid}
+
+    # ------------------------------------------------------- full loop -------
+
     def run_full_loop(self, sid: str, model: str | None = None) -> dict[str, Any]:
         """Chained autoresearch: corpus → report → experiments → fold back."""
         self._reset_live(sid)

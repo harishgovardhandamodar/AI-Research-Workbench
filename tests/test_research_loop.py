@@ -52,6 +52,7 @@ class _FakeLLM:
 class _FakePool:
     def __init__(self):
         self.topics = []
+        self.observed = []
 
     def get_topics(self):
         return list(self.topics)
@@ -63,10 +64,12 @@ class _FakePool:
         return {}
 
     def get_observed_papers(self):
-        return []
+        return list(self.observed)
 
     def mark_imported(self, arxiv_id):
-        pass
+        for p in self.observed:
+            if p["arxiv_id"] == arxiv_id:
+                p["imported"] = True
 
 
 class _FakeOrg:
@@ -319,6 +322,54 @@ class SynthesisLoopTests(unittest.IsolatedAsyncioTestCase):
         result = wb.run_synthesis("autonomous-agents-security")
         self.assertEqual(result["status"], "error")
         self.assertIn("corpus", result["reason"])
+
+
+class GapDiscoveryTests(unittest.TestCase):
+    """B2: gaps() surfaces untouched topics, unlinked papers, orphan concepts,
+    and papers lacking experiments."""
+
+    def test_gaps_covers_all_four_types(self):
+        tmp = Path(tempfile.mkdtemp())
+        wb = _make_wb(tmp, _FakeLLM(), corpus_ids=("2401.00001",))
+        wb.pool.observed = [
+            {"arxiv_id": "2401.00001", "title": "Paper", "topics": ["Agents-Security: agent safety"],
+             "imported": True},
+            {"arxiv_id": "2403.00003", "title": "Fresh", "topics": ["Agents-Security: agent safety"],
+             "imported": False},
+        ]
+        wb.kg.add_concept("orphan", "Orphan Concept", "unlinked")
+        result = wb.gaps("autonomous-agents-security")
+        self.assertEqual(result["status"], "ok")
+        types = {s["type"] for s in result["suggestions"]}
+        self.assertIn("untouched_topic", types)
+        self.assertIn("orphan_concept", types)
+        self.assertIn("unlinked_paper", types)
+        self.assertIn("no_experiment", types)
+        # Untouched topics are those with zero *imported* corpus papers.
+        untouched = [s for s in result["suggestions"]
+                     if s["type"] == "untouched_topic"]
+        self.assertTrue(any("agent jailbreak" in s["arxiv_query"]
+                            for s in untouched))
+        # Every suggestion carries an arXiv query to act on.
+        for s in result["suggestions"]:
+            self.assertIn("arxiv_query", s)
+            self.assertTrue(s["arxiv_query"])
+
+    def test_gaps_unknown_scenario(self):
+        tmp = Path(tempfile.mkdtemp())
+        wb = _make_wb(tmp, _FakeLLM())
+        result = wb.gaps("does-not-exist")
+        self.assertEqual(result["status"], "error")
+
+    def test_gaps_no_orphan_when_concept_linked(self):
+        tmp = Path(tempfile.mkdtemp())
+        wb = _make_wb(tmp, _FakeLLM(), corpus_ids=("2401.00001",))
+        wb.kg.add_concept("linked", "Linked", "def")
+        wb.kg.add_edge("linked", "2401.00001")
+        result = wb.gaps("autonomous-agents-security")
+        self.assertNotIn(
+            "orphan_concept",
+            {s["type"] for s in result["suggestions"]})
 
 
 class ExperimentLoopTests(unittest.TestCase):
