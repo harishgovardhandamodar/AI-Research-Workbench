@@ -178,6 +178,30 @@ def _write_if_changed(path: Path, content: str) -> bool:
     return True
 
 
+# Files larger than this are not mirrored into the management repo snapshot
+# (they live in the project; pushing multi-hundred-MB datasets to GitHub fails).
+MAX_SNAPSHOT_FILE_BYTES = 50 * 1024 * 1024
+
+
+def _copy_dir_small(src: Path, dst: Path) -> list[str]:
+    """Copy files under src into dst, skipping anything over the snapshot cap."""
+    copied: list[str] = []
+    for p in src.rglob("*"):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(src)
+        if p.stat().st_size > MAX_SNAPSHOT_FILE_BYTES:
+            continue
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(p, target)
+            copied.append(rel.as_posix())
+        except OSError:
+            pass
+    return copied
+
+
 def _experiments_payload(rt) -> list[dict]:
     """Store reads happen on the event loop (SQLite connections are
     thread-bound); the returned payload is what gets snapshotted."""
@@ -215,8 +239,7 @@ def snapshot_project(rt, repo: Path, experiments: list[dict] | None = None) -> l
         src = rt.dir / rel
         if src.is_dir():
             try:
-                shutil.copytree(src, base / rel, dirs_exist_ok=True)
-                written.append(f"fox/{rt.name}/{rel}")
+                written.extend(_copy_dir_small(src, base / rel))
             except OSError:
                 pass
     return written
