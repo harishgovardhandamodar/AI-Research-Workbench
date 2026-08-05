@@ -39,10 +39,30 @@ from .state import (CONFIG, allowed_origins, get_runtime, mcp_registry,
 
 # ------------------------------------------------------------------ app -----
 
+_rkg_scheduler: "ScenarioScheduler | None" = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    global _rkg_scheduler
+    from .research_knowledge_graphs.config import Config as RkgConfig
+    from .research_knowledge_graphs.scheduler import ScenarioScheduler
+    from .research_knowledge_graphs.router import get_workbench
+
+    rkg_cfg = RkgConfig()
+    if rkg_cfg.schedule_enabled:
+        _rkg_scheduler = ScenarioScheduler(
+            get_workbench,
+            check_minutes=rkg_cfg.schedule_check_minutes,
+            synthesize=rkg_cfg.schedule_synthesize,
+        )
+        _rkg_scheduler.start()
+        app.state.rkg_scheduler = _rkg_scheduler
     yield
+    if _rkg_scheduler is not None:
+        await _rkg_scheduler.stop()
+        _rkg_scheduler = None
     for rt in list(runtimes.values()):
         await rt.stop()
 

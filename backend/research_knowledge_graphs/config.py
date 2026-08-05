@@ -153,6 +153,20 @@ class Config:
         return int(self._get("server", "port", default=7777))
 
     @property
+    def schedule_enabled(self) -> bool:
+        return bool(self._get("schedule", "enabled", default=False))
+
+    @property
+    def schedule_check_minutes(self) -> int:
+        return int(self._get("schedule", "check_minutes", default=60))
+
+    @property
+    def schedule_synthesize(self) -> bool:
+        """Whether a scheduled build also runs synthesis (vs. only refreshing
+        the corpus)."""
+        return bool(self._get("schedule", "synthesize", default=True))
+
+    @property
     def gpu_enabled(self) -> bool:
         # Default OFF in the workbench integration: the app talks to the
         # workbench's own Ollama (host relay), not self-launched per-GPU
