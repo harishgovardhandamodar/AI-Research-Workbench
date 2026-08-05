@@ -18,7 +18,7 @@ committed to the repo — all runtime data lands under
 ```mermaid
 flowchart LR
     subgraph Browser
-        UI[Knowledge Graphs tab<br/>(iframe of /rkg/dashboard)]
+        UI["Knowledge Graphs tab<br/>(iframe of /rkg/dashboard)"]
     end
 
     subgraph Backend [FastAPI app]
