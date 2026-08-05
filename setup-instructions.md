@@ -115,7 +115,112 @@ Notes:
 
 ---
 
-## 5. Ollama serving — use ALL local compute (multi-GPU)
+## 5. Platform-specific setup
+
+The generic sections 2–4 apply everywhere; this section covers each platform's
+specifics (Python, Ollama + GPU acceleration, and quirks).
+
+### 5.1 macOS (Apple Silicon)
+
+- **Python:** `brew install python@3.12` (or python.org installer).
+- **Ollama:** `brew install ollama` then `ollama serve`. Uses **Metal** (MPS)
+  automatically — no CUDA. Everything runs on unified memory, so budget model
+  size + context against your RAM (16/32/64 GB).
+- **Tune for unified memory:**
+  ```bash
+  export OLLAMA_MAX_LOADED_MODELS=3
+  export OLLAMA_NUM_PARALLEL=2
+  export OLLAMA_KV_CACHE_TYPE=q8_0     # smaller KV cache -> bigger models fit
+  export OLLAMA_HOST=0.0.0.0:11434     # optional: serve to the LAN
+  ollama serve
+  ```
+- **Run Fox:** `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && ./run.sh`
+- **Docker:** Docker Desktop (arm64 images work natively); `host.docker.internal`
+  resolves to the Mac. `FOX_BIND=0.0.0.0` exposes the UI to the LAN.
+- **MLX alternative:** `pip install mlx-lm` serves Apple-optimized models. In a
+  hive cluster map tags so forwarding works: `MESH_MODEL_MAP="qwen3.6:latest-mlx->qwen3.6:latest"`.
+
+### 5.2 Linux — NVIDIA DGX Spark (Arm64 / GB10)
+
+- The DGX Spark is **Arm64** with an integrated Grace-Blackwell GPU (Ubuntu 22.04,
+  ~128 GB unified memory). Install the NVIDIA driver + CUDA build for aarch64
+  (Ollama ships an aarch64 CUDA build).
+- **Verify:** `nvidia-smi` shows the GB10 GPU.
+- **Ollama + env:**
+  ```bash
+  ollama serve &
+  export OLLAMA_MAX_LOADED_MODELS=4
+  export OLLAMA_NUM_PARALLEL=4
+  export OLLAMA_FLASH_ATTENTION=1
+  export OLLAMA_KV_CACHE_TYPE=q8_0
+  ```
+- **Run Fox:** `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && ./run.sh`
+- **Docker:** `docker compose up -d --build` (arm64 image). This machine defaults
+  to the hive gateway for chat and direct Ollama for tools — adjust under
+  **Settings** if you run plain Ollama.
+- **LAN:** `FOX_BIND=0.0.0.0 docker compose up -d --build fox`.
+
+### 5.3 Linux — NVIDIA GPU (x86_64)
+
+- Install the NVIDIA driver + CUDA toolkit (or let Ollama pull its CUDA runtime).
+- Ollama auto-detects every GPU and splits a model across them when it doesn't
+  fit one card. Tune (see also §6):
+  ```bash
+  export CUDA_VISIBLE_DEVICES=0,1,2,3        # which GPUs Ollama uses
+  export OLLAMA_MAX_LOADED_MODELS=4
+  export OLLAMA_NUM_PARALLEL=4
+  export OLLAMA_FLASH_ATTENTION=1
+  export OLLAMA_GPU_OVERLAP=1
+  export OLLAMA_KV_CACHE_TYPE=q8_0
+  ollama serve
+  ```
+- Verify all GPUs are used: `nvidia-smi` while a model is loaded, or
+  `curl localhost:11434/api/ps`.
+- **Run Fox:** same as §2. **Docker:** same as §3 (x86_64 image).
+- Multi-node: add this machine to a hive mesh (see §7).
+
+### 5.4 Windows — WSL2
+
+- **Recommended:** run everything inside WSL2 Ubuntu (best GPU + tooling story).
+  ```powershell
+  wsl --install -d Ubuntu
+  wsl
+  # inside WSL:
+  sudo apt update && sudo apt install -y python3-venv git
+  curl -fsSL https://ollama.com/install.sh | sh
+  ollama serve &
+  ```
+- NVIDIA drivers on the Windows host are passed through to WSL automatically
+  (WSL2 CUDA). Verify with `nvidia-smi` inside WSL.
+- **Run Fox in WSL:** clone the repo under `~/`, create `.venv`, `./run.sh`; the
+  UI is reachable from Windows at `http://localhost:8765`.
+- **Docker:** Docker Desktop with the WSL2 backend; `host.docker.internal` works.
+  `FOX_BIND=0.0.0.0` exposes the UI to the LAN.
+
+### 5.5 Windows — native (PowerShell)
+
+- **Python:** `winget install Python.Python.3.12` (check "Add to PATH"), or
+  python.org.
+- **Ollama:** `winget install Ollama.Ollama` — the native Windows Ollama uses your
+  NVIDIA GPU via CUDA (AMD/Intel NPU on newer builds). `ollama serve` runs as a
+  background service.
+- **Git:** `winget install Git.Git` (includes Git-LFS).
+- **Run Fox:**
+  ```powershell
+  git clone <your-fork>; cd AI-Research-Workbench
+  python -m venv .venv
+  .venv\Scripts\pip install -r requirements.txt
+  .venv\Scripts\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
+  ```
+- **Docker:** Docker Desktop (Windows containers off, Linux containers on);
+  `host.docker.internal` resolves to the host.
+- **LAN:** Docker `FOX_BIND=0.0.0.0`, or start uvicorn with `--host 0.0.0.0`.
+- **Tool calls:** native Windows Ollama serves `tools` fine — set
+  `FOX_TOOL_BASE_URL` to `http://127.0.0.1:11434/v1`.
+
+---
+
+## 6. Ollama serving — use ALL local compute (multi-GPU)
 
 Ollama already uses every visible GPU on one host for a single model, splitting
 layers across GPUs when the model is too big for one card. Tune for maximum
@@ -142,7 +247,7 @@ devices: `curl http://localhost:11434/api/ps` after loading a model, or the
 
 ---
 
-## 6. Compute orchestration over LAN (cluster several machines)
+## 7. Compute orchestration over LAN (cluster several machines)
 
 To use **every machine's GPUs on the network**, run one **Hive Server Go**
 gateway on the LAN and point Fox at it. Hive is an OpenAI-compatible inference
@@ -228,7 +333,7 @@ If a peer runs MLX (Apple) with a different tag, map names so forwarding works:
 
 ---
 
-## 7. Verify everything
+## 8. Verify everything
 
 ```bash
 curl http://<host>:8765/api/health          # workbench
