@@ -14,6 +14,11 @@ dependencies = [
     "websockets>=12.0",
     "python-multipart>=0.0.9",
     "numpy", "pandas", "scipy", "matplotlib", "scikit-learn",
+    # Research Knowledge Graphs (vendored hive-research-gpu app logic)
+    "arxiv>=2.1.0",
+    "PyMuPDF>=1.25.0",
+    "requests>=2.32.0",
+    "PyYAML>=6.0.0",
 ]
 
 [project.optional-dependencies]

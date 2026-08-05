@@ -3018,10 +3018,11 @@ function switchMainView(view) {
   $("exp-panel").classList.toggle("hidden", view !== "experiments");
   $("agent-panel").classList.toggle("hidden", view !== "agent");
   $("editor-panel").classList.toggle("hidden", view !== "editor");
+  $("rkg-panel").classList.toggle("hidden", view !== "rkg");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
   const app = document.getElementById("app");
-  if (view === "experiments" || view === "agent" || view === "editor") {
+  if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg") {
     // maximize width: collapse the side panel for the expanded views
     if (state._sideBefore == null)
       state._sideBefore = app.classList.contains("side-collapsed");
@@ -3033,6 +3034,17 @@ function switchMainView(view) {
   if (view === "experiments") loadExperiments();
   if (view === "agent") loadAgent();
   if (view === "editor") loadEditor();
+  if (view === "rkg") loadRkg();
+}
+
+/* ============================ research knowledge graphs ============================ */
+
+async function loadRkg() {
+  const frame = $("rkg-frame");
+  if (!frame) return;
+  frame.src = (window.FOX_BASE || "") + "/rkg/dashboard";
+  $("rkg-landscape-link").href = (window.FOX_BASE || "") + "/rkg/landscape";
+  $("rkg-refresh").onclick = () => { frame.src = frame.src; };
 }
 
 /* ============================ editor (VS Code) ============================= */
@@ -3454,6 +3466,7 @@ $("mainview-chat").addEventListener("click", () => switchMainView("chat"));
 $("mainview-experiments").addEventListener("click", () => switchMainView("experiments"));
 $("mainview-agent").addEventListener("click", () => switchMainView("agent"));
 $("mainview-editor").addEventListener("click", () => switchMainView("editor"));
+$("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
 $("editor-refresh").addEventListener("click", loadEditor);
 
 /* ============================ notebooks =================================== */

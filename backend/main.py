@@ -61,6 +61,9 @@ app.include_router(projects.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
 app.include_router(notebooks.router)
+from .research_knowledge_graphs.router import router as rkg_router
+
+app.include_router(rkg_router)
 
 
 # ---------------------------------------------------------- workflows --------

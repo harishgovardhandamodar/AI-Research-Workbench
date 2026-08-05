@@ -28,6 +28,7 @@
         <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments">Experiments</button>
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent">Agent</button>
         <button id="mainview-editor" class="mainview-btn" data-mainview="editor">Editor</button>
+        <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg">Knowledge Graphs</button>
       </div>
       <select id="project-select" title="Project"></select>
       <button id="new-project-btn" class="btn subtle" title="New project">+</button>
@@ -156,6 +157,19 @@
           </div>
         </div>
         <iframe id="editor-frame" title="VS Code editor"></iframe>
+      </div>
+    </section>
+
+    <section id="rkg-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">Research Knowledge Graphs</span>
+        <span class="muted exp-hint">arXiv ingestion · knowledge graph · RAG search · research pool</span>
+        <span class="spacer"></span>
+        <a id="rkg-landscape-link" class="btn subtle small" target="_blank" rel="noopener">Landscape</a>
+        <button id="rkg-refresh" class="btn subtle small">Refresh</button>
+      </div>
+      <div id="rkg-frame-wrap" class="rkg-frame-wrap">
+        <iframe id="rkg-frame" title="Research Knowledge Graphs dashboard"></iframe>
       </div>
     </section>
 
@@ -488,7 +502,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v60";
+  window.FOX_VER = "v61";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
