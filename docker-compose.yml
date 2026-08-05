@@ -18,6 +18,18 @@ services:
       FOX_EDITOR_URL: ${FOX_EDITOR_URL:-http://127.0.0.1:8787}
       FOX_EDITOR_PROBE_URL: ${FOX_EDITOR_PROBE_URL:-http://code-server:8080}
       FOX_EDITOR_FOLDER: ${FOX_EDITOR_FOLDER:-/home/coder/workbench}
+      # NVIDIA GPU passthrough (FOX_GPU_DEVICES=all enables it). Expose the
+      # GPU to nvidia-smi inside the container so the Research Knowledge Graphs
+      # app can do GPU monitoring and per-GPU Ollama scheduling.
+      NVIDIA_VISIBLE_DEVICES: ${FOX_GPU_DEVICES:-void}
+      NVIDIA_DRIVER_CAPABILITIES: ${FOX_GPU_CAPABILITIES:-compute,utility}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${FOX_GPU_COUNT:-1}
+              capabilities: [gpu]
     extra_hosts:
       # Lets "host.docker.internal" resolve to the host on Linux.
       - "host.docker.internal:host-gateway"

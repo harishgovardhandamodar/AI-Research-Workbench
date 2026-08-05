@@ -153,7 +153,10 @@ class Config:
 
     @property
     def gpu_enabled(self) -> bool:
-        return bool(self._get("gpu", "enabled", default=True))
+        # Default OFF in the workbench integration: the app talks to the
+        # workbench's own Ollama (host relay), not self-launched per-GPU
+        # instances. GPU monitoring still works regardless.
+        return bool(self._get("gpu", "enabled", default=False))
 
     @property
     def gpu_device_count(self) -> int:
@@ -167,7 +170,6 @@ class Config:
     def gpu_parallel_papers(self) -> int:
         return int(self._get("gpu", "parallel_papers", default=2))
 
-    @property
     def gpu_ollama_instance(self, gpu_id: int) -> dict[str, Any]:
         key = f"gpu_{gpu_id}"
         return dict(

@@ -89,15 +89,21 @@ class GPUManager:
                 if len(parts) < 8:
                     continue
                 try:
+                    def _mb(v: str) -> int:
+                        v = v.replace(" MiB", "").replace(" MiB", "").strip()
+                        if v in ("N/A", "[N/A]", ""):
+                            return 0
+                        return int(float(v))
+
                     device = GPUDevice(
                         index=int(parts[0]),
                         name=parts[1],
-                        memory_total_mb=int(parts[2].replace(" MiB", "")),
-                        memory_used_mb=int(parts[3].replace(" MiB", "")),
-                        memory_free_mb=int(parts[4].replace(" MiB", "")),
-                        utilization_percent=float(parts[5]),
-                        temperature_c=float(parts[6]),
-                        power_watts=float(parts[7]),
+                        memory_total_mb=_mb(parts[2]),
+                        memory_used_mb=_mb(parts[3]),
+                        memory_free_mb=_mb(parts[4]),
+                        utilization_percent=float(parts[5]) if parts[5] not in ("N/A", "[N/A]", "") else 0.0,
+                        temperature_c=float(parts[6]) if parts[6] not in ("N/A", "[N/A]", "") else 0.0,
+                        power_watts=float(parts[7]) if parts[7] not in ("N/A", "[N/A]", "") else 0.0,
                         compute_capability=parts[8] if len(parts) > 8 else "",
                     )
                     devices.append(device)
@@ -174,6 +180,13 @@ class GPUManager:
         instance = self.config.gpu_ollama_instance(gpu_id)
         if instance and "base_url" in instance:
             return instance["base_url"]
+        # No per-GPU instances configured: route back to the app's configured
+        # Ollama endpoint (e.g. the workbench relay host.docker.internal:11435),
+        # not a bare localhost port that only exists if we launched our own
+        # Ollama here.
+        base = self.config.ollama_base_url.rstrip("/")
+        if base:
+            return base
         port = 11434 + gpu_id
         return f"http://localhost:{port}"
 
