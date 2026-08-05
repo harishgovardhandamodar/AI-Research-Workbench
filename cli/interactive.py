@@ -35,6 +35,7 @@ HELP = """\
   pool                 research pool          (or: pool topics, pool import <id>)
   manage               mgmt repo              (status | repos | link | commit …)
   serve                launch the server
+  tui                  open the full-screen terminal window
   manual               open the manual        (or: manual <section>)
   help                 this help
   exit | quit          leave the shell
@@ -47,8 +48,8 @@ HELP = """\
 _COMMANDS = sorted({
     "status", "doctor", "projects", "runs", "run", "experiments",
     "experiment", "compare", "research", "graph", "papers", "jobs",
-    "scheduler", "pool", "manage", "serve", "manual", "splash", "version",
-    "help", "exit",
+    "scheduler", "pool", "manage", "serve", "tui", "manual", "splash",
+    "version", "help", "exit",
 })
 _ACTIONS = {
     "projects": ["list", "new", "show", "rm", "fork"],
@@ -274,6 +275,8 @@ def _dispatch(line: str) -> int:
         return commands.cmd_splash(SimpleNamespace(url=None))
     if cmd == "version":
         return commands.cmd_version(SimpleNamespace(url=None))
+    if cmd == "tui":
+        return commands.cmd_interactive(SimpleNamespace(url=None))
     if cmd == "scheduler":
         return commands.cmd_scheduler(_repl_args(line))
     if cmd in ("status", "doctor", "serve", "projects", "runs", "run",

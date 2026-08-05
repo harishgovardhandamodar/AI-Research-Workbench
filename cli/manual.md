@@ -7,12 +7,34 @@ autoresearch loops — wrapped in a modern terminal UI.
 ## Quick start
 
 ```
-fox                 # interactive shell (splash + `>` prompt)
+fox                 # opencode-style terminal window (splash + command panel)
 fox status          # server / model / research overview
 fox serve           # launch the workbench server (http://127.0.0.1:8765)
 fox manual          # this manual
 fox help            # subcommand help
 ```
+
+`fox` with no arguments opens a **full-screen terminal window** (header status
+bar, navigable sidebar, scrollable output panel, themed input line with
+history + tab completion). The same window is available at any time with
+`fox tui`; when stdin/stdout isn't a terminal it falls back to a plain `>`
+prompt. Keybindings: `Enter` run · `Tab` complete/cycle focus · `↑/↓` history
+or sidebar · `PgUp/PgDn` scroll · `Ctrl+L` clear · `Ctrl+T` theme · `Ctrl+P`
+palette · `Ctrl+B` sidebar · `?` help · `Ctrl+C` interrupt · `Ctrl+D` quit.
+
+### Themes
+
+The window is themed with semantic color tokens. Built-ins: `opencode-dark`
+(default), `opencode-light`, `opencode-midnight`, `solarized-dark`,
+`high-contrast-dark`, `high-contrast-light`. Switch in-app with `Ctrl+T`,
+persist with `--theme NAME`, or configure:
+
+```json
+{ "theme": "opencode-light", "mouse": true, "sidebar": true }
+```
+
+stored at `$XDG_CONFIG_HOME/fox/tui.json` (default `~/.config/fox/tui.json`).
+`--render-preview` prints a static frame for a view/theme (docs & tests).
 
 Full user guide with screenshots-style examples: `docs/CLI.md`.
 
@@ -150,6 +172,13 @@ fox manage commit-and-push <project> [-m msg]
 
 ### `fox splash`
 Render the fox splash panel (static).
+
+### `fox tui [--theme NAME] [--render-preview]`
+Open the full-screen terminal window (what `fox` with no arguments launches).
+All commands below run inside it with live streaming output; `--json` /
+`--debug` / `--quiet` work there too. `--theme` selects a built-in theme;
+`--render-preview [--view …]` prints a static frame and exits (used by the
+docs and tests).
 
 ### `fox manual [topic]`
 Print this manual, or one section (e.g. `fox manual research`).

@@ -19,7 +19,7 @@ script · full reference: `cli/manual.md` (also printed by `fox manual`).
 
 ```mermaid
 flowchart LR
-    FOX[fox] --> SHELL[no args → interactive shell]
+    FOX[fox] --> TUI[no args → terminal window<br/>or: fox tui]
     FOX --> SPLASH[splash]
     FOX --> V[version]
     FOX --> STATUS[status]
@@ -67,21 +67,53 @@ FOX_URL=http://host:8765 ./bin/fox status
 
 ---
 
-## 3. Interactive shell
+## 3. Terminal window (interactive)
 
-`fox` with no arguments shows the animated fox splash and drops into a `>`
-prompt. Every prompt command is the same handler as the one-shot form:
+`fox` with no arguments opens an **opencode-style full-screen window**: a
+header status bar, a navigable **sidebar** (views + quick commands), a
+scrollable output panel that streams command results live, a themed input line
+and a status bar (mode, running state, theme, key hints). Commands run as
+fresh CLI subprocesses, so everything (job polling, `--json`, `--debug`)
+behaves exactly like one-shot.
 
 ```
-  fox > help
-  fox > status
-  fox > projects
-  fox > research status autonomous-agents-security
-  fox > exit
+┌ fox [output] · Tab focus · ? help · Ctrl+T theme ─────────────┐
+│ ┌ NAVIGATE ────────┐ ╭ output ─────────────────────────────╮  │
+│ │  Output          │ │ ╭ fox ╮ status ──────────────────╮  │  │
+│ │  Logs            │ │ │  server: running :8765         │  │  │
+│ │  Settings        │ │ ╰───────────────────────────────╯  │  │
+│ │ ──────────────── │ │ ╭ experiments · obf-bank-demo ──╮ │  │
+│ │  status          │ │ │  id  name  status  started     │ │  │
+│ │  projects        │ │ ╰───────────────────────────────╯ │  │
+│ └──────────────────┘ ╰────────────────────────────────────╯  │
+├────────────────────────────────────────────────────────────────┤
+│  fox > experiments obf-bank-demo                               │
+├────────────────────────────────────────────────────────────────┤
+│ output · exit 0        opencode-dark · Ctrl+Q quit            │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-Useful in `help`: `status`, `doctor`, `projects`, `runs <p>`,
-`experiments <p>`, `research`, `graph`, `papers`, `serve`, `manual`, `exit`.
+Keybindings: `Enter` run · `Tab` complete / cycle focus (sidebar ↔ input) ·
+`↑/↓` history or sidebar select · `←/→` cursor · `PgUp/PgDn` scroll · `Home`
+/`End` · `Ctrl+L` clear output · `Ctrl+U` clear line · `Ctrl+W` delete word ·
+`Ctrl+C` interrupt (running command, or quit) · `Ctrl+D` quit · `Ctrl+T`
+theme picker · `Ctrl+P` command palette · `Ctrl+B` toggle sidebar · `?` help.
+`Esc` closes overlays. The window is also available explicitly as `fox tui`;
+when stdin/stdout is not a terminal it falls back to a plain `>` prompt.
+Every command you can type is the one-shot handler:
+
+```
+  help                              # command list + keybindings
+  status  ·  doctor  ·  serve
+  projects                          # … new <name> / rm / fork …
+  runs obf-bank-demo
+  run obf-bank-demo 8 report
+  experiments obf-bank-demo         # … start / run-obfuscation …
+  experiment obf-bank-demo 1 ranking
+  research status autonomous-agents-security
+  graph  ·  papers search <q>  ·  jobs  ·  scheduler  ·  pool  ·  manage
+  manual [section]  ·  clear  ·  exit
+```
 
 ---
 
@@ -289,6 +321,29 @@ The CLI is configuration-free; all server settings (LLM endpoint, model, agent
 knobs, research data root) live in the workbench `config.json`, surfaced by
 `fox status`. Connection is selected by `FOX_URL` or `--url`.
 
+### TUI themes & options
+
+The terminal window (`fox tui`) is driven by semantic color tokens and ships
+with six built-in themes — `opencode-dark`, `opencode-light`,
+`opencode-midnight`, `solarized-dark`, `high-contrast-dark`,
+`high-contrast-light`. Switch in-app with `Ctrl+T` (persisted), select at
+launch with `fox tui --theme opencode-light`, or configure:
+
+```json
+{
+  "theme": "opencode-dark",
+  "mouse": true,
+  "sidebar": true,
+  "reduce_motion": false,
+  "keys": { "ctrl_t": "help" }
+}
+```
+
+at `$XDG_CONFIG_HOME/fox/tui.json` (default `~/.config/fox/tui.json`). Colors
+adapt to the terminal: 24-bit truecolor, 256-color, and 16-color ANSI
+fallback are detected automatically. `fox tui --render-preview [--view …]
+[--theme …]` prints a static frame for docs/tests.
+
 Debug tracing (request/response logging to stderr) is enabled with `--debug`
 or `FOX_DEBUG=1`:
 
@@ -313,7 +368,13 @@ Shell tab-completion scripts ship in `completions/` (`fox.bash` for bash,
 - `cli/ui.py` — ANSI panel/table/spinner toolkit
 - `cli/client.py` — HTTP client for `/api/*` and `/api/rkg/*`
 - `cli/commands.py` — subcommand implementations
-- `cli/interactive.py` — `>` shell (`fox` with no args)
+- `cli/tui/` — full-screen terminal window (`fox` / `fox tui`)
+  - `app.py` — state, keybindings, command execution, main loop
+  - `views.py` — layout / overlay renderers (pure functions)
+  - `components.py` — line buffer, keys, panels, header/status, lists
+  - `theme.py` / `themes.py` — token engine + built-in themes
+  - `config.py` — `tui.json` persistence
+- `cli/interactive.py` — plain `>` REPL (non-TTY fallback)
 - `cli/splash.py` — animated fox splash
 - `cli/log.py` — leveled stderr logging (`--debug` / `FOX_DEBUG=1`)
 - `completions/fox.bash`, `completions/_fox` — bash / zsh tab-completion

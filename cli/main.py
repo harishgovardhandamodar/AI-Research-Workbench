@@ -22,7 +22,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=ui.accent("fox") + ui.dim(" — AI Research Workbench CLI"),
         epilog=ui.dim("run `fox manual` for the full manual  ·  "
-                      "`fox` alone opens the interactive shell"))
+                      "`fox` alone opens the terminal window"))
     parser.add_argument("--version", action="version",
                         version=f"fox {VERSION}")
     parser.add_argument("--url", default=None,
@@ -37,6 +37,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     sub.add_parser("splash", help="render the fox splash panel")
+    p_tui = sub.add_parser("tui", help="open the full-screen terminal window")
+    p_tui.add_argument("--theme", default=None,
+                       help="theme name (opencode-dark|light|midnight|…)")
+    p_tui.add_argument("--render-preview", action="store_true",
+                       help="print a static frame and exit (docs/tests)")
+    p_tui.add_argument("--view", default="output",
+                       choices=["output", "logs", "settings", "help", "theme"],
+                       help="view for --render-preview")
+    p_tui.add_argument("--width", type=int, default=88)
+    p_tui.add_argument("--height", type=int, default=26)
     sub.add_parser("version", help="show version")
     sub.add_parser("status", help="workbench + model + research overview")
     sub.add_parser("doctor", help="environment check")
@@ -163,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     cmd = ns.command
     handlers = {
         "splash": commands.cmd_splash,
+        "tui": commands.cmd_interactive,
         "version": commands.cmd_version,
         "status": commands.cmd_status,
         "doctor": commands.cmd_doctor,

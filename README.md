@@ -123,9 +123,11 @@ fox manual                # the manual (or: fox manual <section>)
 
 Every data command emits machine-readable JSON with `--json` (stable exit
 codes for scripting); `--debug` logs HTTP tracing to stderr. Subcommands accept
-`--help`; run `fox` with no arguments for the interactive shell (tab completes
-commands). Point it at a remote server with `FOX_URL` or `--url`. Full user
-guide: [docs/CLI.md](docs/CLI.md), or `fox manual` / `cli/manual.md`.
+`--help`; run `fox` with no arguments to open the **opencode-style terminal
+window** (header status bar, streaming output panel, history + tab-completion;
+`fox tui` for the window explicitly, `Ctrl+D` to quit). Point it at a remote
+server with `FOX_URL` or `--url`. Full user guide:
+[docs/CLI.md](docs/CLI.md), or `fox manual` / `cli/manual.md`.
 Completion scripts for bash/zsh ship in [`completions/`](completions/).
 
 ## Run with Docker (persistent data)

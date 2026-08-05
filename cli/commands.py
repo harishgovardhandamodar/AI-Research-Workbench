@@ -1131,7 +1131,7 @@ def cmd_manual(args) -> int:
 
 # ------------------------------------------------------------ interactive ----
 def cmd_interactive(args) -> int:
-    """A tiny opencode-style REPL: no args → splash + `>` prompt."""
-    from .interactive import run_repl
+    """No args → the opencode-style terminal window (falls back to `>` shell)."""
+    from .tui import run_tui
 
-    return run_repl(args)
+    return run_tui(args)
