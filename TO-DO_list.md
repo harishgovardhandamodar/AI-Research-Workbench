@@ -47,7 +47,7 @@ Consequences observed:
 
 ## Phase A — Unify (foundation)
 
-- [ ] **A1 · Agent↔RKG bridge: `rkg__*` tools for the agent**
+- [x] **A1 · Agent↔RKG bridge: `rkg__*` tools for the agent**
   - New tools registered in `backend/agents/tools.py` (and schemas exposed via
     `get_tool_schemas`): `rkg__query_rag(question)`, `rkg__paper_notes(paper_id)`,
     `rkg__scenario_status(scenario_id)`, `rkg__scenario_report(scenario_id)`.
@@ -58,7 +58,7 @@ Consequences observed:
   - Verify: unit test that a fake `get_workbench`/`get_org` is called and the
     tool returns its payload; full suite green.
 
-- [ ] **A2 · Persistent + resumable jobs & per-scenario guard**
+- [x] **A2 · Persistent + resumable jobs & per-scenario guard**
   - Persist `_jobs` (router.py) to disk (`<data_root>/jobs.json`); on startup,
     restore the registry and mark `running` jobs as `interrupted`.
   - Persist scenario `_live` progress to `scenario.json` so polling survives
@@ -70,7 +70,7 @@ Consequences observed:
 
 ## Phase B — Automate (scheduler + gaps)
 
-- [ ] **B1 · Scenario scheduler (per-scenario cadence)**
+- [x] **B1 · Scenario scheduler (per-scenario cadence)**
   - Background asyncio task started with the app lifespan: every N minutes
     (configurable, default e.g. 60), check each scenario's `last_built_at` /
     `last_loop`; if older than the scenario's `schedule.interval_hours`
@@ -81,7 +81,7 @@ Consequences observed:
   - Verify: scheduler unit test with a fake workbench (cadence math, guard
     interaction); `py_compile`.
 
-- [ ] **B2 · Gap discovery → hypotheses/topics**
+- [x] **B2 · Gap discovery → hypotheses/topics**
   - New `ResearchWorkbench.gaps(sid)` that inspects the graph for research
     gaps: pool topics with no imported corpus papers, orphan concepts, papers
     not linked to the scenario's lens concepts, RAG chunks with no experiment.
@@ -91,7 +91,7 @@ Consequences observed:
 
 ## Phase C — Research quality loop
 
-- [ ] **C1 · Verifiable synthesis: plateau early-stop + citation audit**
+- [x] **C1 · Verifiable synthesis: plateau early-stop + citation audit**
   - `run_synthesis` stops early when (a) score reaches `review_target`, or
     (b) no improvement for `plateau_iters` consecutive iterations (default 2).
   - Every `[arXiv:xxxx]` citation in the accepted report is checked against the
@@ -100,7 +100,7 @@ Consequences observed:
   - Verify: mocked-LLM unit test (scores 98→97→96 → stops after plateau, best
     kept; fake citation dropped, real citation retained).
 
-- [ ] **C2 · Rigorous replication: multi-run mean + delta vs paper**
+- [x] **C2 · Rigorous replication: multi-run mean + delta vs paper**
   - `_improve_experiment` runs each candidate `num_runs` times (default 3) and
     keeps on the **mean** metric (not a single run); records mean/stdev.
   - Result records `delta_vs_paper` when a paper-reported value is extractable
@@ -108,7 +108,7 @@ Consequences observed:
   - Verify: mocked run-research-experiment test (keep/revert on means, delta
     computed).
 
-- [ ] **C3 · Quantitative fold-back: replication table in report**
+- [x] **C3 · Quantitative fold-back: replication table in report**
   - After Phase 3, the fold-back synthesis (`include_experiments=True`) is fed
     a **replication results table** (paper, metric, paper-reported, our value,
     delta, status kept/reverted) and the final report embeds it as a section.
@@ -117,7 +117,7 @@ Consequences observed:
 
 ## Phase D — Governance, UX, tests
 
-- [ ] **D1 · Mocked-LLM loop tests**
+- [x] **D1 · Mocked-LLM loop tests**
   - `tests/test_research_loop.py`: fake LLM driving `run_synthesis` (plateau
     early-stop, citation audit), `run_experiments` (keep/revert), and
     `run_full_loop` phase chaining without Ollama.
