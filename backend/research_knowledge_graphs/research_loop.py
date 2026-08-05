@@ -286,6 +286,29 @@ class ResearchWorkbench:
         except OSError:
             return ""
 
+    def paper_notes(self, paper_id: str, max_chars: int = 2000) -> dict[str, Any]:
+        """Public lookup of a paper node + its vault notes for the agent bridge."""
+        n = self.kg.get_paper(paper_id)
+        if not n:
+            return {"found": False, "id": paper_id}
+        tags = [
+            e.target for e in self.kg._hive.edges
+            if e.source == n.id and e.relation == "related_to"
+        ]
+        concepts = []
+        for e in self.kg._hive.edges:
+            if e.source == n.id:
+                t = self.kg.get_concept(e.target)
+                if t:
+                    concepts.append(t.label)
+        return {
+            "found": True, "id": n.id, "title": n.label,
+            "published": n.published,
+            "abstract": (n.abstract or "")[:800],
+            "tags": tags[:8], "concepts": concepts[:8],
+            "notes": self._notes_summary(n.id, max_chars=max_chars),
+        }
+
     def _save_store_experiment(self, sid: str) -> int:
         """Get-or-create the scenario's experiment id in its ProjectStore."""
         from ..store import ProjectStore

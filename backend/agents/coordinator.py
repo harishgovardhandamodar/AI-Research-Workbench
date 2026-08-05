@@ -44,6 +44,11 @@ Working style:
   and metrics and can be compared against the baseline.
 - Use run_shell only when necessary; prefer the Python kernel. Shell commands that
   touch the network or are destructive will ask the user for permission.
+- The shared Research Knowledge Graph (rkg__* tools) gives you a literature
+  corpus with a RAG index and domain research reports. When a question is about
+  published literature or related work, ground your claims with
+  rkg__query_rag / rkg__paper_notes before answering, and check
+  rkg__scenario_status / rkg__scenario_report for existing domain reports.
 - Tools that come from external MCP servers are named like <server>__<tool> (e.g.
   science__uniprot_lookup). Use them for domain lookups (databases, sequence
   analysis, etc.). MCP tools that may modify data or launch compute will ask the

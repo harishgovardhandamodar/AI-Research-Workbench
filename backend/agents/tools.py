@@ -304,6 +304,77 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rkg__query_rag",
+            "description": (
+                "Query the shared Research Knowledge Graph (arXiv corpus + notes) using "
+                "retrieval-augmented generation. Returns a grounded answer plus the source "
+                "papers it is drawn from. Use this to ground claims in published literature, "
+                "find related work, or answer literature questions from the corpus."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"question": {"type": "string",
+                                            "description": "Research question to ask the knowledge graph"}},
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rkg__paper_notes",
+            "description": (
+                "Look up a paper in the shared Research Knowledge Graph by arXiv id and "
+                "return its title, abstract, tags, concepts and the vault notes summary. "
+                "Use this before citing a paper so citations are grounded in the corpus."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"paper_id": {"type": "string",
+                                            "description": "arXiv id, e.g. '2401.12345'"}},
+                "required": ["paper_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rkg__scenario_status",
+            "description": (
+                "Get the live status of a Research Workbench scenario (a domain-scoped "
+                "autoresearch loop over the knowledge graph): current phase, progress, "
+                "corpus size, best report score. Scenario ids include "
+                "'autonomous-agents-security' and 'enterprise-ai-security'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"scenario_id": {"type": "string",
+                                               "description": "Scenario id, e.g. 'autonomous-agents-security'"}},
+                "required": ["scenario_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rkg__scenario_report",
+            "description": (
+                "Read the current best research report of a Research Workbench scenario. "
+                "The report is a Markdown literature knowledge map with sections and "
+                "[arXiv:xxxx] citations. Use this to incorporate domain survey findings "
+                "into your answer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"scenario_id": {"type": "string",
+                                               "description": "Scenario id, e.g. 'autonomous-agents-security'"}},
+                "required": ["scenario_id"],
+            },
+        },
+    },
 ]
 
 
@@ -678,6 +749,95 @@ async def _editor_open(ctx: ToolContext, path: str | None = None) -> str:
             f"the code-server password is the one set by CODE_SERVER_PASSWORD.)")
 
 
+# --------------------------------------------------------------- rkg tools ----
+# The agent bridges into the shared Research Knowledge Graph. The Organizer and
+# Research Workbench are the SAME lazily-built singletons the /api/rkg dashboard
+# uses (see research_knowledge_graphs/router.py), so agent + dashboard share one
+# corpus, graph and RAG index. Tools are best-effort: if RKG isn't initialized
+# (e.g. no data root / Ollama down) they return a clear message instead of
+# crashing the agent turn.
+
+def _rkg_runtime():
+    """Lazily resolve the shared RKG Organizer + Research Workbench."""
+    from ..research_knowledge_graphs.router import get_org, get_workbench
+
+    return get_org(), get_workbench()
+
+
+async def _rkg_query_rag(ctx: ToolContext, question: str) -> str:
+    question = (question or "").strip()
+    if not question:
+        return "[error] a question is required"
+    try:
+        org, _ = _rkg_runtime()
+        result = await asyncio.to_thread(org.query_rag, question)
+    except Exception as e:  # noqa: BLE001
+        return f"[error] RKG unavailable: {type(e).__name__}: {e}"
+    answer = (result.get("answer") or "").strip()
+    sources = result.get("sources") or []
+    lines = [answer or "(no answer)"]
+    if sources:
+        lines.append("\nSources:")
+        lines.extend(f"  [{s.get('id')}] {s.get('title')}" for s in sources[:8])
+    return "\n".join(lines)[:10_000]
+
+
+async def _rkg_paper_notes(ctx: ToolContext, paper_id: str) -> str:
+    paper_id = (paper_id or "").strip()
+    if not paper_id:
+        return "[error] a paper id is required"
+    try:
+        _, wb = _rkg_runtime()
+        info = await asyncio.to_thread(wb.paper_notes, paper_id)
+    except Exception as e:  # noqa: BLE001
+        return f"[error] RKG unavailable: {type(e).__name__}: {e}"
+    if not info.get("found"):
+        return f"Paper {paper_id} is not in the knowledge graph."
+    lines = [
+        f"### {info.get('title')}  [arXiv:{info.get('id')}]",
+        f"Published: {info.get('published') or 'n/a'}",
+        f"Abstract: {info.get('abstract') or ''}",
+    ]
+    if info.get("tags"):
+        lines.append("Tags: " + ", ".join(info["tags"]))
+    if info.get("concepts"):
+        lines.append("Concepts: " + ", ".join(info["concepts"]))
+    if info.get("notes"):
+        lines.append(f"Notes: {info['notes']}")
+    return "\n".join(lines)[:10_000]
+
+
+async def _rkg_scenario_status(ctx: ToolContext, scenario_id: str) -> str:
+    scenario_id = (scenario_id or "").strip()
+    if not scenario_id:
+        return "[error] a scenario id is required"
+    try:
+        _, wb = _rkg_runtime()
+        st = await asyncio.to_thread(wb.status, scenario_id)
+    except Exception as e:  # noqa: BLE001
+        return f"[error] RKG unavailable: {type(e).__name__}: {e}"
+    status = st.get("status") or {}
+    return (
+        f"Scenario '{st.get('id')}': phase={status.get('phase_label')}, "
+        f"progress={status.get('progress')}, corpus_size={st.get('corpus_size')}, "
+        f"best_score={st.get('best_score')}, report_exists={st.get('report_exists')}"
+    )
+
+
+async def _rkg_scenario_report(ctx: ToolContext, scenario_id: str) -> str:
+    scenario_id = (scenario_id or "").strip()
+    if not scenario_id:
+        return "[error] a scenario id is required"
+    try:
+        _, wb = _rkg_runtime()
+        report = await asyncio.to_thread(wb.report, scenario_id)
+    except Exception as e:  # noqa: BLE001
+        return f"[error] RKG unavailable: {type(e).__name__}: {e}"
+    if not report:
+        return f"No report yet for scenario '{scenario_id}'."
+    return report[:20_000]
+
+
 def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
     return {
         "run_python": lambda code: _run_python(ctx, code),
@@ -698,4 +858,8 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "editor__read_file": lambda path: _editor_read_file(ctx, path),
         "editor__edit_file": lambda path, old, new: _editor_edit_file(ctx, path, old, new),
         "editor__open": lambda path=None: _editor_open(ctx, path),
+        "rkg__query_rag": lambda question: _rkg_query_rag(ctx, question),
+        "rkg__paper_notes": lambda paper_id: _rkg_paper_notes(ctx, paper_id),
+        "rkg__scenario_status": lambda scenario_id: _rkg_scenario_status(ctx, scenario_id),
+        "rkg__scenario_report": lambda scenario_id: _rkg_scenario_report(ctx, scenario_id),
     }
