@@ -138,6 +138,21 @@ class RkgRouterTests(unittest.TestCase):
         r = self.client.get("/api/rkg/scenarios/does-not-exist/gaps")
         self.assertEqual(r.status_code, 404)
 
+    def test_scheduler_status_reports_disabled_when_off(self):
+        r = self.client.get("/api/rkg/scheduler/status")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["enabled"], False)
+        self.assertIn("configured_check_minutes", data)
+        self.assertIn("synthesize", data)
+        self.assertIn("active", data)
+        self.assertIn("due_scenarios", data)
+
+    def test_scheduler_tick_409_when_disabled(self):
+        r = self.client.post("/api/rkg/scheduler/tick")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("error", r.json())
+
     def test_unknown_scenario_404(self):
         r = self.client.get("/api/rkg/scenarios/does-not-exist")
         self.assertEqual(r.status_code, 404)

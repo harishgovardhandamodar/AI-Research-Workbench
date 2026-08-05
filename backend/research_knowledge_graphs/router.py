@@ -35,7 +35,14 @@ logger = logging.getLogger(__name__)
 _org: Organizer | None = None
 _gpu_mgr: GPUManager | None = None
 _wb: Any = None
+_scheduler: Any = None
 _VIEWS = Path(__file__).parent / "views"
+
+
+def set_scheduler(scheduler: Any) -> None:
+    """Register the active ScenarioScheduler (set by main.py lifespan)."""
+    global _scheduler
+    _scheduler = scheduler
 
 # ------------------------------------------------------------------ jobs -----
 # Paper ingestion (arXiv download + LLM analysis + lineage + embeddings) can
@@ -768,3 +775,40 @@ async def rkg_scenario_loop(sid: str, data: dict = Body(default={})):
     model = wb.config.resolve_model(data.get("model"))
     return _submit_scenario("scenario_loop", f"Full research loop: {sid}", sid,
                             wb.run_full_loop, sid, model=model)
+
+
+# ------------------------------------------------------- scheduler -----------
+
+def _scheduler_status_dict() -> dict[str, Any]:
+    cfg = Config()
+    sched = _scheduler
+    running = False
+    due: list[str] = []
+    if sched is not None:
+        running = sched._task is not None and not sched._task.done()
+        try:
+            due = sched.due_scenarios()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scheduler due_scenarios failed: %s", exc)
+    return {
+        "enabled": cfg.schedule_enabled,
+        "configured_check_minutes": cfg.schedule_check_minutes,
+        "synthesize": cfg.schedule_synthesize,
+        "active": running,
+        "due_scenarios": due,
+    }
+
+
+@router.get("/api/rkg/scheduler/status")
+async def rkg_scheduler_status():
+    return _scheduler_status_dict()
+
+
+@router.post("/api/rkg/scheduler/tick")
+async def rkg_scheduler_tick():
+    sched = _scheduler
+    if sched is None:
+        return JSONResponse(
+            {"error": "scheduler is not enabled (schedule.enabled=false in RKG config)"},
+            status_code=409)
+    return await sched.tick()

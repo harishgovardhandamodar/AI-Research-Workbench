@@ -59,10 +59,14 @@ async def lifespan(app: FastAPI):
         )
         _rkg_scheduler.start()
         app.state.rkg_scheduler = _rkg_scheduler
+    from .research_knowledge_graphs.router import set_scheduler
+
+    set_scheduler(_rkg_scheduler)
     yield
     if _rkg_scheduler is not None:
         await _rkg_scheduler.stop()
         _rkg_scheduler = None
+    set_scheduler(None)
     for rt in list(runtimes.values()):
         await rt.stop()
 
