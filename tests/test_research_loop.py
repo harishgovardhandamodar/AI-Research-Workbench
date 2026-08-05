@@ -136,6 +136,87 @@ class CitationAuditTests(unittest.TestCase):
         self.assertEqual(report, "no citations here")
 
 
+class ReplicationQualityTests(unittest.TestCase):
+    """C2: keep/revert on multi-run means + delta vs paper-reported metric."""
+
+    def test_measure_metric_averages_multiple_runs(self):
+        tmp = Path(tempfile.mkdtemp())
+        exp = tmp / "experiment.py"
+        exp.write_text(
+            "import random\n"
+            "print('METRIC acc=%.4f' % (0.8 + random.random()*0.1))\n",
+            encoding="utf-8")
+        with mock.patch("backend.autoresearch.run_research_experiment") as runner:
+            runner.side_effect = [
+                {"ok": True, "output": "METRIC acc=0.8", "metric": ("acc", 0.8)},
+                {"ok": True, "output": "METRIC acc=0.9", "metric": ("acc", 0.9)},
+                {"ok": True, "output": "METRIC acc=0.7", "metric": ("acc", 0.7)},
+            ]
+            res = ResearchWorkbench._measure_metric(exp, 30, num_runs=3)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["metric"], "acc")
+        self.assertAlmostEqual(res["mean"], 0.8)
+        self.assertEqual(runner.call_count, 3)
+
+    def test_measure_metric_empty_outputs(self):
+        tmp = Path(tempfile.mkdtemp())
+        exp = tmp / "experiment.py"
+        exp.write_text("print('nope')\n", encoding="utf-8")
+        with mock.patch("backend.autoresearch.run_research_experiment",
+                        return_value={"ok": True, "output": "no metric"}):
+            res = ResearchWorkbench._measure_metric(exp, 30, num_runs=3)
+        self.assertFalse(res["ok"])
+        self.assertIsNone(res["mean"])
+
+    def test_extract_paper_metric_from_spec(self):
+        spec = {"goal": "Replicate accuracy; the paper reports 0.86 accuracy",
+                "dataset": "synthetic"}
+        self.assertAlmostEqual(ResearchWorkbench._extract_paper_metric(spec), 0.86)
+
+    def test_extract_paper_metric_none_when_absent(self):
+        self.assertIsNone(ResearchWorkbench._extract_paper_metric({"setup": "plain"}))
+
+    def test_improve_experiment_keeps_only_better_mean_and_records_delta(self):
+        tmp = Path(tempfile.mkdtemp())
+        exp_dir = tmp / "experiments" / "2401_00001"
+        exp_dir.mkdir(parents=True)
+        spec = {"goal": "accuracy", "baselines": "paper reports 0.80 accuracy"}
+        llm = _FakeLLM(reports=[
+            "```python\nprint('METRIC acc=0.85')\n```",   # candidate: better mean
+            "```python\nprint('METRIC acc=0.70')\n```",   # candidate: worse mean
+        ])
+        wb = _make_wb(tmp / "wb", llm, corpus_ids=("2401.00001",))
+        cfg = {"per_iter_budget": 30, "experiment_iters": 2, "num_runs": 3}
+
+        means = {"base": 0.80, "cand1": 0.85, "cand2": 0.70}
+
+        def fake_runner(exp_file, budget):
+            text = exp_file.read_text()
+            val = means["base"]
+            for key, v in means.items():
+                if key != "base" and f"METRIC acc={v}" in text:
+                    val = v
+            return {"ok": True, "output": f"METRIC acc={val}", "metric": ("acc", val)}
+
+        with mock.patch("backend.autoresearch.run_research_experiment",
+                        side_effect=fake_runner):
+            result = wb._improve_experiment(
+                "autonomous-agents-security", "2401.00001", exp_dir,
+                "print('METRIC acc=0.80')", spec, cfg, model=None)
+
+        self.assertEqual(result["metric"], "acc")
+        self.assertEqual(result["best_value"], 0.85)  # cand1 kept (better mean)
+        self.assertEqual(result["kept_improvements"], 1)
+        self.assertEqual(result["num_runs"], 3)
+        self.assertAlmostEqual(result["paper_reported"], 0.80)
+        self.assertAlmostEqual(result["delta_vs_paper"], 0.05)
+        results_md = (exp_dir / "results.md").read_text(encoding="utf-8")
+        self.assertIn("Δ vs paper", results_md)
+        # The final experiment.py on disk is the kept (better) candidate.
+        final_code = (exp_dir / "experiment.py").read_text(encoding="utf-8")
+        self.assertIn("0.85", final_code)
+
+
 class SynthesisLoopTests(unittest.IsolatedAsyncioTestCase):
     def _reviews(self, *scores):
         return [{"score": s, "feedback": [], "improvements": []} for s in scores]

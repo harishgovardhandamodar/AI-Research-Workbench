@@ -806,27 +806,29 @@ class ResearchWorkbench:
     def _improve_experiment(self, sid: str, pid: str, exp_dir: Path,
                             initial_code: str, spec: dict[str, Any], cfg: dict[str, Any],
                             model: str | None) -> dict[str, Any]:
-        from ..autoresearch import (extract_metric, parse_code_block,
-                                    run_research_experiment)
+        from ..autoresearch import parse_code_block, run_research_experiment
 
         exp_file = exp_dir / "experiment.py"
         exp_file.write_text(initial_code, encoding="utf-8")
         budget = max(15, int(cfg.get("per_iter_budget", 45)))
         iters = max(1, min(int(cfg.get("experiment_iters", 3)), 6))
+        num_runs = max(1, min(int(cfg.get("num_runs", 3)), 8))
 
-        base = run_research_experiment(exp_file, budget)
-        best = extract_metric(base["output"])
+        base = self._measure_metric(exp_file, budget, num_runs)
         best_src = initial_code
-        best_name = best[0] if best else None
-        best_val = float(best[1]) if best else None
-        self._log(sid, "INFO", f"[{pid}] baseline: {best}")
+        best_name = base["metric"]
+        best_val = base["mean"]
+        self._log(sid, "INFO",
+                  f"[{pid}] baseline: {best_name}={best_val} "
+                  f"(mean of {num_runs} runs, stdev {base['stdev']:.4g})")
 
         kept_iters = 0
         for i in range(1, iters + 1):
             self._log(sid, "INFO", f"[{pid}] improve iteration {i}/{iters}")
             prompt = (
                 f"You are improving a replication experiment. Current best "
-                f"{best_name}={best_val if best_val is not None else 'n/a'}.\n\n"
+                f"{best_name}={best_val if best_val is not None else 'n/a'} "
+                f"(mean over {num_runs} runs).\n\n"
                 f"Current experiment.py:\n{exp_file.read_text()}\n\n"
                 f"Experiment spec:\n{json.dumps(spec, default=str)}\n\n"
                 "Propose ONE focused change and output the COMPLETE new "
@@ -843,42 +845,107 @@ class ResearchWorkbench:
                 continue
             snapshot = exp_file.read_text()
             exp_file.write_text(new_code, encoding="utf-8")
-            run = run_research_experiment(exp_file, budget)
-            m = extract_metric(run["output"])
+            cand = self._measure_metric(exp_file, budget, num_runs)
             improved = False
-            if m and m[0] == best_name and best_val is not None:
-                try:
-                    val = float(m[1])
-                    improved = val > best_val
-                except ValueError:
-                    improved = False
+            if cand["ok"] and best_val is not None and cand["metric"] == best_name:
+                improved = cand["mean"] > best_val
+            elif best_val is None and cand["ok"]:
+                improved = True
             if improved:
-                best_val = float(m[1])
+                best_val, best_name = cand["mean"], cand["metric"]
                 best_src = new_code
                 kept_iters += 1
-                self._log(sid, "INFO", f"[{pid}] iter {i}: {best_name}={best_val} → kept")
+                self._log(sid, "INFO",
+                          f"[{pid}] iter {i}: {best_name}={best_val} "
+                          f"(stdev {cand['stdev']:.4g}) → kept")
             else:
                 exp_file.write_text(snapshot, encoding="utf-8")
                 self._log(sid, "INFO", f"[{pid}] iter {i}: no improvement → reverted")
+
+        # Delta vs the paper-reported headline metric, when extractable.
+        paper_val = self._extract_paper_metric(spec)
+        delta = None
+        if paper_val is not None and best_val is not None:
+            try:
+                delta = best_val - float(paper_val)
+            except (TypeError, ValueError):
+                delta = None
 
         result = {
             "paper_id": pid,
             "metric": best_name,
             "best_value": best_val,
+            "mean": best_val,
+            "stdev": base.get("stdev"),
+            "num_runs": num_runs,
+            "paper_reported": paper_val,
+            "delta_vs_paper": round(delta, 6) if delta is not None else None,
             "iterations": iters,
             "kept_improvements": kept_iters,
             "experiment_dir": str(exp_dir),
         }
         try:
-            (exp_dir / "results.md").write_text(
-                f"# Replication — {pid}\n\n"
-                f"- Metric: `{best_name}` = `{best_val}`\n"
-                f"- Improve iterations: {iters}, kept: {kept_iters}\n\n"
+            lines = [
+                f"# Replication — {pid}\n",
+                f"- Metric: `{best_name}` = `{best_val}` (mean of {num_runs} runs"
+                + (f", stdev `{base.get('stdev'):.4g}`" if base.get("stdev") is not None else "")
+                + ")",
+                f"- Paper-reported: `{paper_val}`" if paper_val is not None else "- Paper-reported: n/a",
+                f"- Δ vs paper: `{result['delta_vs_paper']}`" if result["delta_vs_paper"] is not None else "- Δ vs paper: n/a",
+                f"- Improve iterations: {iters}, kept: {kept_iters}\n",
                 f"Spec:\n\n```json\n{json.dumps(spec, default=str, indent=2)}\n```\n",
-                encoding="utf-8")
+            ]
+            (exp_dir / "results.md").write_text("\n".join(lines), encoding="utf-8")
         except OSError:
             pass
         return result
+
+    @staticmethod
+    def _measure_metric(exp_file: Path, budget: int, num_runs: int) -> dict[str, Any]:
+        """Run an experiment file `num_runs` times and return the mean headline
+        metric. Keeps decisions on means (not single point estimates) so
+        improvement is not an artifact of run-to-run variance.
+
+        Returns {"ok", "metric", "mean", "stdev", "samples"}."""
+        from ..autoresearch import extract_metric, run_research_experiment
+
+        values: list[float] = []
+        metric_name: str | None = None
+        for _ in range(num_runs):
+            run = run_research_experiment(exp_file, budget)
+            m = extract_metric(run["output"])
+            if not m:
+                continue
+            if metric_name is None:
+                metric_name = m[0]
+            if m[0] == metric_name:
+                values.append(float(m[1]))
+        if not values:
+            return {"ok": False, "metric": None, "mean": None, "stdev": None,
+                    "samples": []}
+        mean = sum(values) / len(values)
+        var = sum((v - mean) ** 2 for v in values) / len(values)
+        return {"ok": True, "metric": metric_name, "mean": mean,
+                "stdev": var ** 0.5, "samples": values}
+
+    @staticmethod
+    def _extract_paper_metric(spec: dict[str, Any]) -> float | None:
+        """Best-effort extraction of the paper's reported headline metric from
+        the experiment spec text (goal / methodology / baselines sections)."""
+        import re
+
+        text = json.dumps(spec, default=str)
+        patterns = [
+            r"(?:reports?|achieves?|reported|best)\s*(?:accuracy|metric|score|f1)?\s*[=:]?\s*(\d+(?:\.\d+)?)\s*%?",
+            r"(\d+(?:\.\d+)?)\s*%\s*(?:accuracy|f1)",
+        ]
+        for pat in patterns:
+            for m in re.finditer(pat, text, re.IGNORECASE):
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    continue
+        return None
 
     def _append_replication_note(self, pid: str, result: dict[str, Any]) -> None:
         n = self.kg.get_paper(pid)
@@ -892,11 +959,19 @@ class ResearchWorkbench:
             return
         try:
             with open(note_file, "a") as f:
-                f.write("\n## Replication (Research Workbench)\n\n"
-                        f"- Best metric: `{result.get('metric')}` = "
-                        f"`{result.get('best_value')}`\n"
-                        f"- Improve iterations: {result.get('iterations')}, "
-                        f"kept: {result.get('kept_improvements')}\n")
+                note_lines = [
+                    "\n## Replication (Research Workbench)\n",
+                    f"- Best metric: `{result.get('metric')}` = "
+                    f"`{result.get('best_value')}`",
+                    f"- Runs averaged: `{result.get('num_runs')}`",
+                ]
+                if result.get("paper_reported") is not None:
+                    note_lines.append(f"- Paper-reported: `{result.get('paper_reported')}`")
+                if result.get("delta_vs_paper") is not None:
+                    note_lines.append(f"- Δ vs paper: `{result.get('delta_vs_paper')}`")
+                note_lines.append(f"- Improve iterations: {result.get('iterations')}, "
+                                  f"kept: {result.get('kept_improvements')}\n")
+                f.write("\n".join(note_lines))
         except OSError:
             pass
 
