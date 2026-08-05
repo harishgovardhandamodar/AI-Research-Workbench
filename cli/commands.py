@@ -338,6 +338,37 @@ def cmd_experiments(args) -> int:
             return 1
         print(f"\n  {ok('experiment started')}  {c(e.get('id', '?'), ui.DIM)}")
         return 0
+    if action == "run-obfuscation":
+        n_rows = int(getattr(args, "n_rows", 2000) or 2000)
+        seed = int(getattr(args, "seed", 42) or 42)
+        try:
+            resp = run_with_spinner(
+                f"running bank obfuscation on {name}",
+                cli.run_obfuscation, name, n_rows, seed)
+        except FoxClientError as e3:
+            print(f"\n  {err(str(e3))}")
+            return 1
+        exp = resp.get("experiment", {})
+        runs = resp.get("runs", [])
+        headers = ["scenario", "technique", "metric", "value"]
+        rows = []
+        for r in runs:
+            metrics = r.get("metrics") or {}
+            mkey = next(iter(metrics), "")
+            mval = metrics.get(mkey) if mkey else ""
+            mstr = (f"{mval:.2g}" if isinstance(mval, (int, float))
+                    else str(mval))
+            rows.append([str((r.get("label") or r.get("id")))[:42],
+                         str((r.get("config") or {}).get("technique", ""))[:34],
+                         mkey.replace("_", " ") if mkey else "—",
+                         mstr])
+        print(panel(f"obfuscation (bank) · {name}",
+                    table(headers, rows)))
+        print(dim(f"\n  experiment id {c(exp.get('id', '?'), ui.DIM)} · "
+                  f"{len(runs)} scenario runs recorded"))
+        print(dim(f"  view in the app: open the {c(name, ui.DIM)} project → "
+                  f"Experiments → 'obfuscation (bank)'"))
+        return 0
     print(f"\n  {err(f'unknown action `{action}`')}")
     return 1
 

@@ -187,6 +187,17 @@ class CommandTests(unittest.TestCase):
         code, _ = run_cli([OFFLINE, "experiments", "proj"])
         self.assertEqual(code, 1)
 
+    def test_experiments_run_obfuscation_offline(self):
+        # offline: server contact fails -> exit 1 (not a crash)
+        code, out = run_cli([OFFLINE, "experiments", "proj", "run-obfuscation"])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot reach", out)
+
+    def test_experiments_run_obfuscation_accepts_flags(self):
+        code, out = run_cli([OFFLINE, "experiments", "proj", "run-obfuscation",
+                             "--n-rows", "300", "--seed", "7"])
+        self.assertEqual(code, 1)
+
     def test_research_list_offline(self):
         code, _ = run_cli([OFFLINE, "research"])
         self.assertEqual(code, 1)

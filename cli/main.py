@@ -57,7 +57,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_exp = sub.add_parser("experiments", help="list / start experiments")
     p_exp.add_argument("project")
     p_exp.add_argument("action", nargs="?", default="list",
-                       choices=["list", "start"])
+                       choices=["list", "start", "run-obfuscation"])
+    p_exp.add_argument("--n-rows", type=int, default=2000,
+                       help="synthetic bank transactions (run-obfuscation)")
+    p_exp.add_argument("--seed", type=int, default=42,
+                       help="RNG seed (run-obfuscation)")
 
     p_res = sub.add_parser("research", help="research scenarios + autoresearch")
     p_res.add_argument("action", nargs="?", default="list",

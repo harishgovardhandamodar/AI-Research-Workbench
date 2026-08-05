@@ -103,6 +103,18 @@ class FoxClient:
     def start_experiment(self, name: str) -> dict:
         return self.post(f"/api/projects/{name}/experiments", {})
 
+    def run_obfuscation(self, name: str, n_rows: int = 2000, seed: int = 42,
+                        timeout: float | None = 120.0) -> dict:
+        """Run the bank-transaction obfuscation scenario suite on a project.
+
+        Records each scenario as a run (metrics + figure + masked-vs-raw
+        transactions table) under an "obfuscation (bank)" experiment so the
+        app's Experiments panel can display results and transactions.
+        """
+        return self.post(f"/api/projects/{name}/experiments/run-obfuscation",
+                         {"dataset": "bank", "n_rows": n_rows, "seed": seed},
+                         timeout=timeout)
+
     def experiment(self, name: str, eid: str) -> dict:
         return self.get(f"/api/projects/{name}/experiments/{eid}")
 

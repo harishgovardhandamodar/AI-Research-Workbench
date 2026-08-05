@@ -15,6 +15,15 @@ transaction data: BEC/fraud, insider threat, supply-chain leakage, sanctions
 evasion, corporate espionage, test-environment exposure, account-takeover via
 security questions, and re-identification — plus a counterparty-reconstruction
 supplement.
+
+A bank-transaction edition of the same scenarios (fake IBANs, sort codes,
+SWIFT/BIC, running balances) lives alongside:
+
+    from examples.obfuscation.bank_transactions_data import generate_bank_transactions
+    from examples.obfuscation import bank_experiments as bexp
+
+    df = generate_bank_transactions(2000, seed=42)
+    results = bexp.run_all(df)
 """
 
 from .obfuscate import (  # noqa: F401
@@ -41,9 +50,16 @@ from .credit_card_data import (  # noqa: F401
     SENSITIVE_COLUMNS,
     generate_credit_card,
 )
+from .bank_transactions_data import (  # noqa: F401
+    FIELDNAMES as BANK_FIELDNAMES,
+    QUASI_IDENTIFIER_COLUMNS as BANK_QUASI_IDENTIFIER_COLUMNS,
+    SENSITIVE_COLUMNS as BANK_SENSITIVE_COLUMNS,
+    generate_bank_transactions,
+)
 
 __all__ = [
     "generate_credit_card", "FIELDNAMES", "SENSITIVE_COLUMNS",
+    "generate_bank_transactions", "BANK_FIELDNAMES", "BANK_SENSITIVE_COLUMNS",
     "apply_masking", "tokenize", "token_id", "fuzzy_bucket", "k_anonymize",
     "noisy_aggregate", "sanitize_metadata", "obfuscate_dataframe",
     "mask_iban", "mask_bic", "mask_card", "mask_name", "mask_amount",

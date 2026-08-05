@@ -3,6 +3,7 @@ tracking, lab-notebook reports, run comparison, and figure regeneration."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import datetime, timezone
@@ -101,6 +102,126 @@ async def update_project_experiment(name: str, eid: int, body: dict):
             detail=f"status must be one of {', '.join(EXPERIMENT_STATUSES)}")
     store.update_experiment_status(eid, status)
     return {"experiment": store.get_experiment(eid)}
+
+
+@router.post("/api/projects/{name}/experiments/run-obfuscation")
+async def run_obfuscation_experiments(name: str, body: dict):
+    """Run the bank-transaction obfuscation scenario suite and record each
+    scenario as a run under a reusable "obfuscation (bank)" experiment.
+
+    Generates synthetic bank-transaction data, runs the 9 obfuscation threat
+    scenarios, and records one run per scenario with its metrics, a figure
+    artifact (PNG) and a masked-vs-raw transactions table artifact, so the
+    Experiments panel can show results and transactions side by side.
+
+    Body: {"dataset": "bank", "n_rows": 2000, "seed": 42}.
+    """
+    import sys
+    import time
+
+    from ..paths import ROOT
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from examples.obfuscation import bank_experiments as bexp
+        from examples.obfuscation.bank_transactions_data import (
+            generate_bank_transactions,
+        )
+    except ImportError as exc:  # pragma: no cover - env check
+        raise HTTPException(status_code=500,
+                            detail=f"bank obfuscation examples unavailable: {exc}")
+
+    rt = get_runtime(name)
+    n_rows = int(body.get("n_rows") or 2000)
+    seed = int(body.get("seed") or 42)
+
+    df = await asyncio.to_thread(generate_bank_transactions, n_rows=n_rows, seed=seed)
+    results = await asyncio.to_thread(bexp.run_all, df)
+
+    store = rt.store
+    exps = store.list_experiments()
+    eid = next((e["id"] for e in exps
+                if e["name"] == "obfuscation (bank)"), None)
+    if eid is None:
+        eid = store.create_experiment(
+            "obfuscation (bank)",
+            "Data-obfuscation threat scenarios on synthetic bank transactions",
+            "reduction_pct", None, True,
+            plan=f"Run the 9 obfuscation scenarios over {n_rows:,} generated "
+                 f"bank transactions (seed={seed}) and measure risk reduction "
+                 "per technique.")
+    else:
+        store.update_experiment_status(eid, "active")
+
+    now = time.time()
+    run_ids = []
+    for r in results:
+        art_ids = []
+        fig = r.get("fig")
+        if fig is not None:
+            png = await asyncio.to_thread(bexp.fig_to_png, fig)
+            art = Artifact(kind="figure",
+                           name=_artifact_name(r.get("title"), "figure"),
+                           description=r.get("technique", ""),
+                           code=f"examples.obfuscation.bank_experiments::"
+                                f"{r.get('title')}",
+                           env={"dataset": "bank", "seed": seed, "n_rows": n_rows},
+                           message_id="")
+            rt.artifacts.add_artifact(art, data=png, data_type="png")
+            art_ids.append(art.id)
+        table_md = r.get("table_md") or ""
+        if table_md:
+            art = Artifact(kind="text",
+                           name=_artifact_name(r.get("title"), "transactions"),
+                           description="masked vs raw bank transactions",
+                           code="examples.obfuscation.bank_experiments::"
+                                f"{r.get('title')}",
+                           env={"dataset": "bank", "seed": seed, "n_rows": n_rows},
+                           message_id="")
+            rt.artifacts.add_artifact(art, data=table_md.encode(),
+                                      data_type="text")
+            art_ids.append(art.id)
+        rid = store.add_run(
+            prompt=(f"obfuscation scenario: {r.get('title')} "
+                    f"[{r.get('technique', '')}] on {n_rows:,} synthetic "
+                    f"bank transactions"),
+            reply=table_md,
+            status="error" if r.get("error") else "done",
+            started_at=now - 0.5, finished_at=now,
+            artifact_ids=art_ids,
+            metrics={k: _jsonable(v) for k, v in (r.get("metrics") or {}).items()},
+            experiment_id=eid,
+            config={"dataset": "bank", "seed": seed, "n_rows": n_rows,
+                    "technique": r.get("technique", "")},
+            label=r.get("title"),
+            kind="obfuscation")
+        run_ids.append(rid)
+
+    return {"experiment": store.get_experiment(eid),
+            "runs": [store.get_run(rid) for rid in run_ids],
+            "count": len(run_ids)}
+
+
+def _artifact_name(title: str, suffix: str) -> str:
+    """Slugify a scenario title into an artifact name."""
+    base = "".join(c for c in (title or "").lower() if c.isalnum() or c == " ")
+    base = "_".join(base.split())
+    return f"{base}_{suffix}" if base else suffix
+
+
+def _jsonable(value):
+    """Coerce numpy/pandas scalars to native Python for the JSON store."""
+    if isinstance(value, (bool, int, float, str)) or value is None:
+        return value
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        if isinstance(value, (np.bool_, np.integer, np.floating)):
+            return value.item()
+    except Exception:  # noqa: BLE001
+        pass
+    return str(value)
 
 
 @router.post("/api/projects/{name}/experiments/{eid}/link")
