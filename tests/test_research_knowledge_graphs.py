@@ -117,6 +117,27 @@ class RkgRouterTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["report"], "")
 
+    def test_scenario_gaps_return_suggestions(self):
+        r = self.client.get("/api/rkg/scenarios/autonomous-agents-security/gaps")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["scenario"], "autonomous-agents-security")
+        self.assertIn("count", data)
+        self.assertIn("suggestions", data)
+        for s in data["suggestions"]:
+            self.assertIn("type", s)
+            self.assertIn("evidence", s)
+            self.assertIn("hypothesis", s)
+            self.assertIn("arxiv_query", s)
+        # With an empty corpus every seeded topic is untouched.
+        self.assertIn("untouched_topic",
+                      {s["type"] for s in data["suggestions"]})
+
+    def test_scenario_gaps_unknown_404(self):
+        r = self.client.get("/api/rkg/scenarios/does-not-exist/gaps")
+        self.assertEqual(r.status_code, 404)
+
     def test_unknown_scenario_404(self):
         r = self.client.get("/api/rkg/scenarios/does-not-exist")
         self.assertEqual(r.status_code, 404)

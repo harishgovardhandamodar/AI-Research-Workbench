@@ -714,6 +714,14 @@ async def rkg_scenario_report(sid: str):
     return {"id": sid, "report": get_workbench().report(sid)}
 
 
+@router.get("/api/rkg/scenarios/{sid}/gaps")
+async def rkg_scenario_gaps(sid: str):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    return get_workbench().gaps(sid)
+
+
 @router.post("/api/rkg/scenarios/{sid}/build")
 async def rkg_scenario_build(sid: str, data: dict = Body(default={})):
     err = _require_scenario(sid)
