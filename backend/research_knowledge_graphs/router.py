@@ -31,6 +31,7 @@ router = APIRouter()
 
 _org: Organizer | None = None
 _gpu_mgr: GPUManager | None = None
+_wb: Any = None
 _VIEWS = Path(__file__).parent / "views"
 
 # ------------------------------------------------------------------ jobs -----
@@ -90,6 +91,16 @@ def get_org() -> Organizer:
         _gpu_mgr = GPUManager(config)
         _org = Organizer(config, _gpu_mgr)
     return _org
+
+
+def get_workbench():
+    """Lazily build the Research Workbench (scenario autoresearch loops)."""
+    global _wb
+    if _wb is None:
+        from .research_loop import ResearchWorkbench
+
+        _wb = ResearchWorkbench(get_org())
+    return _wb
 
 
 async def _org_thread(call, *args, **kwargs):
@@ -587,3 +598,91 @@ async def rkg_pool_import_batch(data: dict = Body(default={})):
         return {"results": results}
 
     return _submit("pool_import_batch", f"Import {len(arxiv_ids)} papers from pool", _do)
+
+
+# -------------------------------------------------- research workbench ------
+# Domain-scoped autoresearch loops over the knowledge graph (see
+# research_loop.py). Long phases run as background jobs so the dashboard can
+# poll scenario status instead of holding a fetch open.
+
+def _require_scenario(sid: str):
+    sc = get_workbench().get(sid)
+    if sc is None:
+        return JSONResponse({"error": f"unknown scenario '{sid}'"}, status_code=404)
+    return None
+
+
+@router.get("/api/rkg/scenarios")
+async def rkg_scenarios():
+    return {"scenarios": get_workbench().list()}
+
+
+@router.get("/api/rkg/scenarios/{sid}")
+async def rkg_scenario_detail(sid: str):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    return get_workbench().get(sid)
+
+
+@router.get("/api/rkg/scenarios/{sid}/status")
+async def rkg_scenario_status(sid: str):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    return get_workbench().status(sid)
+
+
+@router.get("/api/rkg/scenarios/{sid}/report")
+async def rkg_scenario_report(sid: str):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    return {"id": sid, "report": get_workbench().report(sid)}
+
+
+@router.post("/api/rkg/scenarios/{sid}/build")
+async def rkg_scenario_build(sid: str, data: dict = Body(default={})):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    wb = get_workbench()
+    max_papers = data.get("max_papers")
+    model = wb.config.resolve_model(data.get("model"))
+    return _submit("scenario_build", f"Build corpus: {sid}",
+                   wb.build_corpus, sid, max_papers=max_papers, model=model)
+
+
+@router.post("/api/rkg/scenarios/{sid}/synthesize")
+async def rkg_scenario_synthesize(sid: str, data: dict = Body(default={})):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    wb = get_workbench()
+    model = wb.config.resolve_model(data.get("model"))
+    include = bool(data.get("include_experiments", False))
+    return _submit("scenario_synthesize", f"Synthesize report: {sid}",
+                   wb.run_synthesis, sid, include_experiments=include, model=model)
+
+
+@router.post("/api/rkg/scenarios/{sid}/experiments")
+async def rkg_scenario_experiments(sid: str, data: dict = Body(default={})):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    wb = get_workbench()
+    model = wb.config.resolve_model(data.get("model"))
+    top_n = data.get("top_n")
+    return _submit("scenario_experiments", f"Replication experiments: {sid}",
+                   wb.run_experiments, sid, top_n=top_n, model=model)
+
+
+@router.post("/api/rkg/scenarios/{sid}/loop")
+async def rkg_scenario_loop(sid: str, data: dict = Body(default={})):
+    err = _require_scenario(sid)
+    if err:
+        return err
+    wb = get_workbench()
+    model = wb.config.resolve_model(data.get("model"))
+    return _submit("scenario_loop", f"Full research loop: {sid}",
+                   wb.run_full_loop, sid, model=model)

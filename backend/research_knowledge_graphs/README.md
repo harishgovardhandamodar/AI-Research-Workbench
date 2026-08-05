@@ -1,5 +1,9 @@
 # Research Knowledge Graphs
 
+> **Full documentation:** [`docs/KNOWLEDGE-GRAPHS.md`](../../docs/KNOWLEDGE-GRAPHS.md)
+> — architecture, data model, ingestion pipeline, RAG, and the Research
+> Workbench autoresearch loops, with Mermaid diagrams.
+
 Vendored app logic + views from
 [`hive-research-gpu`](https://github.com/your-org/hive-research-gpu) (research
 knowledge base: arXiv ingestion, LLM-powered analysis, typed Hive knowledge
@@ -59,6 +63,56 @@ directories:
 
 Ollama settings follow the same env-var overrides as the original app
 (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_FAST_MODEL`, `OLLAMA_EMBED_MODEL`).
+
+## Research Workbench (autoresearch loops)
+
+The dashboard's **Research** panel drives domain-scoped autoresearch loops over
+the knowledge graph. Each **scenario** is a research domain (arXiv topics + a
+lens). Two sample scenarios ship with the tool:
+
+- **Autonomous Agents & Security Lapses** (`autonomous-agents-security`)
+- **Enterprise AI Adoption & Security Lapses** (`enterprise-ai-security`)
+
+A scenario's chained loop (implemented in `research_loop.py`) runs four phases:
+
+1. **Build corpus** — scenario topics are (re)seeded into the research pool,
+   the pool refreshes from arXiv, and the freshest un-imported candidates are
+   ingested into the knowledge graph (PDF → LLM analysis → concepts/tags/
+   relations → vault notes).
+2. **Synthesize** — an LLM writes a domain research report (key findings,
+   security-lapses catalog, method taxonomy, trends, open problems, references)
+   grounded in the corpus. An LLM reviewer scores it 0–100; the loop iterates
+   and keeps only score-improving revisions (the research analog of the
+   experiment.py autoresearch loop).
+3. **Experiments** — the strongest corpus papers (by graph degree + recency)
+   are ranked, their extracted experiment specs become runnable `experiment.py`
+   files, and each runs a bounded improve loop (propose → run under budget →
+   keep/revert on the `METRIC` line). Results are appended to the paper's
+   vault note and the scenario's `results.md`.
+4. **Fold back** — synthesis re-runs with the replication results so the final
+   report reflects the experiments.
+
+Per-scenario state lives under `<root>/scenarios/<scenario_id>/`:
+`scenario.json` (config + corpus + results), `report.md` (best report),
+`log.md`, `experiments/`, and `project/workbench.db` (loop runs recorded via
+the workbench's `ProjectStore`, attached to a per-scenario experiment).
+
+All long phases are background jobs — the dashboard polls
+`/api/rkg/jobs/{id}` and the live per-scenario status at
+`/api/rkg/scenarios/{sid}/status` (phase, progress, message, log tail).
+
+### Scenario API (`/api/rkg/scenarios*`)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/rkg/scenarios` | list scenarios + live status |
+| `GET /api/rkg/scenarios/{sid}` | scenario detail |
+| `GET /api/rkg/scenarios/{sid}/status` | live loop status |
+| `GET /api/rkg/scenarios/{sid}/report` | best domain report (markdown) |
+| `POST /api/rkg/scenarios/{sid}/build` | phase 1 (job) |
+| `POST /api/rkg/scenarios/{sid}/synthesize` | phase 2 / 4 (job) |
+| `POST /api/rkg/scenarios/{sid}/experiments` | phase 3 (job) |
+| `POST /api/rkg/scenarios/{sid}/loop` | full chained loop (job) |
 
 ## Dependencies
 

@@ -430,6 +430,7 @@ select{cursor:pointer}
 </div>
 <div class="body">
 <div class="sidebar" id="sidebar">
+  <div class="nav-item" data-panel="research" onclick="switchPanel('research')">&#x1F52C;<span class="tip">Research</span></div>
   <div class="nav-item" data-panel="pool" onclick="switchPanel('pool')">&#x25E2;<span class="tip">Pool</span></div>
   <div class="nav-item active" data-panel="graph" onclick="switchPanel('graph')">&#x25E1;<span class="tip">Graph</span></div>
   <div class="nav-item" data-panel="import" onclick="switchPanel('import')">&#x271A;<span class="tip">Import</span></div>
@@ -442,6 +443,25 @@ select{cursor:pointer}
 </div>
 <div class="main">
 <div class="main-top">
+
+<!-- ── Research Workbench Panel ── -->
+<div class="panel" id="panel-research">
+  <div class="panel-header"><h2>Research Workbench <span class="badge" id="researchBadge">Autoresearch</span></h2></div>
+  <div class="panel-body" style="padding-top:8px;overflow-y:auto">
+    <div class="card" style="flex-shrink:0">
+      <div class="card-header">What this is</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.7">
+        Each <b>scenario</b> is a research domain. A chained autoresearch loop runs over it:
+        <b>1) build corpus</b> (arXiv topics &#8594; papers into the knowledge graph) &#8594;
+        <b>2) synthesize</b> a domain report, auto-scored by an LLM reviewer and improved each iteration &#8594;
+        <b>3) experiments</b> replicate/improve the strongest papers' experiments &#8594;
+        <b>4) fold results</b> back into the report.
+        Use <b>Full loop</b> to run all four phases, or run phases individually.
+      </div>
+    </div>
+    <div id="scenarioList" style="display:flex;flex-direction:column;gap:12px;padding:4px 0"></div>
+  </div>
+</div>
 
 <!-- ── Graph Panel ── -->
 <div class="panel" id="panel-graph">
@@ -850,6 +870,7 @@ function switchPanel(name){
   if(name==='pool')loadPoolPanel();
   if(name==='import'){document.getElementById('webUrlInput').focus();loadWebList();}
   if(name==='about')loadAbout();
+  if(name==='research')loadScenarios();
 }
 
 // ── GPU Status ──
@@ -2299,6 +2320,165 @@ fetchLogs();
 // Force re-render after layout settles
 setTimeout(()=>{if(el('panel-graph').classList.contains('active')&&gData.nodes)renderGraph(gData)},500);
 setTimeout(()=>{if(el('panel-graph').classList.contains('active')&&gData.nodes)renderGraph(gData)},1500);
+
+/* ============================ research workbench ============================ */
+let _scenarioTimer=null;
+const _PHASE_COLOR={idle:'var(--text3)',building:'var(--yellow)',synthesizing:'var(--accent)',experimenting:'var(--purple)',updating:'var(--green)',done:'var(--green)',error:'var(--red,#f87171)'};
+const _PHASE_ICON={idle:'&#x23F8;',building:'&#x2198;',synthesizing:'&#x270D;',experimenting:'&#x2699;',updating:'&#x21BB;',done:'&#x2713;',error:'&#x26A0;'};
+
+async function loadScenarios(){
+  const wrap=el('scenarioList');
+  if(!wrap)return;
+  wrap.innerHTML='<div style="color:var(--text3);font-size:12px;padding:12px">Loading scenarios…</div>';
+  try{
+    const data=await api('/api/rkg/scenarios');
+    const scs=data.scenarios||[];
+    wrap.innerHTML=scs.map(scenarioCardHTML).join('');
+    const busy=scs.some(s=>['building','synthesizing','experimenting','updating'].includes(s.status.phase));
+    clearTimeout(_scenarioTimer);
+    if(busy){_scenarioTimer=setTimeout(loadScenarios,4000)}
+    if(!busy)el('researchBadge').innerHTML=scs.length+' scenario'+(scs.length===1?'':'s');
+  }catch(e){
+    wrap.innerHTML='<div style="color:var(--red,#f87171);font-size:12px;padding:12px">Failed to load scenarios: '+esc(String(e))+'</div>';
+  }
+}
+
+function scenarioCardHTML(sc){
+  const st=sc.status||{};
+  const phase=st.phase||'idle';
+  const color=_PHASE_COLOR[phase]||'var(--text3)';
+  const topics=(sc.topics||[]).map(t=>'<span class="pool-tag">'+esc(t.name)+'</span>').join('');
+  const corpus=sc.corpus||[];
+  const best=sc.best_score!==undefined&&sc.best_score!==null?Number(sc.best_score).toFixed(0)+'/100':'—';
+  const last=sc.last_loop||{};
+  const lastLine=last.finished_at?('Last loop: score '+last.best_score+' · '+last.experiments+' experiments · '+last.imported+' imported'):'No loop run yet';
+  const log=(st.log||[]).slice(-3).map(l=>'<div class="sc-log '+(l.level==='WARN'?'warn':l.level==='ERROR'?'err':'')+'">'+esc(l.msg)+'</div>').join('');
+  const pct=Math.round((st.progress||0)*100);
+  const running=['building','synthesizing','experimenting','updating'].includes(phase);
+  return '<div class="card" style="flex-shrink:0">'+
+    '<div style="display:flex;align-items:start;gap:10px;flex-wrap:wrap">'+
+      '<div style="font-size:26px;line-height:1">'+(sc.icon==='agent'?'&#x1F916;':sc.icon==='enterprise'?'&#x1F3E2;':'&#x1F52C;')+'</div>'+
+      '<div style="flex:1;min-width:220px">'+
+        '<div style="font-weight:600;font-size:14px;color:var(--accent)">'+esc(sc.name)+'</div>'+
+        '<div style="font-size:11px;color:var(--text3);margin-top:2px">Lens: '+esc(sc.lens||'')+'</div>'+
+        '<div style="font-size:12px;color:var(--text2);margin-top:4px">'+esc(sc.description||'')+'</div>'+
+        '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">'+topics+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);margin-top:6px">'+lastLine+'</div>'+
+      '</div>'+
+      '<div style="text-align:right;font-size:11px;color:var(--text3)">'+
+        '<div style="font-size:20px;font-weight:700;color:var(--text)">'+corpus.length+'</div><div>papers</div>'+
+        '<div style="font-size:16px;font-weight:600;color:'+color+';margin-top:6px">'+best+'</div><div>report</div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+      '<span style="font-size:11px;font-weight:600;color:'+color+'">'+_PHASE_ICON[phase]+' '+(st.phase_label||'Idle')+'</span>'+
+      (st.message?'<span style="font-size:11px;color:var(--text2)">'+esc(st.message)+'</span>':'')+
+      '<div style="flex:1;min-width:60px;height:4px;background:var(--border);border-radius:2px;overflow:hidden">'+
+        '<div style="height:100%;width:'+pct+'%;background:'+color+';transition:width .4s"></div>'+
+      '</div>'+
+    '</div>'+
+    (log?'<div style="margin-top:6px;font-size:10.5px;line-height:1.6;color:var(--text3)">'+log+'</div>':'')+
+    '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button class="btn btn-sm" onclick="startScenario(\''+sc.id+'\',\'build\',this)" '+(running?'disabled':'')+'>&#x2198; Build corpus</button>'+
+      '<button class="btn btn-sm" onclick="startScenario(\''+sc.id+'\',\'synthesize\',this)" '+(running||!corpus.length?'disabled':'')+'>&#x270D; Synthesize</button>'+
+      '<button class="btn btn-sm" onclick="startScenario(\''+sc.id+'\',\'experiments\',this)" '+(running||!corpus.length?'disabled':'')+'>&#x2699; Experiments</button>'+
+      '<button class="btn btn-sm btn-success" onclick="startScenario(\''+sc.id+'\',\'loop\',this)" '+(running?'disabled':'')+'>&#x21BB; Full loop</button>'+
+      '<button class="btn btn-sm btn-outline" onclick="viewScenarioReport(\''+sc.id+'\')" '+(st.report_exists?'':'disabled')+'>&#x1F4C4; Report</button>'+
+    '</div>'+
+  '</div>';
+}
+
+async function startScenario(sid,action,btn){
+  const label={build:'Build corpus',synthesize:'Synthesize report',experiments:'Replication experiments',loop:'Full research loop'}[action]||action;
+  if(action!=='build'&&action!=='loop'){
+    if(!confirm('Start '+label+' for scenario "'+sid+'"? This runs in the background and can take several minutes.'))return;
+  }
+  if(btn){btn.disabled=true;btn.textContent='Starting…'}
+  try{
+    const r=await api('/api/rkg/scenarios/'+sid+'/'+action,'POST',{});
+    if(r.id){
+      addLog(label+' started for '+sid+' (job '+r.id+')','INPROGRESS');
+      const job=await pollJob(r.id,label+' — scenario '+sid);
+      if(job.status==='error')addLog(label+' failed: '+(job.error||'unknown'),'ERROR');
+      else addLog(label+' complete for '+sid,'DONE');
+    }else{
+      addLog(label+': '+(r.message||JSON.stringify(r)),'ERROR');
+    }
+  }catch(e){addLog(label+' error: '+e,'ERROR')}
+  if(btn){btn.disabled=false;btn.textContent='…'}
+  loadScenarios();
+}
+
+async function viewScenarioReport(sid){
+  try{
+    const d=await api('/api/rkg/scenarios/'+sid+'/report');
+    el('reportTitle').textContent='Domain Report — '+sid;
+    el('reportBody').innerHTML=renderMarkdown(d.report||'*No report yet.*');
+    el('reportOverlay').style.display='flex';
+    window._activeReport={sid:sid,text:d.report||''};
+  }catch(e){addLog('Could not load report: '+e,'ERROR')}
+}
+function closeReport(){el('reportOverlay').style.display='none'}
+function downloadReport(){
+  const r=window._activeReport;
+  if(!r)return;
+  const blob=new Blob([r.text],{type:'text/markdown'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=r.sid+'-report.md';
+  document.body.appendChild(a);a.click();a.remove();
+}
+el('reportOverlay')&&(el('reportOverlay').onclick=function(ev){if(ev.target.id==='reportOverlay')closeReport()});
+
+function renderMarkdown(md){
+  const lines=String(md||'').split('\n');
+  let out=[],list=false;
+  for(const raw of lines){
+    const line=raw.replace(/\s+$/,'');
+    if(/^#{1,4}\s/.test(line)){
+      list=false;const lvl=line.match(/^#+/)[0].length;
+      out.push('<h'+(lvl+2)+' style="margin:14px 0 6px;color:var(--accent);font-size:'+(lvl===1?'16px':lvl===2?'14px':'13px')+';border-bottom:1px solid var(--border);padding-bottom:4px">'+esc(line.replace(/^#+\s*/,''))+'</h'+(lvl+2)+'>');
+    }else if(/^[-*]\s/.test(line)){
+      if(!list){out.push('<ul style="margin:4px 0 8px;padding-left:18px">');list=true}
+      out.push('<li style="margin:2px 0">'+inlineMd(line.replace(/^[-*]\s/,''))+'</li>');
+    }else if(/^\d+\.\s/.test(line)){
+      if(!list){out.push('<ol style="margin:4px 0 8px;padding-left:18px">');list=true}
+      out.push('<li style="margin:2px 0">'+inlineMd(line.replace(/^\d+\.\s/,''))+'</li>');
+    }else if(/^\s*```/.test(line)){
+      list=false;out.push('<pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0;font-size:11px">'+esc(line.replace(/^\s*```.*/,'').trim())+'</pre>');
+    }else if(/^>\s?/.test(line)){
+      list=false;out.push('<div style="border-left:3px solid var(--accent);padding:2px 10px;margin:6px 0;color:var(--text2);font-style:italic">'+inlineMd(line.replace(/^>\s?/,''))+'</div>');
+    }else if(!line){
+      if(list){out.push('</ul>');list=false}
+      continue;
+    }else{
+      list=false;out.push('<p style="margin:4px 0">'+inlineMd(line)+'</p>');
+    }
+  }
+  if(list)out.push('</ul>');
+  return out.join('');
+}
+function inlineMd(s){
+  s=esc(s);
+  s=s.replace(/`([^`]+)`/g,'<code style="background:var(--bg);padding:1px 5px;border-radius:4px;font-size:11px">$1</code>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+  s=s.replace(/\*([^*]+)\*/g,'<i>$1</i>');
+  s=s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>');
+  s=s.replace(/(^|\s)(https?:\/\/[^\s]+)/g,'$1<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$2</a>');
+  return s;
+}
 </script>
+
+<!-- ── Research Report Overlay ── -->
+<div id="reportOverlay" style="display:none;position:fixed;inset:0;background:rgba(5,10,20,.7);z-index:200;align-items:center;justify-content:center;padding:24px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:880px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <span id="reportTitle" style="font-weight:600;font-size:13px;color:var(--accent);flex:1;word-break:break-word">Report</span>
+      <button class="btn btn-sm" onclick="downloadReport()" style="font-size:10px">&#x2193; .md</button>
+      <button onclick="closeReport()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px">&#x2716;</button>
+    </div>
+    <div id="reportBody" style="padding:16px 20px;overflow-y:auto;font-size:12px;line-height:1.7;color:var(--text)"></div>
+  </div>
+</div>
+
 </body>
 </html>

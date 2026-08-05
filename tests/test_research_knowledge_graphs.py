@@ -84,3 +84,39 @@ class RkgRouterTests(unittest.TestCase):
         paths = self.client.get("/openapi.json").json()["paths"]
         self.assertIn("/api/rkg/graph", paths)
         self.assertIn("/rkg/dashboard", paths)
+
+    # ------------------------------------------------------------ scenarios ---
+
+    def test_scenarios_seed_two_sample_domains(self):
+        r = self.client.get("/api/rkg/scenarios")
+        self.assertEqual(r.status_code, 200)
+        scs = r.json().get("scenarios", [])
+        self.assertEqual(len(scs), 2)
+        ids = {s["id"] for s in scs}
+        self.assertEqual(ids, {"autonomous-agents-security", "enterprise-ai-security"})
+        for s in scs:
+            self.assertGreater(len(s["topics"]), 0)
+
+    def test_scenario_topics_seeded_into_pool(self):
+        self.client.get("/api/rkg/scenarios")
+        r = self.client.get("/api/rkg/pool/topics")
+        names = {t["name"] for t in r.json().get("topics", [])}
+        self.assertIn("Agents-Security: LLM agent security", names)
+        self.assertIn("Enterprise-AI: adoption", names)
+
+    def test_scenario_detail_and_status(self):
+        r = self.client.get("/api/rkg/scenarios/autonomous-agents-security")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["name"], "Autonomous Agents & Security Lapses")
+        st = self.client.get("/api/rkg/scenarios/autonomous-agents-security/status").json()
+        self.assertEqual(st["status"]["phase"], "idle")
+        self.assertEqual(st["corpus_size"], 0)
+
+    def test_scenario_report_empty_before_loop(self):
+        r = self.client.get("/api/rkg/scenarios/enterprise-ai-security/report")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["report"], "")
+
+    def test_unknown_scenario_404(self):
+        r = self.client.get("/api/rkg/scenarios/does-not-exist")
+        self.assertEqual(r.status_code, 404)
