@@ -51,6 +51,7 @@ PHASE_LABELS = {
     "updating": "Folding results into report",
     "done": "Done",
     "error": "Error",
+    "interrupted": "Interrupted (restart)",
 }
 
 SAMPLE_SCENARIOS = [
@@ -152,6 +153,7 @@ class ResearchWorkbench:
         self._dir = Path(self.config.root_dir) / "scenarios"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._seed()
+        self._restore_live()
 
     # ------------------------------------------------------------ helpers ----
 
@@ -217,6 +219,7 @@ class ResearchWorkbench:
             if phase == "error":
                 st["error"] = message
         logger.info("scenario %s phase=%s: %s", sid, phase, message or "")
+        self._persist_live(sid)
 
     def _log(self, sid: str, level: str, msg: str) -> None:
         st = self._status(sid)
@@ -234,6 +237,41 @@ class ResearchWorkbench:
         st["progress"], st["message"], st["error"] = 0.0, "", None
         st["started_at"], st["finished_at"] = time.time(), None
         st["log"] = []
+        self._persist_live(sid)
+
+    # --------------------------------------------------- live state -------
+    # The fast-poll dashboard state is persisted so a restart marks in-flight
+    # scenarios as "interrupted" instead of silently resetting to idle while a
+    # job is still (or was) running.
+
+    def _live_path(self, sid: str) -> Path:
+        return self._store_dir / sid / "status.json"
+
+    def _persist_live(self, sid: str) -> None:
+        st = self._status(sid)
+        try:
+            tmp = self._live_path(sid).with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(st, indent=2, default=str))
+            tmp.replace(self._live_path(sid))
+        except OSError as exc:
+            logger.warning("persist live state for %s failed: %s", sid, exc)
+
+    def _restore_live(self) -> None:
+        """Reload persisted per-scenario status; phases left mid-run after a
+        restart are marked ``interrupted``."""
+        for path in self._dir.glob("*/status.json"):
+            sid = path.parent.name
+            try:
+                st = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            phase = st.get("phase", "idle")
+            if phase not in ("idle", "done", "error"):
+                st["phase"] = "interrupted"
+                st["phase_label"] = PHASE_LABELS["interrupted"]
+                st["message"] = (st.get("message") or "") + " [interrupted on restart]"
+                st["error"] = "interrupted by server restart"
+            self._live[sid] = st
 
     # ---------------------------------------------------------- scenarios ----
 

@@ -12,6 +12,8 @@ blocks on Ollama / GPU / pool probing.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import threading
 import time
@@ -28,6 +30,7 @@ from .logs import get_capture
 from .organizer import Organizer
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _org: Organizer | None = None
 _gpu_mgr: GPUManager | None = None
@@ -39,8 +42,45 @@ _VIEWS = Path(__file__).parent / "views"
 # take many minutes, which would kill a browser fetch held open that long. Long
 # operations are therefore started as background jobs: the endpoint returns a
 # job id immediately and the dashboard polls GET /api/rkg/jobs/{id} until done.
+#
+# The registry is persisted to <data_root>/jobs.json so a restart does not lose
+# the jobs list: jobs that were running get marked "interrupted".
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
+_JOBS_PATH = Path(Config().root_dir) / "jobs.json"
+
+
+def _persist_jobs() -> None:
+    try:
+        _JOBS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _jobs_lock:
+            tmp = _JOBS_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(_jobs, indent=2, default=str))
+            tmp.replace(_JOBS_PATH)
+    except OSError as exc:  # noqa: BLE001
+        logger.warning("persist jobs failed: %s", exc)
+
+
+def _restore_jobs() -> None:
+    """Reload the persisted job registry; mark leftover ``running`` jobs as
+    ``interrupted`` so the dashboard shows them instead of losing them."""
+    if not _JOBS_PATH.exists():
+        return
+    try:
+        data = json.loads(_JOBS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    logger.info("restoring %d persisted jobs", len(data))
+    for job_id, job in data.items():
+        if job.get("status") == "running":
+            job["status"] = "interrupted"
+            job["error"] = "interrupted by server restart"
+            job["finished_at"] = time.time()
+        with _jobs_lock:
+            _jobs[job_id] = job
+
+
+_restore_jobs()
 
 
 def _new_job(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
@@ -52,6 +92,7 @@ def _new_job(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
     }
     with _jobs_lock:
         _jobs[job_id] = job
+    _persist_jobs()
 
     def _run():
         try:
@@ -65,6 +106,7 @@ def _new_job(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
                 job["error"] = f"{type(e).__name__}: {e}"
                 job["status"] = "error"
                 job["finished_at"] = time.time()
+        _persist_jobs()
 
     threading.Thread(target=_run, daemon=True).start()
     return job
@@ -81,6 +123,37 @@ def _job_view(job: dict[str, Any]) -> dict[str, Any]:
 
 def _submit(kind: str, label: str, target, *args, **kwargs) -> dict[str, Any]:
     return _job_view(_new_job(kind, label, target, *args, **kwargs))
+
+
+# Scenario jobs carry their scenario id so concurrent long operations on the
+# same scenario are refused (one long scenario op at a time per scenario).
+_SCENARIO_JOB_KINDS = ("scenario_build", "scenario_synthesize",
+                       "scenario_experiments", "scenario_loop")
+
+
+def _scenario_busy(sid: str) -> bool:
+    with _jobs_lock:
+        return any(
+            j.get("kind") in _SCENARIO_JOB_KINDS
+            and j.get("scenario_id") == sid
+            and j.get("status") == "running"
+            for j in _jobs.values()
+        )
+
+
+def _submit_scenario(kind: str, label: str, sid: str, target, *args, **kwargs):
+    """Submit a long scenario operation, refusing to queue a second one on the
+    same scenario while the first is still running."""
+    if _scenario_busy(sid):
+        return JSONResponse(
+            {"error": f"scenario '{sid}' already has a running job — wait for it "
+                      "to finish or check /api/rkg/jobs"},
+            status_code=409)
+    job = _new_job(kind, label, target, *args, **kwargs)
+    with _jobs_lock:
+        job["scenario_id"] = sid
+    _persist_jobs()
+    return _job_view(job)
 
 
 def get_org() -> Organizer:
@@ -649,8 +722,8 @@ async def rkg_scenario_build(sid: str, data: dict = Body(default={})):
     wb = get_workbench()
     max_papers = data.get("max_papers")
     model = wb.config.resolve_model(data.get("model"))
-    return _submit("scenario_build", f"Build corpus: {sid}",
-                   wb.build_corpus, sid, max_papers=max_papers, model=model)
+    return _submit_scenario("scenario_build", f"Build corpus: {sid}", sid,
+                            wb.build_corpus, sid, max_papers=max_papers, model=model)
 
 
 @router.post("/api/rkg/scenarios/{sid}/synthesize")
@@ -661,8 +734,9 @@ async def rkg_scenario_synthesize(sid: str, data: dict = Body(default={})):
     wb = get_workbench()
     model = wb.config.resolve_model(data.get("model"))
     include = bool(data.get("include_experiments", False))
-    return _submit("scenario_synthesize", f"Synthesize report: {sid}",
-                   wb.run_synthesis, sid, include_experiments=include, model=model)
+    return _submit_scenario("scenario_synthesize", f"Synthesize report: {sid}", sid,
+                            wb.run_synthesis, sid, include_experiments=include,
+                            model=model)
 
 
 @router.post("/api/rkg/scenarios/{sid}/experiments")
@@ -673,8 +747,8 @@ async def rkg_scenario_experiments(sid: str, data: dict = Body(default={})):
     wb = get_workbench()
     model = wb.config.resolve_model(data.get("model"))
     top_n = data.get("top_n")
-    return _submit("scenario_experiments", f"Replication experiments: {sid}",
-                   wb.run_experiments, sid, top_n=top_n, model=model)
+    return _submit_scenario("scenario_experiments", f"Replication experiments: {sid}",
+                            sid, wb.run_experiments, sid, top_n=top_n, model=model)
 
 
 @router.post("/api/rkg/scenarios/{sid}/loop")
@@ -684,5 +758,5 @@ async def rkg_scenario_loop(sid: str, data: dict = Body(default={})):
         return err
     wb = get_workbench()
     model = wb.config.resolve_model(data.get("model"))
-    return _submit("scenario_loop", f"Full research loop: {sid}",
-                   wb.run_full_loop, sid, model=model)
+    return _submit_scenario("scenario_loop", f"Full research loop: {sid}", sid,
+                            wb.run_full_loop, sid, model=model)
