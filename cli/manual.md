@@ -14,6 +14,8 @@ fox manual          # this manual
 fox help            # subcommand help
 ```
 
+Full user guide with screenshots-style examples: `docs/CLI.md`.
+
 Point the CLI at a remote server with `FOX_URL`:
 
 ```

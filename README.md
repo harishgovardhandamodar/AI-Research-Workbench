@@ -109,8 +109,8 @@ fox manual                # the manual (or: fox manual <section>)
 ```
 
 Subcommands accept `--help`; run `fox` with no arguments for the interactive
-shell. Point it at a remote server with `FOX_URL` or `--url`. See `fox manual`
-or `cli/manual.md` for the full reference.
+shell. Point it at a remote server with `FOX_URL` or `--url`. Full user guide:
+[docs/CLI.md](docs/CLI.md), or `fox manual` / `cli/manual.md`.
 
 ## Run with Docker (persistent data)
 
