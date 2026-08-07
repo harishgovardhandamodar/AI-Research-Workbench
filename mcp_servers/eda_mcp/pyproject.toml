@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eda-mcp"
+version = "0.1.0"
+description = "Five MCP servers for Exploratory Data Analysis + automated report generation (local-only)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0",
+    "pandas>=1.5",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.2",
+    "matplotlib>=3.6",
+    "jinja2>=3.0",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain",
+    "langchain-mcp-adapters",
+    "langchain-openai",
+    "langgraph",
+]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+eda-profiler = "eda_mcp.profiler:main"
+eda-univariate = "eda_mcp.univariate:main"
+eda-multivariate = "eda_mcp.multivariate:main"
+eda-visualizer = "eda_mcp.visualizer:main"
+eda-report = "eda_mcp.report:main"
+
+[tool.setuptools]
+# NOTE: in the Fox repo this package lives at mcp_servers/eda_mcp and is run via
+# `python -m mcp_servers.eda_mcp.<server>`; the entry points above are for a
+# standalone install after copying the folder out as `eda-mcp/eda_mcp/`.
+packages = ["eda_mcp", "eda_mcp.common", "eda_mcp.langchain"]
+
+[tool.setuptools.package-data]
+eda_mcp = ["templates/*.j2"]
