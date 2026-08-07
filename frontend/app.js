@@ -3164,8 +3164,9 @@ function _separate(pos, n, minDist, W, H) {
     if (!moved) break;
   }
   for (const p of pos) {
-    p.x = Math.max(120, Math.min(W - 120, p.x));
-    p.y = Math.max(110, Math.min(H - 110, p.y));
+    p.x = Math.max(130, Math.min(W - 130, p.x));
+    // keep the top-most nodes (and their sub-node spokes/labels) clear of the header
+    p.y = Math.max(150, Math.min(H - 120, p.y));
   }
   return pos;
 }
@@ -3273,7 +3274,7 @@ function buildGraphSvg(metric, W, opts) {
     + `<text x="78" y="20" font-size="9" fill="#b98cff">● finding</text>`
     + `<text x="78" y="31" font-size="9" fill="#a974ff">● artifact</text></g>`;
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap; ring = experiment)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}"><title>spokes = tags · findings · artifacts · edge labels = similarity/overlap · ring = experiment</title>experiment graph — ${metric.replace(/_/g, " ")}</text>`;
   out += `</svg>`;
   const legend = expLegend();
   return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
