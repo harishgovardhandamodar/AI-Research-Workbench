@@ -111,6 +111,15 @@ report flow.
 - Plot/report generation writes into the shared workspace, which is why those
   tools ask for approval in the workbench chat (analysis tools are read-only).
 
+## Scope notes
+
+- Inputs: CSV, Parquet, Excel and JSON. A live SQL connector is not included yet
+  (pandas `read_sql` can be added behind `load_dataset` when a DSN is needed).
+- Plotting uses pure matplotlib (no seaborn/missingno dependency); adding a
+  `seaborn`-based style later is easy via the `_PLOT_BUILDERS` registry.
+- LLM narrative is rule-based unless `--llm`/`use_llm` is set, and even then it
+  only ever talks to a **local** model (`FOX_TOOL_BASE_URL` + `FOX_MODEL`).
+
 ## Tests
 
 ```bash
