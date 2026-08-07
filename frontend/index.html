@@ -584,8 +584,8 @@
       <span class="agent-title">Experiment branch history</span>
       <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
       <div class="branch-views">
-        <button class="branch-view-btn active" data-branchview="branches">Branches</button>
-        <button class="branch-view-btn" data-branchview="timeline">Timeline</button>
+        <button class="branch-view-btn" data-branchview="branches">Branches</button>
+        <button class="branch-view-btn active" data-branchview="timeline">Timeline</button>
         <button class="branch-view-btn" data-branchview="graph">Graph</button>
         <select id="branch-exp-filter" class="branch-metric" title="Experiment"></select>
         <select id="branch-metric" class="branch-metric" title="Metric"></select>
@@ -627,7 +627,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v76";
+  window.FOX_VER = "v77";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

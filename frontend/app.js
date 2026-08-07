@@ -4020,7 +4020,7 @@ if (auditEoOv) auditEoOv.addEventListener("click", (e) => {
 
 /* ===================== experiment branch history (git-flow) ===================== */
 
-let branchView = "branches";
+let branchView = "timeline";
 let branchExpChoice = null;  // explicit user choice; null = auto (active experiment)
 
 async function loadBranches() {

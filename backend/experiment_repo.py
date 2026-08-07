@@ -166,6 +166,28 @@ def ensure_repo(repo: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
+# Snapshot files under fox/ must never trigger Git-LFS: an LFS filter can be
+# undefined or broken (hosts without `git-lfs`, a repo whose filter.lfs.* is
+# unset, or a failing clean/smudge process), which makes `git add` abort the
+# whole experiment commit. A nested .gitattributes that un-sets the filter
+# attributes for the fox/ subtree overrides any repo-root LFS rules (deeper
+# attribute files take precedence), so snapshots always commit as plain files.
+LFS_OFF_ATTRIBUTES = "* -filter -diff -merge -text\n"
+
+
+def ensure_snapshot_lfs_off(repo: Path) -> None:
+    """Write <repo>/fox/.gitattributes so the snapshot subtree never triggers a
+    Git-LFS clean/smudge filter. Best-effort and idempotent."""
+    try:
+        attrs = repo / "fox" / ".gitattributes"
+        if attrs.exists() and attrs.read_text() == LFS_OFF_ATTRIBUTES:
+            return
+        attrs.parent.mkdir(parents=True, exist_ok=True)
+        attrs.write_text(LFS_OFF_ATTRIBUTES)
+    except OSError:
+        pass
+
+
 def _write_if_changed(path: Path, content: str) -> bool:
     """Write only when content differs, so unchanged snapshots don't dirty the
     worktree (and don't produce no-op commits)."""
@@ -284,6 +306,7 @@ def autocommit(rt, run: dict, experiments: list[dict] | None = None,
         ok, msg = ensure_repo(repo)
         if not ok:
             return {"ok": False, "message": msg}
+        ensure_snapshot_lfs_off(repo)
         snapshot_project(rt, repo, experiments)
         rel = "fox/"
         code, out = _git(repo, "add", "--", rel)
@@ -359,6 +382,7 @@ def commit_project(rt, message: str | None = None,
         ok, msg = ensure_repo(repo)
         if not ok:
             return {"ok": False, "message": msg}
+        ensure_snapshot_lfs_off(repo)
         snapshot_project(rt, repo, experiments)
         rel = "fox/"
         code, out = _git(repo, "add", "--", rel)

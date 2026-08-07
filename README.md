@@ -42,7 +42,23 @@ overlay (button next to the chat composer, or **⛙ Experiment branches** in the
 Experiments toolbar) renders the lineage as a branch timeline — nodes carry
 their **experiment parameters** (config + metrics), best runs are starred,
 branch tips are marked, and clicking a node shows its objective, summary,
-findings and review notes.
+findings and review notes. The overlay now opens on the **Timeline** view by
+default.
+
+**🏆 Best contender parameters** — every experiment surfaces its leading
+candidate: a per-experiment **leaderboard** ranks each run by the goal metric
+(🏆 best, Δ-vs-best deltas), the **best run is starred (★)** across the
+timeline, graph and branch views with its **experiment parameters** (config)
+shown inline, and **⇄ Compare vs best** (button in the run detail) diffs any
+run against the current best contender so you can see exactly which
+parameters changed.
+
+**🔧 Source-control & UX polish** — experiment commits/pushes are now
+**Git-LFS-safe**: the management repo ships a `fox/.gitattributes` that exempts
+snapshot files from LFS filters, so `git add`/`commit`/`push` no longer fail
+with `clean filter 'lfs' failed` on hosts without `git-lfs` installed. The
+light theme got a readability pass so **user bubbles keep readable light text**
+on their dark-green background.
 
 Also in this release: `.env` is now gitignored, and the audit CLI ships via the
 `audit` extras (`pip install -e ".[audit]"`).

@@ -217,6 +217,46 @@ class ExperimentRepoTests(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self.assertIn("experiments: testproj", res["message"])
 
+    def _break_lfs(self):
+        # Simulate a management repo whose root .gitattributes marks CSVs as
+        # Git-LFS while the LFS filter itself is missing/broken (as on a host
+        # without git-lfs installed). `git add` of a matching CSV then fails
+        # with "clean filter 'lfs' failed" unless the snapshot subtree is
+        # exempted from LFS.
+        (self.mgmt / ".gitattributes").write_text(
+            "*.csv filter=lfs diff=lfs merge=lfs -text\n")
+        _git(self.mgmt, "config", "filter.lfs.process", "this-lfs-command-is-missing")
+        _git(self.mgmt, "config", "filter.lfs.required", "true")
+        data_dir = self.proj / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "sample.csv").write_text("a,b\n1,2\n")
+
+    def test_commit_project_survives_broken_lfs_filter(self):
+        self._break_lfs()
+        res = er.commit_project(self.rt)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual((self.mgmt / "fox/.gitattributes").read_text(),
+                         er.LFS_OFF_ATTRIBUTES)
+        files = _git(self.mgmt, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertIn("fox/.gitattributes", files)
+        self.assertIn("fox/testproj/data/sample.csv", files)
+        self.assertEqual((self.mgmt / "fox/testproj/data/sample.csv").read_text(),
+                         "a,b\n1,2\n")
+
+    def test_autocommit_survives_broken_lfs_filter(self):
+        self._break_lfs()
+        run = self.store.get_run(self.rid)
+        res = er.autocommit(self.rt, run)
+        self.assertTrue(res["ok"], res)
+        log = _git(self.mgmt, "log", "--oneline", "-1")
+        self.assertIn("acc sweep", log)
+        # A follow-up commit with nothing new stays a no-op (LFS-off attributes
+        # are already in place, so git add keeps working).
+        before = _git(self.mgmt, "rev-parse", "HEAD").strip()
+        res = er.autocommit(self.rt, run)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(_git(self.mgmt, "rev-parse", "HEAD").strip(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

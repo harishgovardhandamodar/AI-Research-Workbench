@@ -1115,7 +1115,11 @@ html[data-theme="light"] .graph-modal { background: var(--bg-2); }
 html[data-theme="light"] .nb-tagchips .chip.active { background: var(--accent); color: #fff; }
 
 /* user bubbles stay a readable dark-green in both themes (light text inside) */
-html[data-theme="light"] .msg.user .msg-body { background: #0f5d55; border-color: #0f5d55; }
+html[data-theme="light"] .msg.user .msg-body { background: #0f5d55; border-color: #0f5d55; color: #eaf7f5; }
+html[data-theme="light"] .msg.user .msg-body h1,
+html[data-theme="light"] .msg.user .msg-body h2,
+html[data-theme="light"] .msg.user .msg-body h3,
+html[data-theme="light"] .msg.user .msg-body blockquote { color: #eaf7f5; }
 html[data-theme="light"] .msg.user .m-tag { color: #fff; }
 
 @media (prefers-color-scheme: light) {
