@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>EDA Report — {{ dataset_id }}</title>
+<style>
+body{max-width:900px;margin:2rem auto;padding:0 1rem;font-family:-apple-system,'Segoe UI',system-ui,sans-serif;line-height:1.55;color:#1b2230}
+h1,h2{border-bottom:1px solid #e3e6ee;padding-bottom:.25rem}
+h2{margin-top:2rem;color:#5b3fa0}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+td,th{border:1px solid #d7dbe7;padding:4px 9px;text-align:left}
+th{background:#f3f1fb}
+img{max-width:100%;border:1px solid #e0e3ec;border-radius:6px}
+.issue{font-size:.9rem}.k{font-weight:700}
+.muted{color:#6b7280}
+</style>
+</head>
+<body>
+<h1>EDA Report — {{ dataset_id }}</h1>
+<p class="muted">Generated {{ generated_at }} · {{ rows }} rows × {{ columns }} columns (~{{ memory_mb }} MB) · source: <code>{{ source }}</code></p>
+
+<h2>1. Executive Summary</h2>
+{{ executive_summary }}
+
+<h2>2. Dataset Overview</h2>
+<table>
+<tr><th>Rows</th><td>{{ rows }}</td></tr>
+<tr><th>Columns</th><td>{{ columns }}</td></tr>
+<tr><th>Memory</th><td>{{ memory_mb }} MB</td></tr>
+<tr><th>Duplicate rows</th><td>{{ profile.duplicate_rows }}</td></tr>
+</table>
+<p><b>Column types:</b> numeric {{ schema.column_types.numeric|length }} · categorical {{ schema.column_types.categorical|length }} · datetime {{ schema.column_types.datetime|length }} · boolean {{ schema.column_types.boolean|length }} · id-like {{ schema.column_types.id|length }} · constant {{ schema.column_types.constant|length }}.</p>
+<h3>Schema</h3>
+<table>
+<tr><th>Column</th><th>dtype</th><th>type</th><th>null %</th><th>unique</th></tr>
+{% for c in schema.columns %}
+<tr><td>{{ c.name }}</td><td>{{ c.dtype }}</td><td>{{ c.type }}</td><td>{{ c.null_pct }}</td><td>{{ c.unique_count }}</td></tr>
+{% endfor %}
+</table>
+
+<h2>3. Data Quality Assessment</h2>
+<h3>Issues</h3>
+<ul>
+{% for issue in quality.issues %}
+<li class="issue"><span class="k">[{{ issue.severity }}]</span> <code>{{ issue.type }}</code> ({{ issue.column }}): {{ issue.message }} — <i>{{ issue.suggestion }}</i></li>
+{% else %}
+<li>No issues detected.</li>
+{% endfor %}
+</ul>
+<h3>Missingness</h3>
+<table><tr><th>Column</th><th>Missing</th><th>%</th></tr>
+{% for m in missing.columns_with_missing %}<tr><td>{{ m.column }}</td><td>{{ m.missing }}</td><td>{{ m.pct }}</td></tr>{% endfor %}
+</table>
+
+<h2>4. Univariate Analysis</h2>
+<h3>Numeric columns</h3>
+<table><tr><th>Column</th><th>n</th><th>mean</th><th>median</th><th>std</th><th>skew</th><th>IQR out.</th></tr>
+{% for n in num_summary %}
+<tr><td>{{ n.column }}</td><td>{{ n.n }}</td><td>{{ n.mean|fmt }}</td><td>{{ n.median|fmt }}</td><td>{{ n.std|fmt }}</td><td>{{ n.skew }}</td><td>{{ (n.iqr_outliers or {}).get('count','—') }}</td></tr>
+{% endfor %}
+</table>
+<h3>Categorical columns</h3>
+<table><tr><th>Column</th><th>categories</th><th>mode</th><th>top-1 %</th><th>entropy (bits)</th></tr>
+{% for c in cat_summary %}
+<tr><td>{{ c.column }}</td><td>{{ c.cardinality }}</td><td>{{ c.mode }}</td><td>{{ c.dominate_top1_pct }}</td><td>{{ c.entropy_bits }}</td></tr>
+{% endfor %}
+</table>
+
+<h2>5. Multivariate Analysis</h2>
+{% if correlation %}
+<h3>Significant pairs ({{ correlation.method }})</h3>
+<ul>
+{% for p in correlation.significant_pairs %}
+<li>{{ p.col_a }} ↔ {{ p.col_b }}: r = {{ p.value }} ({{ p.strength }})</li>
+{% else %}
+<li>None above |r| ≥ 0.5.</li>
+{% endfor %}
+</ul>
+{% if correlation.potential_multicollinearity %}
+<p><b>Potential multicollinearity:</b> {% for m in correlation.potential_multicollinearity %}<code>{{ m.col_a }} ↔ {{ m.col_b }}</code> ({{ m.value }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}
+{% else %}
+<p>No numeric correlations computed (need at least two numeric columns).</p>
+{% endif %}
+
+<h2>6. Visual Insights</h2>
+{% for p in plots %}
+<figure>
+<img src="{{ p.plot_path | datauri }}" alt="{{ p.caption }}">
+<figcaption>{{ p.caption }}</figcaption>
+</figure>
+{% endfor %}
+
+<h2>7. Recommendations</h2>
+{{ recommendations }}
+
+<h2>8. Appendix</h2>
+<ul>
+<li>Methodology: automatic EDA via the five eda-mcp servers (pandas + numpy + scipy + scikit-learn + matplotlib).</li>
+<li>Quality issue count: {{ quality.issues | length }}.</li>
+<li>Report generated locally; narrative sections are rule-based (optionally written by a local LLM).</li>
+</ul>
+
+{% if custom_sections %}
+<h2>Custom Sections</h2>
+{% for s in custom_sections %}
+<h3>{{ s.title }}</h3>
+{{ s.content }}
+{% endfor %}
+{% endif %}
+</body>
+</html>
