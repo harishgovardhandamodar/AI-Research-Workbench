@@ -43,6 +43,17 @@ html, body {
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); display: inline-block; }
 .status-dot.ok { background: var(--ok); }
 .status-dot.busy { background: var(--warn); }
+.kernel-pill {
+  font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 10px;
+  border: 1px solid var(--border); color: var(--text-dim); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 5px; cursor: default;
+}
+.kernel-pill .kp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.kernel-pill.busy .kp-dot { background: var(--warn); animation: kp-pulse 1s ease-in-out infinite; }
+.kernel-pill.stopped .kp-dot { background: var(--danger); }
+.kernel-pill.remote { border-style: dashed; }
+@keyframes kp-pulse { 50% { opacity: .4; } }
+.kernel-status .finding { margin: 0 0 6px; }
 
 select, input, textarea {
   background: var(--bg-3); color: var(--text);

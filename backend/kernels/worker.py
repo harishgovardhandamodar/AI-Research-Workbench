@@ -4,7 +4,10 @@ stdin/stdout. State (variables, loaded modules, matplotlib figures) persists acr
 
 Protocol (line-delimited JSON on stdin -> same on stdout):
   request:  {"id": str, "op": "run_code"|"list_variables"|"get_env"|"reset"|"ping",
-             "code": str, "timeout": float}
+             "code": str, "timeout": float, "stream": bool}
+            When `stream` is true the worker emits output frames as the code runs:
+              {"frame": "output", "id": str, "text": str}
+            before the final response frame.
   response: {"id": str, "ok": bool, "output": str, "error": str,
              "figures": [b64png,...], "variables": {...}, "env": {...},
              "metrics": {name: value}}
@@ -210,11 +213,43 @@ def _alarm_handler(signum, frame):
     raise _Timeout("Kernel execution timed out")
 
 
-def run_code(ns: dict, code: str, timeout: float) -> dict:
+class _TeeStream:
+    """A write-through stream: buffers output AND forwards chunks to a callback,
+    so a headless kernel server can stream stdout to clients as code runs."""
+
+    def __init__(self, buffer, on_chunk):
+        self._buffer = buffer
+        self._on_chunk = on_chunk
+
+    def write(self, text):
+        self._buffer.write(text)
+        try:
+            self._on_chunk(text)
+        except Exception:  # noqa: BLE001
+            pass
+        return len(text)
+
+    def flush(self):
+        try:
+            self._buffer.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def writable(self):
+        return True
+
+    @property
+    def encoding(self):
+        return "utf-8"
+
+
+def run_code(ns: dict, code: str, timeout: float, on_chunk=None) -> dict:
     out = io.StringIO()
     err = io.StringIO()
     real_out, real_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
+    if on_chunk is not None:
+        sys.stdout = _TeeStream(out, on_chunk)
     old_handler = None
     try:
         old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
@@ -277,7 +312,24 @@ def main() -> None:
                     plt.close("all")
                 resp = {"ok": True, "variables": {}}
             elif op == "run_code":
-                resp = run_code(ns, req.get("code", ""), float(req.get("timeout", 30)))
+                stream = bool(req.get("stream"))
+                if stream:
+                    # Capture the real JSONL stdout *before* run_code swaps in the
+                    # tee stream, so output frames reach the parent channel
+                    # instead of looping back through the tee (infinite recursion).
+                    real_out = sys.stdout
+
+                    def on_chunk(text, _rid=rid, _out=real_out):
+                        _out.write(json.dumps(
+                            {"frame": "output", "id": _rid, "text": text}) + "\n")
+                        _out.flush()
+
+                    resp = run_code(ns, req.get("code", ""),
+                                    float(req.get("timeout", 30)),
+                                    on_chunk=on_chunk)
+                else:
+                    resp = run_code(ns, req.get("code", ""),
+                                    float(req.get("timeout", 30)))
             else:
                 resp = {"ok": False, "error": f"unknown op {op}"}
         except Exception as e:  # noqa: BLE001

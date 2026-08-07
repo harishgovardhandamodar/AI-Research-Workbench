@@ -39,6 +39,7 @@
     </div>
     <div class="topbar-right">
       <span id="conn-status" class="status-dot" title="Connection status"></span>
+      <span id="kernel-status" class="kernel-pill" title="Kernel status" hidden></span>
       <button id="side-toggle" class="btn subtle" title="Toggle side panel"></button>
       <button id="print-btn" class="btn subtle" title="Export this chat as PDF">Export PDF</button>
       <button id="theme-toggle" class="btn subtle" title="Toggle light / dark theme">🌓</button>
@@ -355,6 +356,7 @@
           <span class="pane-title">Python kernel (persistent)</span>
           <button id="kernel-reset-btn" class="btn subtle small">Reset</button>
         </div>
+        <div id="kernel-status-detail" class="kernel-status vlist"></div>
         <div id="kernel-vars" class="vlist"></div>
         <div class="pane-toolbar"><span class="pane-title">Environment</span></div>
         <div id="kernel-env" class="vlist"></div>

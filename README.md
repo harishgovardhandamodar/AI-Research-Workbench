@@ -8,6 +8,17 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
 ## What's New
 
+**🦊 Headless kernel server** — the persistent Python kernel now runs as a
+standalone app (`fox-kernel` / `python -m backend.kernels.server`) with a REST +
+WebSocket API for executing code, inspecting variables/env, resetting state and
+**streaming live execution status** (idle/busy, current code, pid, uptime) and
+stdout as code runs. The workbench connects through a **remote kernel client**
+(`make_kernel_manager(..., remote_url=...)` / `FOX_KERNEL_URL`), so execution
+can run on another host while the UI reflects its real status. The web app now
+shows a **kernel status pill** in the top bar plus a live status panel on the
+Kernel tab, and every kernel execution is recorded in the **audit trail**
+(`source=kernel`, busy/idle/output/reset events).
+
 **🛡 Local agent audit trail** — every agent tool call, MCP request, permission
 decision, network access and filesystem touch is now captured, **redacted** and
 **hash-chained** (SHA-256, tamper-evident) into SQLite + append-only JSONL per

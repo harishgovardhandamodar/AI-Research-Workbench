@@ -88,6 +88,9 @@ app.include_router(notebooks.router)
 from .routers.audit import router as audit_router
 
 app.include_router(audit_router)
+from .routers.kernel import router as kernel_router
+
+app.include_router(kernel_router)
 from .research_knowledge_graphs.router import router as rkg_router
 
 app.include_router(rkg_router)

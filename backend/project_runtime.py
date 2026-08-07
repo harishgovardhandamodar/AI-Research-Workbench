@@ -12,10 +12,11 @@ import asyncio
 import json
 import time
 
+from audit import AuditEvent
 from .agents.tools import ToolContext
 from .artifacts.store import ArtifactStore
 from .audit import ProjectDeviationScanner, make_audit
-from .kernels.manager import KernelManager
+from .kernels.manager import make_kernel_manager
 from .notebooks import NotebookService
 from .permissions import PermissionManager
 from .paths import PROJECTS_DIR
@@ -30,7 +31,7 @@ class ProjectRuntime:
         self.dir = PROJECTS_DIR / name
         self.store = ProjectStore(self.dir)
         self.artifacts = ArtifactStore(self.dir)
-        self.kernels = KernelManager(self.dir)
+        self.kernels = make_kernel_manager(self.dir)
         self.notebooks = NotebookService(self.dir, self.kernels.python)
         self.permissions = PermissionManager(self.store)
         self.lock = asyncio.Lock()
@@ -51,6 +52,54 @@ class ProjectRuntime:
         self.audit_store, self.audit_emitter = make_audit(self.dir)
         self.audit_scanner = ProjectDeviationScanner(self.audit_store)
         self.audit_emitter.start()
+        # Forward kernel lifecycle/execution events into the audit trail.
+        try:
+            self.kernels.python.subscribe(self._on_kernel_event)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_kernel_event(self, event: str, payload: dict):
+        if event not in ("busy", "idle", "output", "reset"):
+            return
+        if self.audit_emitter is None:
+            return
+        if event == "busy":
+            method, severity = "run_code", "info"
+            args = {"code": (payload.get("code") or "")[:2000]}
+            status = "running"
+        elif event == "idle":
+            method, severity = "run_code", "info"
+            args = {"ok": payload.get("last_ok")}
+            status = "ok" if payload.get("last_ok") is not False else "error"
+        elif event == "output":
+            method, severity = "output", "info"
+            args = {"text": (payload.get("text") or "")[:2000]}
+            status = "ok"
+        else:
+            method, severity = "reset", "warning"
+            args = {}
+            status = "ok"
+
+        ev = {
+            "agent_id": "kernel", "source": "kernel", "severity": severity,
+            "method": f"kernel.{method}", "tool_name": f"kernel.{event}",
+            "arguments_redacted": args,
+            "result_summary": AuditEvent.result_summary_for(status),
+            "duration_ms": payload.get("duration_ms"),
+            "tags": ["kernel", event],
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self._audit_emit(ev))
+        except RuntimeError:
+            pass
+
+    async def _audit_emit(self, ev: dict):
+        try:
+            await self.audit_emitter.emit(ev)
+        except Exception:  # noqa: BLE001
+            pass
 
     def ctx(self, emit, approval) -> ToolContext:
         return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
