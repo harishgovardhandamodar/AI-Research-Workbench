@@ -1,0 +1,110 @@
+# EDA Report — iris
+
+*Generated 2026-08-07 22:57 · 150 rows × 5 columns (~0.01 MB) · source: `<dataframe>`*
+
+## 1. Executive Summary
+
+This dataset has **150 rows and 5 columns** (~0.01 MB in memory). The profile found **1 data-quality issue(s)**, and the data is largely complete. The strongest associations are **petal length (cm) ↔ petal width (cm)** (r=0.963), **sepal length (cm) ↔ petal length (cm)** (r=0.872), **sepal length (cm) ↔ petal width (cm)** (r=0.818). Overall the data appears usable for further modeling; see the sections below for detail.
+
+## 2. Dataset Overview
+
+| Metric | Value |
+|---|---|
+| Rows | 150 |
+| Columns | 5 |
+| Memory | 0.01 MB |
+| Duplicate rows | 1 |
+
+**Column type counts:** numeric 4 ·
+categorical 1 · datetime
+0 · boolean
+0 · id-like
+0 · constant
+0.
+
+**Target candidates:** sepal length (cm), sepal width (cm), petal length (cm), petal width (cm).
+
+### Schema (per column)
+
+| Column | dtype | type | null % | unique |
+|---|---|---|---|---|
+| sepal length (cm) | float64 | numeric | 0.0 | 35 |
+| sepal width (cm) | float64 | numeric | 0.0 | 23 |
+| petal length (cm) | float64 | numeric | 0.0 | 43 |
+| petal width (cm) | float64 | numeric | 0.0 | 22 |
+| species | str | categorical | 0.0 | 3 |
+
+## 3. Data Quality Assessment
+
+### Issues
+- **[high] `duplicate_rows`** (*): 1 duplicate row(s) (0.7%). — *Consider drop_duplicates() before analysis.*
+
+### Missingness (columns with gaps)
+
+| Column | Missing | % |
+|---|---|---|
+
+**Completion:** 150 rows complete ·
+0 with ≥1 missing ·
+0 with ≥2 missing.
+
+## 4. Univariate Analysis
+
+### Numeric columns
+- **sepal length (cm)**: n=150, mean=5.8433, median=5.8, std=0.8281, skew=0.3117530585022963, IQR outliers 0 (0.0%) · normality: deviates from normal.
+- **sepal width (cm)**: n=150, mean=3.0573, median=3, std=0.4359, skew=0.3157671063389348, IQR outliers 4 (2.67%) · normality: likely normal.
+- **petal length (cm)**: n=150, mean=3.758, median=4.35, std=1.7653, skew=-0.2721276664567214, IQR outliers 0 (0.0%) · normality: deviates from normal.
+- **petal width (cm)**: n=150, mean=1.1993, median=1.3, std=0.7622, skew=-0.10193420656560036, IQR outliers 0 (0.0%) · normality: deviates from normal.
+
+### Categorical columns
+- **species**: 3 categories, mode `setosa`, top-1 share 33.33%, entropy 1.585 bits.
+
+## 5. Multivariate Analysis
+
+### Correlations (pearson)
+
+**Significant pairs:**
+- petal length (cm) ↔ petal width (cm): r = 0.963 (strong)
+- sepal length (cm) ↔ petal length (cm): r = 0.872 (strong)
+- sepal length (cm) ↔ petal width (cm): r = 0.818 (strong)
+
+**Potential multicollinearity (|r| > 0.8):** `sepal length (cm)` ↔ `petal length (cm)` (0.872), `sepal length (cm)` ↔ `petal width (cm)` (0.818), `petal length (cm)` ↔ `petal width (cm)` (0.963).
+
+## 6. Visual Insights
+
+![Histogram of `sepal width (cm)` (150 values, mean 3.0573). Right-skewed.](plots/auto_1_histogram.png)
+
+*Histogram of `sepal width (cm)` (150 values, mean 3.0573). Right-skewed.*
+
+![Histogram of `sepal length (cm)` (150 values, mean 5.8433). Right-skewed.](plots/auto_2_histogram.png)
+
+*Histogram of `sepal length (cm)` (150 values, mean 5.8433). Right-skewed.*
+
+![Histogram of `petal length (cm)` (150 values, mean 3.758). Left-skewed.](plots/auto_3_histogram.png)
+
+*Histogram of `petal length (cm)` (150 values, mean 3.758). Left-skewed.*
+
+![Top 3 categories of `species` by frequency (of 3 total); mode = setosa.](plots/auto_4_bar.png)
+
+*Top 3 categories of `species` by frequency (of 3 total); mode = setosa.*
+
+![Correlation heatmap of numeric columns (warm = positive, cool = negative).](plots/auto_5_correlation_heatmap.png)
+
+*Correlation heatmap of numeric columns (warm = positive, cool = negative).*
+
+
+## 7. Recommendations
+
+- **duplicate rows** (*): 1 duplicate row(s) (0.7%). — Consider drop_duplicates() before analysis.
+- **Feature engineering**: encode categoricals, consider interactions for the strongest correlated pairs, and drop constant/ID columns from the feature set.
+- **Modeling**: start with a simple baseline; use the numeric columns least collinear with each other to avoid multicollinearity.
+
+## 8. Appendix
+
+- **Methodology**: automatic EDA via the five eda-mcp servers (pandas + numpy +
+  scipy + scikit-learn + matplotlib). Missing numeric values median-imputed only
+  for PCA/clustering; correlations use pairwise-complete observations.
+- **Quality issue count**: 1.
+- **Report**: generated locally; narrative sections are rule-based (optionally
+  written by a local LLM).
+

@@ -125,6 +125,23 @@ leaderboard (rank, metric, Δ vs best) — `--metric m` overrides the goal metri
 Metric delta between two runs (value, Δ, %) plus a shared/increased/decreased
 summary.
 
+### `fox eda <dataset> [--format F] [--llm] [--html]`
+Run a full Exploratory Data Analysis on a local dataset or URL (CSV / Parquet /
+Excel / JSON) using the five `eda-mcp` servers, and compile a professional
+Markdown report (all-local; optional `--html` export). `--llm` lets a **local**
+model (`FOX_MODEL`) write the executive summary / recommendations; otherwise the
+narrative is rule-based. Prints the report path and executive summary.
+
+```
+fox eda data/titanic.csv            # Markdown report
+fox eda data/titanic.csv --html     # + self-contained HTML export
+fox eda https://…/iris.csv --llm    # local-LLM narrative
+fox eda data/titanic.csv --json     # machine-readable result
+```
+
+See `mcp_servers/eda_mcp/README.md` for the full EDA MCP suite and LangChain
+orchestration.
+
 ### `fox research`
 Scenario-driven autoresearch loops over a domain corpus.
 
