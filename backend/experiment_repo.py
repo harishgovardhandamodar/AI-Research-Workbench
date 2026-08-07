@@ -224,6 +224,24 @@ def _copy_dir_small(src: Path, dst: Path) -> list[str]:
     return copied
 
 
+def _prune_oversized(dst: Path) -> list[str]:
+    """Delete files in the mirror subtree that exceed the snapshot cap.
+
+    A single >100 MB file (GitHub's hard limit) breaks every later push, so any
+    oversized file that already made it into the management repo worktree is
+    removed here — ``git add -- fox/`` then stages the deletion. Returns the
+    removed repo-root-relative paths."""
+    removed: list[str] = []
+    for p in dst.rglob("*"):
+        if p.is_file() and p.stat().st_size > MAX_SNAPSHOT_FILE_BYTES:
+            try:
+                p.unlink()
+                removed.append(p.relative_to(dst.parent.parent).as_posix())
+            except OSError:
+                pass
+    return removed
+
+
 def _experiments_payload(rt) -> list[dict]:
     """Store reads happen on the event loop (SQLite connections are
     thread-bound); the returned payload is what gets snapshotted."""
@@ -264,6 +282,8 @@ def snapshot_project(rt, repo: Path, experiments: list[dict] | None = None) -> l
                 written.extend(_copy_dir_small(src, base / rel))
             except OSError:
                 pass
+    # A >100 MB file breaks every later push; make sure none linger in the mirror.
+    written.extend(_prune_oversized(base))
     return written
 
 
