@@ -209,6 +209,20 @@ The same commands work inside the interactive shell:
   fox > run <project> 8 report
 ```
 
+### `fox eda <dataset> [--format F] [--llm] [--html]`
+Exploratory Data Analysis + automated report: loads a CSV/Parquet/Excel/JSON
+dataset (local path or URL), profiles it, runs univariate/multivariate analysis,
+generates plots and compiles a professional **Markdown** report (optional HTML
+export). All-local; `--llm` writes the narrative with a **local** model
+(`FOX_MODEL`). Uses the `eda-mcp` suite (see
+`mcp_servers/eda_mcp/README.md`).
+
+```
+fox eda data/titanic.csv
+fox eda data/titanic.csv --html --llm
+fox eda data/titanic.csv --json
+```
+
 ### `fox research`
 Scenario-driven autoresearch loops over a domain corpus (Research Workbench).
 

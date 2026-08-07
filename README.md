@@ -149,6 +149,15 @@ Also in this release: `.env` is now gitignored, and the audit CLI ships via the
   Includes a standalone `agent-audit` CLI, a transparent **MCP proxy** for
   Claude Desktop / Cursor / custom hosts, and Python middleware (`@audit_tool`)
   for your own agents. See [docs/AUDIT-TRAIL.md](docs/AUDIT-TRAIL.md).
+- **📊 EDA MCP suite** — five focused MCP servers (data profiler, univariate,
+  multivariate, visualizer, report generator) that together profile any
+  dataset, analyse it, visualise it and compile a **professional EDA report**
+  (Markdown / HTML / PDF), with a shared `dataset_id` store and a **LangChain
+  orchestrator** — all **local-only** (optional narrative uses a local model).
+  Try it in chat ("run EDA on my dataset…") or from the CLI with
+  `fox eda <dataset>`. See
+  [mcp_servers/eda_mcp/README.md](mcp_servers/eda_mcp/README.md) and the
+  [Iris sample report](sample-reports/eda/iris/report.md).
 - **Built-in workflows** — privacy peer-exploitation / red-team / DP-robustness,
   and arXiv ingestion → knowledge graph → replication.
 
@@ -210,6 +219,7 @@ fox run <project> <id>    # single run detail  (… report = lab-notebook report
 fox experiments <proj>    # list experiments (… start, run-obfuscation)
 fox experiment <p> <id>   # experiment detail  (… ranking = leaderboard)
 fox compare <p> <a> <b>   # metric delta between two runs
+fox eda <dataset>        # exploratory data analysis + report (--llm local narrative)
 
 fox research list         # research scenarios
 fox research loop <sid>   # run a full autoresearch loop
@@ -329,6 +339,11 @@ Claude, Cursor or VS Code could use.
   expands their neighbourhood over the knowledge graphs, and returns an
   LLM-ready subgraph context; `graphrag__graphrag_answer_prompt` turns it into a
   provenance-citing answer prompt.
+- A built-in **EDA MCP suite** (`mcp_servers/eda_mcp/`) adds five servers —
+  `eda_profiler`, `eda_univariate`, `eda_multivariate`, `eda_visualizer`,
+  `eda_report` — that profile, analyse, visualise and report on any dataset
+  (shared `dataset_id` workspace, plots + Markdown/HTML/PDF reports). See
+  `mcp_servers/eda_mcp/README.md`.
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may

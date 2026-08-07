@@ -120,6 +120,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_compare.add_argument("run_a")
     p_compare.add_argument("run_b")
 
+    p_eda = sub.add_parser("eda", help="exploratory data analysis + report")
+    p_eda.add_argument("dataset", nargs="?", default=None,
+                       help="dataset path or URL (csv/parquet/excel)")
+    p_eda.add_argument("--format", default="auto",
+                       help="file format (auto|csv|parquet|excel|json)")
+    p_eda.add_argument("--llm", action="store_true",
+                       help="write narrative sections with a LOCAL model (FOX_MODEL)")
+    p_eda.add_argument("--html", action="store_true",
+                       help="also export the report as HTML")
+
     p_res = sub.add_parser("research", help="research scenarios + autoresearch")
     p_res.add_argument("action", nargs="?", default="list",
                        choices=["list", "status", "report",
@@ -191,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         "experiments": commands.cmd_experiments,
         "experiment": commands.cmd_experiment,
         "compare": commands.cmd_compare,
+        "eda": commands.cmd_eda,
         "research": commands.cmd_research,
         "graph": commands.cmd_graph,
         "papers": commands.cmd_papers,

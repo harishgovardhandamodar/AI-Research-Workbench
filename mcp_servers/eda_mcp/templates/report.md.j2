@@ -1,0 +1,129 @@
+# EDA Report — {{ dataset_id }}
+
+*Generated {{ generated_at }} · {{ rows }} rows × {{ columns }} columns (~{{ memory_mb }} MB) · source: `{{ source }}`*
+
+## 1. Executive Summary
+
+{{ executive_summary }}
+
+## 2. Dataset Overview
+
+| Metric | Value |
+|---|---|
+| Rows | {{ rows }} |
+| Columns | {{ columns }} |
+| Memory | {{ memory_mb }} MB |
+| Duplicate rows | {{ profile.duplicate_rows }} |
+
+**Column type counts:** numeric {{ schema.column_types.numeric | length }} ·
+categorical {{ schema.column_types.categorical | length }} · datetime
+{{ schema.column_types.datetime | length }} · boolean
+{{ schema.column_types.boolean | length }} · id-like
+{{ schema.column_types.id | length }} · constant
+{{ schema.column_types.constant | length }}.
+
+{% if profile.potential_id_columns %}
+**Potential ID columns:** {{ profile.potential_id_columns | join(", ") }}.
+{% endif %}
+{% if profile.target_candidates %}
+**Target candidates:** {{ profile.target_candidates | join(", ") }}.
+{% endif %}
+
+### Schema (per column)
+
+| Column | dtype | type | null % | unique |
+|---|---|---|---|---|
+{% for c in schema.columns %}
+| {{ c.name }} | {{ c.dtype }} | {{ c.type }} | {{ c.null_pct }} | {{ c.unique_count }} |
+{% endfor %}
+
+## 3. Data Quality Assessment
+
+### Issues
+{% for issue in quality.issues %}
+- **[{{ issue.severity }}] `{{ issue.type }}`** ({{ issue.column }}): {{ issue.message }} — *{{ issue.suggestion }}*
+{% else %}
+- No issues detected.
+{% endfor %}
+
+### Missingness (columns with gaps)
+
+| Column | Missing | % |
+|---|---|---|
+{% for m in missing.columns_with_missing %}
+| {{ m.column }} | {{ m.missing }} | {{ m.pct }} |
+{% endfor %}
+
+**Completion:** {{ missing.row_completion.rows_complete }} rows complete ·
+{{ missing.row_completion.rows_any_missing }} with ≥1 missing ·
+{{ missing.row_completion.rows_multiple_missing }} with ≥2 missing.
+{% if missing.top_missing_combos %}
+**Top missing-value combos:** {% for c in missing.top_missing_combos %}`{{ c.columns | join(" + ") }}` ({{ c.rows }} rows){% if not loop.last %}; {% endif %}{% endfor %}.
+{% endif %}
+
+## 4. Univariate Analysis
+
+### Numeric columns
+{% for n in num_summary %}
+- **{{ n.column }}**: n={{ n.n }}, mean={{ n.mean | fmt }}, median={{ n.median | fmt }}, std={{ n.std | fmt }}, skew={{ n.skew }}{% if n.iqr_outliers %}, IQR outliers {{ n.iqr_outliers.count }} ({{ n.iqr_outliers.pct }}%){% endif %}{% if n.normality %} · normality: {{ n.normality.verdict }}{% endif %}.
+{% endfor %}
+{% if distribution.notably_skewed %}
+**Notably skewed:** {% for s in distribution.notably_skewed %}`{{ s.column }}` (skew {{ s.skew }}){% if not loop.last %}, {% endif %}{% endfor %}.
+{% endif %}
+
+### Categorical columns
+{% for c in cat_summary %}
+- **{{ c.column }}**: {{ c.cardinality }} categories, mode `{{ c.mode }}`, top-1 share {{ c.dominate_top1_pct }}%, entropy {{ c.entropy_bits }} bits.
+{% endfor %}
+
+## 5. Multivariate Analysis
+
+{% if correlation %}
+### Correlations ({{ correlation.method }})
+
+**Significant pairs:**
+{% for p in correlation.significant_pairs %}
+- {{ p.col_a }} ↔ {{ p.col_b }}: r = {{ p.value }} ({{ p.strength }})
+{% else %}
+- None above |r| ≥ 0.5.
+{% endfor %}
+
+{% if correlation.potential_multicollinearity %}
+**Potential multicollinearity (|r| > 0.8):** {% for m in correlation.potential_multicollinearity %}`{{ m.col_a }}` ↔ `{{ m.col_b }}` ({{ m.value }}){% if not loop.last %}, {% endif %}{% endfor %}.
+{% endif %}
+{% else %}
+No numeric correlations computed (need at least two numeric columns).
+{% endif %}
+
+## 6. Visual Insights
+
+{% for p in plots %}
+![{{ p.caption }}]({{ p.plot_path | plotrel }})
+
+*{{ p.caption }}*
+
+{% endfor %}
+
+## 7. Recommendations
+
+{{ recommendations }}
+
+## 8. Appendix
+
+- **Methodology**: automatic EDA via the five eda-mcp servers (pandas + numpy +
+  scipy + scikit-learn + matplotlib). Missing numeric values median-imputed only
+  for PCA/clustering; correlations use pairwise-complete observations.
+- **Quality issue count**: {{ quality.issues | length }}.
+- **Report**: generated locally; narrative sections are rule-based (optionally
+  written by a local LLM).
+
+{% if custom_sections %}
+## Custom Sections
+
+{% for s in custom_sections %}
+### {{ s.title }}
+
+{{ s.content }}
+
+{% endfor %}
+{% endif %}
