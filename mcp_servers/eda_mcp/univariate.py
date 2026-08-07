@@ -180,7 +180,7 @@ def missing_patterns(store: DatasetStore, dataset_id: str) -> dict:
     }
 
 
-def distribution_summary(store: DatasetStore, dataset_id: str) -> dict:
+def distribution_summary_data(store: DatasetStore, dataset_id: str) -> dict:
     meta = store.get_meta(dataset_id)
     types = meta.get("col_types", {})
     df = store.get(dataset_id)
@@ -250,7 +250,7 @@ def missing_analysis(dataset_id: str) -> str:
 def distribution_summary(dataset_id: str) -> str:
     """Overall distribution diagnostics for all numeric and categorical columns."""
     try:
-        return json.dumps(utils.ok(**distribution_summary(_STORE, dataset_id)), default=str)
+        return json.dumps(utils.ok(**distribution_summary_data(_STORE, dataset_id)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

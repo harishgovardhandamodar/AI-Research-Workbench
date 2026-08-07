@@ -83,31 +83,37 @@ class DatasetStore:
         ]
 
     # ------------------------------------------------------------- load ----
-    def load(self, path_or_url: str, fmt: str = "auto",
+    def load(self, path_or_url: str | "Any", fmt: str = "auto",
              dataset_id: str | None = None) -> dict:
-        """Load a dataset, register it in the workspace and return an overview."""
-        df = utils.read_frame(path_or_url, fmt)
-        did = dataset_id or utils.dataset_id_for(path_or_url)
+        """Load a dataset (path, URL or an already-built DataFrame), register it
+        in the workspace and return an overview."""
+        if hasattr(path_or_url, "to_parquet"):  # already a DataFrame
+            df = path_or_url
+            source = "<dataframe>"
+        else:
+            df = utils.read_frame(path_or_url, fmt)
+            source = str(path_or_url)
+        did = dataset_id or utils.dataset_id_for(source)
         did = utils.slugify(did)
         frame_path = self.data_dir / f"{did}.parquet"
         try:
             df.to_parquet(frame_path, index=False)
         except Exception:
-            # pyarrow may be missing: persist to a feather/CSV fallback
+            # pyarrow may be missing: persist to a CSV fallback
             frame_path = self.data_dir / f"{did}.csv"
             df.to_csv(frame_path, index=False)
         meta = self._schema_meta(df)
         meta.update({
             "dataset_id": did,
-            "source": str(path_or_url),
+            "source": source,
             "created_at": time.time(),
             "frame_file": frame_path.name,
-            "is_url": str(path_or_url).lower().startswith(("http://", "https://")),
+            "is_url": source.lower().startswith(("http://", "https://")),
         })
         utils.json_dump(meta, self.meta_dir / f"{did}.json")
         with _index_lock(self._index_path()):
             idx = self._read_index()
-            idx[did] = {"source": str(path_or_url), "meta_file": f"{did}.json",
+            idx[did] = {"source": source, "meta_file": f"{did}.json",
                         "created_at": meta["created_at"]}
             self._write_index(idx)
         self._cache[did] = df

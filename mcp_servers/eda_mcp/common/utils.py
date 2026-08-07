@@ -87,7 +87,7 @@ def fmt_num(v: Any) -> str:
 def slugify(name: str) -> str:
     """A filesystem-safe slug from a file name (keeps dataset ids friendly)."""
     base = Path(name).stem.lower()
-    keep = "".join(c if c.isalnum() or c in "_-" else "_" for c in base)
+    keep = "".join(c if c.isalnum() else "_" for c in base)
     return keep.strip("_")[:48] or "dataset"
 
 
@@ -177,18 +177,18 @@ def infer_col_type(series: "Any", n_unique: int, n: int) -> str:
 
     if n == 0:
         return "empty"
+    if n_unique == 1:
+        return "constant"
     if pd.api.types.is_bool_dtype(series) or (n_unique == 2 and set(series.dropna().unique()) <= {True, False, 0, 1, "True", "False", "true", "false"}):
         return "boolean"
+    if pd.api.types.is_integer_dtype(series) and n_unique >= max(2, int(n * 0.95)) and n_unique >= ID_LIKE_MAX_UNIQUE:
+        return "id"
     if pd.api.types.is_numeric_dtype(series):
         return "numeric"
     if pd.api.types.is_datetime64_any_dtype(series):
         return "datetime"
     if pd.api.types.is_timedelta64_dtype(series):
         return "numeric"
-    if n_unique == 1:
-        return "constant"
-    if n_unique >= max(2, int(n * 0.95)) and n_unique >= ID_LIKE_MAX_UNIQUE:
-        return "id"
     return "categorical"
 
 

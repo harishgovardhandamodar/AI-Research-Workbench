@@ -282,7 +282,7 @@ def auto_visualize_plots(store: DatasetStore, dataset_id: str,
     return plots
 
 
-def extract_visual_insights(store: DatasetStore, plot_path: str) -> dict:
+def extract_visual_insights_data(store: DatasetStore, plot_path: str) -> dict:
     """Rule-based description of a generated plot (reads its sidecar caption)."""
     path = utils.safe_filename(plot_path).replace(".png", "")
     for d in store.plots_dir.iterdir():
@@ -325,7 +325,7 @@ def auto_visualize(dataset_id: str, max_plots: int = 12) -> str:
 def extract_visual_insights(plot_path: str) -> str:
     """Read the caption/description recorded for a generated plot path."""
     try:
-        return json.dumps(utils.ok(**extract_visual_insights(_STORE, plot_path)), default=str)
+        return json.dumps(utils.ok(**extract_visual_insights_data(_STORE, plot_path)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

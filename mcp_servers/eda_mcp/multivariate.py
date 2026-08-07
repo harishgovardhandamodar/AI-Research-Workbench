@@ -83,7 +83,7 @@ def correlation_data(store: DatasetStore, dataset_id: str, method: str = "pearso
     }
 
 
-def pairwise_plots_data(store: DatasetStore, dataset_id: str, columns) -> dict:
+def pairwise_plot_data(store: DatasetStore, dataset_id: str, columns) -> dict:
     df = store.get(dataset_id)
     if not columns:
         raise ValueError("columns is required for pairwise_plots_data")
@@ -217,7 +217,7 @@ def pca_data(store: DatasetStore, dataset_id: str, n_components: int = 5) -> dic
     }
 
 
-def clustering_preview(store: DatasetStore, dataset_id: str, method: str = "kmeans",
+def clustering_preview_data(store: DatasetStore, dataset_id: str, method: str = "kmeans",
                        max_k: int = 8) -> dict:
     import numpy as np  # lazy
     from sklearn.cluster import KMeans  # lazy
@@ -277,7 +277,7 @@ def pairwise_plots_data(dataset_id: str, columns: list) -> str:
     """Sampled points + summaries for scatter / hexbin / box plots between the
     given columns (numeric + categorical)."""
     try:
-        return json.dumps(utils.ok(**pairwise_plots_data(_STORE, dataset_id, columns)), default=str)
+        return json.dumps(utils.ok(**pairwise_plot_data(_STORE, dataset_id, columns)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -307,7 +307,7 @@ def clustering_preview(dataset_id: str, method: str = "kmeans", max_k: int = 8) 
     """Silhouette scores for k=2..max_k, best k, cluster sizes and per-cluster
     means of the top numeric columns."""
     try:
-        return json.dumps(utils.ok(**clustering_preview(_STORE, dataset_id, method, max_k)), default=str)
+        return json.dumps(utils.ok(**clustering_preview_data(_STORE, dataset_id, method, max_k)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 

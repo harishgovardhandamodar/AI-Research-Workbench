@@ -86,7 +86,7 @@ def _build_context(store: DatasetStore, dataset_id: str, use_llm: bool = False) 
     schema = profiler.schema_data(store, dataset_id)
     profile = profiler.profile_data(store, dataset_id)
     quality = profiler.quality_issues_data(store, dataset_id)
-    dist = univariate.distribution_summary(store, dataset_id)
+    dist = univariate.distribution_summary_data(store, dataset_id)
     missing = univariate.missing_patterns(store, dataset_id)
     num_cols = meta.get("col_types", {}).get("numeric", [])
     cat_cols = meta.get("col_types", {}).get("categorical", [])
@@ -183,7 +183,7 @@ def _rule_recommendations(facts: dict) -> str:
         "- Encode categoricals and normalize numerics before modeling.")
 
 
-def compile_report(store: DatasetStore, dataset_id: str, sections: list | None = None,
+def compile_report_impl(store: DatasetStore, dataset_id: str, sections: list | None = None,
                    fmt: str = "markdown", use_llm: bool = False) -> dict:
     ctx = _build_context(store, dataset_id, use_llm)
     if sections:
@@ -207,7 +207,7 @@ def compile_report(store: DatasetStore, dataset_id: str, sections: list | None =
     }
 
 
-def export_report(store: DatasetStore, report_id: str, fmt: str = "md") -> dict:
+def export_report_impl(store: DatasetStore, report_id: str, fmt: str = "md") -> dict:
     """Export an existing report. md/html are direct; pdf needs pandoc."""
     if fmt not in ("md", "markdown", "html", "pdf"):
         raise ValueError(f"unsupported format '{fmt}' (md|html|pdf)")
@@ -250,9 +250,20 @@ def compile_report(dataset_id: str, sections: list = None, format: str = "markdo
     sections (optional) filters to a subset; use_llm (False) lets a local model
     write the narrative sections."""
     try:
-        return json.dumps(utils.ok(**compile_report(_STORE, dataset_id, sections, format, use_llm)), default=str)
+        return json.dumps(utils.ok(**compile_report_impl(_STORE, dataset_id, sections, format, use_llm)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
+
+
+def _add_custom_section_impl(store: DatasetStore, report_id: str, title: str,
+                             content: str) -> dict:
+    ctx = utils.json_load(_report_sections_path(report_id))
+    if ctx is None:
+        raise FileNotFoundError(f"unknown report_id '{report_id}'")
+    custom = ctx.setdefault("custom_sections", [])
+    custom.append({"title": title, "content": content})
+    utils.json_dump(ctx, _report_sections_path(report_id))
+    return {"report_id": report_id, "sections_added": len(custom)}
 
 
 @mcp.tool()
@@ -260,13 +271,7 @@ def add_custom_section(report_id: str, title: str, content: str) -> str:
     """Append an agent-authored section to a compiled report (stored alongside
     the report, so it can be merged on the next export)."""
     try:
-        ctx = utils.json_load(_report_sections_path(report_id))
-        if ctx is None:
-            raise FileNotFoundError(f"unknown report_id '{report_id}'")
-        custom = ctx.setdefault("custom_sections", [])
-        custom.append({"title": title, "content": content})
-        utils.json_dump(ctx, _report_sections_path(report_id))
-        return json.dumps(utils.ok(report_id=report_id, sections_added=len(custom)), default=str)
+        return json.dumps(utils.ok(**_add_custom_section_impl(_STORE, report_id, title, content)), default=str)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -275,7 +280,7 @@ def add_custom_section(report_id: str, title: str, content: str) -> str:
 def export_report(report_id: str, format: str = "md") -> str:
     """Export a compiled report as md / html / pdf (pdf needs pandoc installed)."""
     try:
-        return json.dumps(utils.ok(**export_report(_STORE, report_id, format)), default=str)
+        return json.dumps(utils.ok(**export_report_impl(_STORE, report_id, format)), default=str)
     except Exception as e:  # noqa: BLE001
         return json.dumps(utils.err(str(e), recovery="Export markdown or html, or install pandoc for pdf."), default=str)
 

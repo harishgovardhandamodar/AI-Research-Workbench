@@ -47,7 +47,8 @@ def schema_data(store: DatasetStore, dataset_id: str) -> dict:
     ]
     return {
         "dataset_id": meta["dataset_id"],
-        "rows": meta["rows"], "columns": meta["columns"],
+        "rows": meta["rows"],
+        "column_count": meta["columns"],
         "memory_mb": meta.get("memory_mb"),
         "column_types": meta.get("col_types"),
         "columns": cols,
