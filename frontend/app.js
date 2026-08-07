@@ -1153,8 +1153,6 @@ async function testConnection() {
 async function loadProjects() {
   const r = await api("/api/projects");
   state.projects = r.projects || [];
-  const sel = $("project-select");
-  sel.innerHTML = state.projects.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
   if (!state.project) {
     const saved = localStorage.getItem("fox.project");
     state.project = state.projects.some((p) => p.name === saved) ? saved
@@ -1164,15 +1162,44 @@ async function loadProjects() {
       state.project = "default";
     }
   }
-  sel.value = state.project;
+  renderSessionList();
 }
+
+function renderSessionList() {
+  const cur = $("session-current");
+  if (cur) cur.textContent = state.project || "—";
+  const list = $("session-list");
+  if (!list) return;
+  list.innerHTML = state.projects.map((p) =>
+    `<button class="session-item${p.name === state.project ? " active" : ""}" data-session="${esc(p.name)}">`
+    + `<span class="session-item-ico">${p.name === state.project ? "▸" : "·"}</span>`
+    + `<span class="session-item-name">${esc(p.name)}</span></button>`
+  ).join("");
+  list.querySelectorAll(".session-item").forEach((el) =>
+    el.addEventListener("click", () => {
+      closeSessionMenu();
+      if (el.dataset.session !== state.project) switchProject(el.dataset.session);
+    })
+  );
+}
+
+function toggleSessionMenu(force) {
+  const menu = $("session-menu");
+  if (!menu) return;
+  const open = force !== undefined ? force : menu.classList.contains("hidden");
+  menu.classList.toggle("hidden", !open);
+  if (open) renderSessionList();
+}
+
+function closeSessionMenu() { toggleSessionMenu(false); }
 
 async function switchProject(name) {
   if (state.ws) state.ws.close();
   state.project = name;
   localStorage.setItem("fox.project", name);
-  const sel = $("project-select");
-  if (sel) sel.value = name;
+  const cur = $("session-current");
+  if (cur) cur.textContent = name;
+  renderSessionList();
   state.artifacts = [];
   $("messages").innerHTML = "";
   curAssistantEl = null;
@@ -1425,6 +1452,64 @@ function attachGraphControls(wrap, key, getSvg, W, H) {
   return ctrl;
 }
 
+// Draggable nodes: grab a node and the graph re-settles around it live, with
+// heavier (higher-weight) edges pulling their clusters together. Dragged
+// nodes are pinned (fx/fy) until the next Relayout.
+function attachGraphNodeDrag(wrap, getSvg, getNode) {
+  const st = { moved: false, raf: 0, id: null };
+  const toLocal = (e) => {
+    const svg = getSvg();
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  };
+  wrap.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const el = e.target.closest ? e.target.closest("[data-node]") : null;
+    if (!el) return;
+    const nd = getNode(el.dataset.node);
+    if (!nd) return;
+    e.preventDefault();
+    st.moved = false;
+    st.id = nd.id;
+    try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+    wrap.style.cursor = "grabbing";
+    const p = toLocal(e);
+    if (p) { nd.x = p.x; nd.y = p.y; nd.fx = p.x; nd.fy = p.y; graphRender(); }
+  });
+  wrap.addEventListener("pointermove", (e) => {
+    if (!st.id) return;
+    const nd = getNode(st.id);
+    if (!nd) return;
+    const p = toLocal(e);
+    if (!p) return;
+    if (!st.moved && Math.hypot(p.x - nd.fx, p.y - nd.fy) > 4) st.moved = true;
+    nd.x = p.x; nd.y = p.y; nd.fx = p.x; nd.fy = p.y;
+    if (!st.raf) {
+      st.raf = requestAnimationFrame(() => {
+        st.raf = 0;
+        graphStep(2);
+        graphRender();
+      });
+    }
+  });
+  const end = (didSettle) => {
+    if (!st.id) return;
+    const didMove = st.moved;
+    st.id = null;
+    wrap.style.cursor = "";
+    if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
+    if (didMove && didSettle) {
+      graphStep(80);
+      graphRender();
+    }
+  };
+  wrap.addEventListener("pointerup", () => end(true));
+  wrap.addEventListener("pointercancel", () => { st.moved = false; end(false); });
+  return st;
+}
+
 /* ===================== knowledge graph viewer ===================== */
 
 const GRAPH_TYPE_COLORS = {
@@ -1440,7 +1525,7 @@ const GRAPH_TYPE_COLORS = {
 const GRAPH_STATE = {
   gName: "", url: "", nodes: [], edges: [], byId: {}, typeOn: {},
   sel: null, zoom: 1, panX: 0, panY: 0,
-  vb: null, drag: null,
+  vb: null, drag: null, k: 0, w: 960, h: 520, weightStrength: 100,
 };
 
 function graphNodeLabel(n) {
@@ -1457,11 +1542,25 @@ function graphNodeColor(type) {
   return GRAPH_TYPE_COLORS[type] || "#6b4fb0";
 }
 
+// Edge weights drive the force layout: tighter relations (cites / extends /
+// improves / ...) pull their endpoints together more strongly than a loose
+// `related_to`. A per-edge `weight` in the graph JSON overrides this.
+const RELATION_WEIGHT = {
+  cites: 1.6, references: 1.6, extends: 1.5, improves: 1.5, nests: 1.5,
+  proposes: 1.4, introduces: 1.4, uses: 1.3, compares: 1.2, contrasts: 1.2,
+  related_to: 1.0,
+};
+
 function graphNormalize(g) {
   const nodes = (g.nodes || []).map((n) => ({ ...n, degree: 0 }));
   const edges = (g.edges || [])
     .filter((e) => e && e.source != null && e.target != null)
-    .map((e) => ({ source: e.source, target: e.target, relation: e.relation || "" }));
+    .map((e) => ({
+      source: e.source,
+      target: e.target,
+      relation: e.relation || "",
+      weight: e.weight != null ? Number(e.weight) || 1 : (RELATION_WEIGHT[e.relation] || 1),
+    }));
   const byId = {};
   for (const n of nodes) byId[n.id] = n;
   for (const e of edges) {
@@ -1471,7 +1570,15 @@ function graphNormalize(g) {
   return { nodes, edges, byId };
 }
 
-// Deterministic layout so a graph renders identically on every open.
+// Effective edge weight after applying the live "weight strength" slider.
+function graphEffWeight(w) {
+  const s = (GRAPH_STATE.weightStrength == null ? 100 : GRAPH_STATE.weightStrength) / 100;
+  return 1 + (w - 1) * s;
+}
+
+// Deterministic layout so a graph renders identically on every open. Edge
+// weights scale the spring attraction, and nodes pinned by dragging (fx/fy)
+// stay where they were dropped while the rest re-settles around them.
 function graphLayout(nodes, edges, w, h, byId, iters = 400) {
   const n = nodes.length;
   if (!n) return;
@@ -1481,45 +1588,66 @@ function graphLayout(nodes, edges, w, h, byId, iters = 400) {
     return seed / 2147483648;
   };
   const k = Math.sqrt((w * h) / Math.max(1, n)) * 1.4;
+  GRAPH_STATE.k = k; GRAPH_STATE.w = w; GRAPH_STATE.h = h;
   nodes.forEach((nd, i) => {
     const a = (i / Math.max(1, n)) * Math.PI * 2;
     const rad = Math.min(w, h) * 0.32;
-    nd.x = w / 2 + rad * Math.cos(a) + (rnd() - 0.5) * 20;
-    nd.y = h / 2 + rad * Math.sin(a) + (rnd() - 0.5) * 20;
+    nd.x = nd.fx != null ? nd.fx : w / 2 + rad * Math.cos(a) + (rnd() - 0.5) * 20;
+    nd.y = nd.fy != null ? nd.fy : h / 2 + rad * Math.sin(a) + (rnd() - 0.5) * 20;
     nd.vx = 0; nd.vy = 0;
   });
+  graphStep(iters);
+}
+
+// Run `iters` force-simulation steps over the current node positions, with
+// edge weights pulling endpoints together and dragged (pinned) nodes fixed.
+function graphStep(iters) {
+  const nodes = GRAPH_STATE.nodes;
+  const n = nodes.length;
+  if (!n) return;
+  const w = GRAPH_STATE.w || 960, h = GRAPH_STATE.h || 520;
+  const k = GRAPH_STATE.k || Math.sqrt((w * h) / n) * 1.4;
+  const visible = nodes.filter((nd) => GRAPH_STATE.typeOn[nd.type] !== false);
+  const vset = new Set(visible.map((nd) => nd.id));
+  const edges = GRAPH_STATE.edges.filter((e) => vset.has(e.source) && vset.has(e.target));
+  const pinned = (nd) => nd.fx != null && nd.fy != null;
   for (let it = 0; it < iters; it++) {
-    const temp = Math.max(0.04, 0.8 * (1 - it / iters));
-    // repulsion between every pair
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const a = nodes[i], b = nodes[j];
+    const temp = Math.max(0.04, 0.8 * (1 - it / Math.max(1, iters)));
+    // repulsion between every visible pair (pinned pairs stay put)
+    for (let i = 0; i < visible.length; i++) {
+      const a = visible[i];
+      for (let j = i + 1; j < visible.length; j++) {
+        const b = visible[j];
+        if (pinned(a) && pinned(b)) continue;
         let dx = a.x - b.x, dy = a.y - b.y;
         let d2 = dx * dx + dy * dy;
-        if (d2 < 0.01) { dx = rnd() - 0.5; dy = rnd() - 0.5; d2 = 0.01; }
+        if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.01; }
         const f = (k * k) / d2;
         const fx = dx / Math.sqrt(d2) * f;
         const fy = dy / Math.sqrt(d2) * f;
         a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
       }
     }
-    // spring attraction along edges
+    // weighted spring attraction along edges
     for (const e of edges) {
-      const a = byId[e.source], b = byId[e.target];
+      const a = GRAPH_STATE.byId[e.source], b = GRAPH_STATE.byId[e.target];
       if (!a || !b || a === b) continue;
+      const we = graphEffWeight(e.weight == null ? 1 : e.weight);
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const f = (d * d) / k;
-      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+      const f = (d * d) / k * we;
+      if (!pinned(a)) { a.vx += (dx / d) * f; a.vy += (dy / d) * f; }
+      if (!pinned(b)) { b.vx -= (dx / d) * f; b.vy -= (dy / d) * f; }
     }
     // gravity to keep the layout centred
-    for (const nd of nodes) {
+    for (const nd of visible) {
+      if (pinned(nd)) continue;
       nd.vx += (w / 2 - nd.x) * 0.008;
       nd.vy += (h / 2 - nd.y) * 0.008;
     }
     // integrate + clamp velocity
-    for (const nd of nodes) {
+    for (const nd of visible) {
+      if (pinned(nd)) continue;
       const vmax = temp * 2.2;
       const sp = Math.sqrt(nd.vx * nd.vx + nd.vy * nd.vy) || 1;
       const s = sp > vmax ? vmax / sp : 1;
@@ -1532,12 +1660,21 @@ function graphLayout(nodes, edges, w, h, byId, iters = 400) {
 function graphRerender() {
   const svg = $("graph-svg");
   if (!svg || !GRAPH_STATE.nodes.length) return;
-  const wrap = $("graph-svg-wrap");
-  const W = 960, H = 520;
   const visible = GRAPH_STATE.nodes.filter((n) => GRAPH_STATE.typeOn[n.type] !== false);
   const vset = new Set(visible.map((n) => n.id));
   const edges = GRAPH_STATE.edges.filter((e) => vset.has(e.source) && vset.has(e.target));
-  graphLayout(visible, edges, W, H, GRAPH_STATE.byId);
+  graphLayout(visible, edges, 960, 520, GRAPH_STATE.byId);
+  graphRender();
+}
+
+function graphRender() {
+  const svg = $("graph-svg");
+  if (!svg || !GRAPH_STATE.nodes.length) return;
+  const wrap = $("graph-svg-wrap");
+  const W = GRAPH_STATE.w || 960, H = GRAPH_STATE.h || 520;
+  const visible = GRAPH_STATE.nodes.filter((n) => GRAPH_STATE.typeOn[n.type] !== false);
+  const vset = new Set(visible.map((n) => n.id));
+  const edges = GRAPH_STATE.edges.filter((e) => vset.has(e.source) && vset.has(e.target));
 
   const showLabels = visible.length <= 90;
   const radius = (d) => Math.min(22, 7 + Math.sqrt(d.degree || 0) * 4);
@@ -1550,7 +1687,9 @@ function graphRerender() {
     if (!a || !b) continue;
     const isSel = selId === e.source || selId === e.target;
     const cls = isSel ? "gx-edge sel" : "gx-edge";
-    s += `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" marker-end="url(#gx-arrow)"><title>${esc(a.id)} —${esc(e.relation)}→ ${esc(b.id)}</title></line>`;
+    const we = graphEffWeight(e.weight == null ? 1 : e.weight);
+    const sw = (0.6 + we * 0.8).toFixed(2);
+    s += `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" marker-end="url(#gx-arrow)" style="stroke-width:${sw}px"><title>${esc(a.id)} —${esc(e.relation)}→ ${esc(b.id)} (weight ${we.toFixed(2)})</title></line>`;
   }
   const byId = GRAPH_STATE.byId;
   for (const n of visible) {
@@ -1585,7 +1724,7 @@ function graphSelect(id) {
         .map((e) => ({ id: e.source, relation: e.relation })),
     };
   }
-  graphRerender();
+  graphRender();
   graphRenderDetail();
 }
 
@@ -1635,7 +1774,7 @@ function renderGraphLegend() {
     b.addEventListener("click", () => {
       GRAPH_STATE.typeOn[t] = GRAPH_STATE.typeOn[t] === false ? true : false;
       renderGraphLegend();
-      graphRerender();
+      graphRender();
     });
     return b;
   };
@@ -1658,6 +1797,8 @@ function renderGraphViewer(g) {
   VIEW_ZOOM["graph-svg-wrap"] = null;
   GRAPH_STATE.typeOn = {};
   for (const n of GRAPH_STATE.nodes) GRAPH_STATE.typeOn[n.type] = true;
+  const ws = $("graph-weights");
+  if (ws) GRAPH_STATE.weightStrength = Number(ws.value);
   renderGraphLegend();
   graphRerender();
 }
@@ -1689,9 +1830,18 @@ function graphSetMinimized(min) {
 $("graph-export").addEventListener("click", () => {
   if (GRAPH_STATE.url) window.open(B(GRAPH_STATE.url), "_blank", "noopener");
 });
-$("graph-relayout").addEventListener("click", () => graphRerender());
+$("graph-relayout").addEventListener("click", () => {
+  GRAPH_STATE.nodes.forEach((nd) => { nd.fx = null; nd.fy = null; });
+  graphRerender();
+});
+$("graph-weights").addEventListener("input", (e) => {
+  GRAPH_STATE.weightStrength = Number(e.target.value);
+  graphStep(60);
+  graphRender();
+});
 $("graph-svg").addEventListener("click", (e) => {
   if (graphPan.drag && graphPan.drag.moved) { graphPan.drag.moved = false; return; }
+  if (graphDrag && graphDrag.moved) { graphDrag.moved = false; return; }
   const el = e.target.closest ? e.target.closest("[data-node]") : null;
   if (el) graphSelect(el.dataset.node);
   else graphSelect(null);
@@ -1700,6 +1850,7 @@ $("graph-svg").addEventListener("click", (e) => {
 const graphWrap = $("graph-svg-wrap");
 const graphPan = attachGraphPan(graphWrap, "graph-svg-wrap", () => $("graph-svg"), "[data-node]");
 attachGraphControls(graphWrap, "graph-svg-wrap", () => $("graph-svg"), 960, 520);
+const graphDrag = attachGraphNodeDrag(graphWrap, () => $("graph-svg"), (id) => GRAPH_STATE.byId[id]);
 
 function flatMode() {
   // Flat (plain bubbles) is the default; grouped sets are opt-in via ?sets=1.
@@ -1918,35 +2069,52 @@ $("messages").addEventListener("click", (e) => {
   if (!eid) return;
   focusExperiment(eid);
 });
-$("new-project-btn").addEventListener("click", async () => {
-  const name = prompt("New project name:");
+$("session-switch").addEventListener("click", (e) => { e.stopPropagation(); toggleSessionMenu(); });
+$("session-new").addEventListener("click", async () => {
+  const name = prompt("New session name:");
   if (!name) return;
   try {
     await api("/api/projects", { method: "POST", body: JSON.stringify({ name }) });
     await loadProjects();
     await switchProject(name);
+    closeSessionMenu();
   } catch (e) { toast(e.message); }
 });
-$("project-select").addEventListener("change", (e) => switchProject(e.target.value));
-$("fork-project-btn").addEventListener("click", async () => {
-  const name = prompt("Fork '" + state.project + "' as (new project name):", state.project + "-fork");
+$("session-fork").addEventListener("click", async () => {
+  const name = prompt("Fork '" + state.project + "' as (new session name):", state.project + "-fork");
   if (!name) return;
   try {
     const r = await api(`/api/projects/${encodeURIComponent(state.project)}/fork`,
                         { method: "POST", body: JSON.stringify({ name }) });
     await loadProjects();
     await switchProject(r.name);
-    toast("Forked project as '" + r.name + "'");
+    toast("Forked session as '" + r.name + "'");
+    closeSessionMenu();
   } catch (e) { toast(e.message); }
 });
-$("delete-project-btn").addEventListener("click", async () => {
-  if (!confirm(`Delete project '${state.project}'? This removes its messages, runs, artifacts and files.`)) return;
+$("session-del").addEventListener("click", async () => {
+  if (!confirm(`Delete session '${state.project}'? This removes its messages, runs, artifacts and files.`)) return;
   try {
     await api(`/api/projects/${encodeURIComponent(state.project)}`, { method: "DELETE" });
     await loadProjects();
     await switchProject(state.projects.length ? state.projects[0].name : "default");
-    toast("Project deleted");
+    toast("Session deleted");
+    closeSessionMenu();
   } catch (e) { toast(e.message); }
+});
+document.addEventListener("click", (e) => {
+  const ctrl = $("session-ctrl");
+  if (ctrl && !ctrl.contains(e.target)) closeSessionMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeSessionMenu();
+    const ov = $("branch-overlay");
+    if (ov && !ov.classList.contains("hidden")) {
+      ov.classList.add("hidden");
+      $("branch-toggle").classList.remove("active");
+    }
+  }
 });
 $("model-select").addEventListener("change", async (e) => {
   const cfg = JSON.parse(JSON.stringify(state.config || {}));
@@ -2830,7 +2998,9 @@ async function renderExpCompare() {
 
 // --------------------------------------------------------- timeline chart ----
 
-function buildTimelineSvg(metric, W) {
+function buildTimelineSvg(metric, W, opts) {
+  const visibleIds = (opts && opts.visibleIds) || null;
+  const inView = (id) => !visibleIds || visibleIds.has(id);
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
   const H = 340, padL = 48, padR = 16, padT = 30, padB = 44;
   const vals = nodes.map((n) => expNodeValue(n, metric));
@@ -2867,7 +3037,7 @@ function buildTimelineSvg(metric, W) {
   for (let k = 0; k <= 4; k++) {
     const v = min + span * k / 4, yy = y(v);
     out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="${cssVar("--chart-grid", "#332d44")}" stroke-width="0.5"></line>`;
-    out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="#9b93ab">${_fmtNum(v)}</text>`;
+    out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="${cssVar("--chart-muted", "#9b93ab")}">${_fmtNum(v)}</text>`;
   }
   // Goal lines.
   for (const g of goalLines) {
@@ -2876,16 +3046,19 @@ function buildTimelineSvg(metric, W) {
       + `<text x="${W - padR}" y="${gy - 5}" text-anchor="end" font-size="9.5" fill="${g.color}">goal ${esc(g.name)} ${_fmtNum(g.v)}</text></g>`;
   }
 
-  const pts = nodes.map((n, i) => vals[i] == null ? null : `${xs[i]},${y(vals[i])}`).filter(Boolean);
+  const pts = nodes.map((n, i) => (vals[i] == null || !inView(n.id))
+    ? null : `${xs[i]},${y(vals[i])}`).filter(Boolean);
   if (pts.length) {
     const linePts = pts.join(" ");
-    const area = `${xs[0]},${y(min)} ${linePts} ${xs[nodes.length - 1]},${y(min)}`;
+    const firstX = parseFloat(pts[0].split(",")[0]);
+    const lastX = parseFloat(pts[pts.length - 1].split(",")[0]);
+    const area = `${firstX},${y(min)} ${linePts} ${lastX},${y(min)}`;
     out += `<polygon points="${area}" fill="url(#tlfill)"></polygon>`;
     out += `<polyline points="${linePts}" fill="none" stroke="#a974ff" stroke-width="2" filter="drop-shadow(0 0 6px rgba(169,116,255,.5))"></polyline>`;
   }
 
   nodes.forEach((n, i) => {
-    if (vals[i] == null) return;
+    if (vals[i] == null || !inView(n.id)) return;
     const eid = n.experiment_id;
     const color = eid != null ? expColor(eid) : (n.fresh ? "#d29922" : "#b98cff");
     const sel = state.expSelected === n.id ? " selected" : "";
@@ -2903,7 +3076,7 @@ function buildTimelineSvg(metric, W) {
       + (isBest ? `<text y="-20" text-anchor="middle" font-size="10">★</text>` : "")
       + (sug ? `<text y="-28" text-anchor="middle" font-size="10">💡</text>` : "")
       + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">${_fmtNum(vals[i])}</text>`
-      + `<text y="22" text-anchor="middle" font-size="9" fill="#9b93ab">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
+      + `<text y="22" text-anchor="middle" font-size="9" fill="${cssVar("--chart-muted", "#9b93ab")}">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
   });
 
   out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
@@ -2997,15 +3170,22 @@ function _separate(pos, n, minDist, W, H) {
   return pos;
 }
 
-function buildGraphSvg(metric, W) {
+function buildGraphSvg(metric, W, opts) {
+  const visibleIds = (opts && opts.visibleIds) || null;
+  const inView = (id) => !visibleIds || visibleIds.has(id);
   const gnodes = (state.expGraph && state.expGraph.nodes) || [];
   const runs = state.expRuns || [];
   const edges = (state.expGraph && state.expGraph.edges) || [];
   const H = 580;
   if (!gnodes.length) return '<div class="empty">No runs yet.</div>';
+  // Resolve each node's run by id (robust to experiment/time-slice filtering);
+  // falls back to positional lookup for the unfiltered path.
+  const runById = {};
+  for (const r of runs) if (r && r.id != null) runById[r.id] = r;
   const nodes = gnodes.map((g, i) => ({
-    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runs[i] || {}, g,
+    id: g.id, seed: g.seed, fresh: g.fresh, index: i, run: runById[g.id] || runs[i] || {}, g,
   }));
+  const drawNodes = visibleIds ? nodes.filter((n) => inView(n.id)) : nodes;
   const vals = gnodes.map((n) => expNodeValue(n, metric));
   const present = vals.filter((v) => v != null);
   const vmin = present.length ? Math.min(...present) : 0;
@@ -3020,16 +3200,17 @@ function buildGraphSvg(metric, W) {
   for (const e of edges) {
     const a = byId[e.source], b = byId[e.target];
     if (a == null || b == null) continue;
+    if (!inView(e.source) || !inView(e.target)) continue;
     const sim = e.similarity || 0, ov = e.overlap || 0;
     const x1 = pos[a].x, y1 = pos[a].y, x2 = pos[b].x, y2 = pos[b].y;
     const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
     out += `<g class="exp-edge-wrap"><line class="exp-edge" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" `
       + `stroke-width="${(0.7 + sim * 3).toFixed(2)}" opacity="${(0.35 + sim * 0.45).toFixed(2)}"></line>`
-      + `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="8.5" fill="#9b93ab" paint-order="stroke" stroke="#0a0a0d" stroke-width="2.5">sim ${(sim * 100).toFixed(0)}% · ov ${(ov * 100).toFixed(0)}%</text></g>`;
+      + `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="8.5" fill="${cssVar("--chart-muted", "#9b93ab")}" paint-order="stroke" stroke="${cssVar("--chart-halo", "#0a0a0d")}" stroke-width="2.5">sim ${(sim * 100).toFixed(0)}% · ov ${(ov * 100).toFixed(0)}%</text></g>`;
   }
 
   // sub-node spokes (drawn under experiment nodes)
-  for (const n of nodes) {
+  for (const n of drawNodes) {
     const subs = expSubNodes(n.run);
     const R = 92;
     subs.forEach((s, i) => {
@@ -3042,7 +3223,8 @@ function buildGraphSvg(metric, W) {
   }
 
   // experiment nodes + sub-nodes
-  nodes.forEach((n, i) => {
+  drawNodes.forEach((n) => {
+    const i = n.index;
     const v = vals[i];
     const color = v == null ? "#9b93ab" : _metricColor(v, vmin, vmax);
     const ec = expColor(n.g.experiment_id);
@@ -3061,7 +3243,7 @@ function buildGraphSvg(metric, W) {
       + (isBest ? `<text y="-34" text-anchor="middle" font-size="11">★</text>` : "")
       + (sug ? `<text y="-46" text-anchor="middle" font-size="11">💡</text>` : "")
       + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">Run #${i + 1}</text>`
-      + `<text y="34" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
+      + `<text y="34" text-anchor="middle" font-size="9" fill="${cssVar("--chart-muted", "#9b93ab")}">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
     const subs = expSubNodes(n.run);
     const R = 92;
@@ -3074,19 +3256,19 @@ function buildGraphSvg(metric, W) {
         + `<circle r="6.5" fill="${s.color}" stroke="#19132b" stroke-width="1.2" filter="drop-shadow(0 0 5px ${s.color}aa)"></circle></g>`;
       // tiny visible label on the sub-node
       const lx = sx + Math.cos(a) * 14, ly = sy + Math.sin(a) * 14 + 3;
-      out += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="8" fill="${s.color}" opacity="0.95" paint-order="stroke" stroke="#0a0a0d" stroke-width="2">${esc(s.label)}</text>`;
+      out += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="8" fill="${s.color}" opacity="0.95" paint-order="stroke" stroke="${cssVar("--chart-halo", "#0a0a0d")}" stroke-width="2">${esc(s.label)}</text>`;
     });
   });
 
   // legend
   out += `<g transform="translate(${W - 290}, 12)">`
-    + `<text x="0" y="-4" font-size="9" fill="#9b93ab">${metric.replace(/_/g, " ")}</text>`;
+    + `<text x="0" y="-4" font-size="9" fill="${cssVar("--chart-muted", "#9b93ab")}">${metric.replace(/_/g, " ")}</text>`;
   for (let i = 0; i < 70; i++) {
     const t = i / 69;
     out += `<rect x="${i}" y="0" width="2" height="9" fill="${_metricColor(vmin + t * (vmax - vmin), vmin, vmax)}"></rect>`;
   }
-  out += `<text x="0" y="20" font-size="8.5" fill="#9b93ab">${_fmtNum(vmin)}</text>`
-    + `<text x="69" y="20" text-anchor="end" font-size="8.5" fill="#9b93ab">${_fmtNum(vmax)}</text>`
+  out += `<text x="0" y="20" font-size="8.5" fill="${cssVar("--chart-muted", "#9b93ab")}">${_fmtNum(vmin)}</text>`
+    + `<text x="69" y="20" text-anchor="end" font-size="8.5" fill="${cssVar("--chart-muted", "#9b93ab")}">${_fmtNum(vmax)}</text>`
     + `<text x="78" y="9" font-size="9" fill="#d29922">● tag</text>`
     + `<text x="78" y="20" font-size="9" fill="#b98cff">● finding</text>`
     + `<text x="78" y="31" font-size="9" fill="#a974ff">● artifact</text></g>`;
@@ -3131,6 +3313,13 @@ function switchMainView(view) {
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
+  const fab = $("branch-toggle");
+  if (fab) fab.classList.toggle("hidden", view !== "chat" && view !== "experiments");
+  const ov = $("branch-overlay");
+  if (ov && !ov.classList.contains("hidden")) {
+    ov.classList.add("hidden");
+    if (fab) fab.classList.remove("active");
+  }
   const app = document.getElementById("app");
   if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg" || view === "audit") {
     // maximize width: collapse the side panel for the expanded views
@@ -4022,6 +4211,10 @@ if (auditEoOv) auditEoOv.addEventListener("click", (e) => {
 
 let branchView = "timeline";
 let branchExpChoice = null;  // explicit user choice; null = auto (active experiment)
+let branchTimeIdx = null;    // runs revealed by the evolution slider; null = all
+let branchStatusFilter = ""; // "" | "ok" | "error"
+let branchCompact = true;    // collapse linear runs between forks
+let branchPlayInt = 0;       // evolution play interval (1 run / second)
 
 async function loadBranches() {
   const graphEl = $("branch-graph");
@@ -4107,35 +4300,83 @@ function filterGraphForExp(graph, eid) {
 }
 
 async function switchBranchView(view) {
+  const prev = branchView;
   branchView = view;
+  if (prev !== view) branchTimeIdx = null;  // fresh evolution scrub per view
   document.querySelectorAll(".branch-view-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.branchview === view));
   const metricSel = $("branch-metric");
   const expSel = $("branch-exp-filter");
   const showCharts = view !== "branches";
   if (metricSel) metricSel.style.display = showCharts ? "" : "none";
-  if (expSel) expSel.style.display = showCharts ? "" : "none";
+  if (expSel) expSel.style.display = "";
+  const filters = $("branch-filters");
+  if (filters) filters.style.display = "";   // evolution slider + status filter in all views
+  const compactBtn = $("branch-compact");
+  if (compactBtn) compactBtn.style.display = view === "branches" ? "" : "none";
   if (view === "branches") { renderBranchGraph(); return; }
   await loadBranchGraphData();
   populateBranchExpFilter();
-  const eid = $("branch-exp-filter").value || "";
+  populateBranchMetric();
+  renderBranchGraphView();
+}
+
+// Visible run ids for the evolution slider + status filter on the Graph view.
+// Orders graph nodes chronologically (started_at from the branches payload,
+// falling back to the graph's index), then reveals the first `branchTimeIdx`.
+function branchGraphVisibleIds(gnodes) {
+  const bmap = {};
+  for (const b of (state.branches && state.branches.nodes) || []) bmap[b.id] = b;
+  const ordered = gnodes.map((g, i) => ({
+    id: g.id, i,
+    st: (bmap[g.id] && bmap[g.id].started_at) || null,
+    status: (bmap[g.id] && bmap[g.id].status) || "",
+  }));
+  const statusOk = (r) => branchStatusFilter === "" ||
+    (branchStatusFilter === "error" ? r.status === "error" : r.status !== "error");
+  const filtered = ordered.filter(statusOk);
+  syncBranchTimeControls(filtered.length);
+  if (!filtered.length) return new Set();
+  filtered.sort((a, b) => (a.st - b.st) || (a.i - b.i));
+  const reveal = branchTimeIdx == null ? filtered.length
+    : Math.max(1, Math.min(filtered.length, branchTimeIdx));
+  const vis = new Set();
+  for (let k = 0; k < reveal; k++) vis.add(filtered[k].id);
+  return vis;
+}
+
+// Timeline / Graph branch views share the Experiments-panel builders; render
+// them here with the current experiment filter, metric and (graph-only)
+// evolution/status slice. Cheap enough to call on every slider input.
+function renderBranchGraphView() {
+  const eid = $("branch-exp-filter") ? $("branch-exp-filter").value : "";
   const graph = filterGraphForExp(state.expGraph, eid);
   const origGraph = state.expGraph;
   state.expGraph = graph;              // the builders read state.expGraph
-  populateBranchMetric();
   const el = $("branch-graph");
   if (!el) return;
-  const runs = state.expRuns || graph.nodes || [];
-  if (!runs.length) { state.expGraph = origGraph; el.innerHTML = '<div class="empty">No runs yet in this project.</div>'; return; }
+  const gnodes = graph.nodes || [];
+  if (!gnodes.length) { state.expGraph = origGraph; el.innerHTML = '<div class="empty">No runs yet in this project.</div>'; return; }
   const metric = state.branchMetric || "";
   const W = 1240;
-  const H = view === "timeline" ? 330 : 580;
-  el.innerHTML = view === "timeline" ? buildTimelineSvg(metric, W) : buildGraphSvg(metric, W);
+  const H = branchView === "timeline" ? 330 : 580;
+  let visibleIds = null;
+  if (branchView === "graph" || branchView === "timeline") {
+    visibleIds = branchGraphVisibleIds(gnodes);
+    if (visibleIds && !visibleIds.size) {
+      state.expGraph = origGraph;
+      el.innerHTML = '<div class="empty">No runs match the current filters.</div>';
+      return;
+    }
+  }
+  el.innerHTML = branchView === "timeline"
+    ? buildTimelineSvg(metric, W, { visibleIds })
+    : buildGraphSvg(metric, W, { visibleIds });
   state.expGraph = origGraph;
   const svg = el.querySelector("svg");
   if (svg) {
-    graphViewRestore(svg, "branch-" + view, W, H);
-    attachGraphControls(el, "branch-" + view, () => el.querySelector("svg"), W, H);
+    graphViewRestore(svg, "branch-" + branchView, W, H);
+    attachGraphControls(el, "branch-" + branchView, () => el.querySelector("svg"), W, H);
   }
   // clicking a run shows it in the detail pane (no full re-render)
   el.querySelectorAll(".exp-node").forEach((nd) => nd.addEventListener("click", () => {
@@ -4146,6 +4387,11 @@ async function switchBranchView(view) {
     el.querySelectorAll(".exp-node.selected").forEach((x) => x.classList.remove("selected"));
     nd.classList.add("selected");
   }));
+}
+
+function branchRerenderCurrent() {
+  if (branchView === "branches") { renderBranchGraph(); return; }
+  renderBranchGraphView();
 }
 
 document.querySelectorAll(".branch-view-btn").forEach((b) =>
@@ -4159,6 +4405,48 @@ const branchExpSel = $("branch-exp-filter");
 if (branchExpSel) branchExpSel.addEventListener("change", () => {
   branchExpChoice = $("branch-exp-filter").value;
   switchBranchView(branchView);
+});
+
+const branchStatusSel = $("branch-status-filter");
+if (branchStatusSel) branchStatusSel.addEventListener("change", (e) => {
+  branchStatusFilter = e.target.value;
+  branchRerenderCurrent();
+});
+const branchCompactBtn = $("branch-compact");
+if (branchCompactBtn) branchCompactBtn.addEventListener("click", () => {
+  branchCompact = !branchCompact;
+  branchCompactBtn.classList.toggle("active", branchCompact);
+  branchRerenderCurrent();
+});
+const branchTimeSel = $("branch-time");
+if (branchTimeSel) branchTimeSel.addEventListener("input", () => {
+  stopBranchPlay();
+  branchTimeIdx = Number(branchTimeSel.value);
+  branchRerenderCurrent();
+});
+const branchTimeFull = $("branch-time-full");
+if (branchTimeFull) branchTimeFull.addEventListener("click", () => {
+  stopBranchPlay();
+  branchTimeIdx = null;
+  branchRerenderCurrent();
+});
+const branchPlayBtn = $("branch-play");
+if (branchPlayBtn) branchPlayBtn.addEventListener("click", () => {
+  if (branchPlayInt) { stopBranchPlay(); return; }
+  const s = $("branch-time");
+  if (!s) return;
+  const max = Number(s.max);
+  let cur = Number(s.value);
+  if (cur >= max) cur = 1; // restart from the beginning
+  branchPlayBtn.textContent = "⏸";
+  branchPlayInt = setInterval(() => {
+    if (cur >= max) { stopBranchPlay(); return; }
+    cur += 1;                       // one run per second
+    branchTimeIdx = cur;
+    syncBranchTimeControls(max);
+    branchRerenderCurrent();
+    if (cur >= max) stopBranchPlay();
+  }, 1000);
 });
 
 function toggleBranches() {
@@ -4211,62 +4499,112 @@ function branchBestNodes(nodes) {
   return best;
 }
 
+function syncBranchTimeControls(len) {
+  const s = $("branch-time");
+  const lab = $("branch-time-label");
+  if (!s) return;
+  len = Math.max(1, len);
+  s.max = len;
+  const val = branchTimeIdx == null ? len : Math.max(1, Math.min(len, branchTimeIdx));
+  s.value = val;
+  if (lab) lab.textContent = `${val}/${len} runs`;
+}
+
+function stopBranchPlay() {
+  if (branchPlayInt) { clearInterval(branchPlayInt); branchPlayInt = 0; }
+  const p = $("branch-play");
+  if (p) p.textContent = "▶";
+}
+
 function renderBranchGraph() {
   const el = $("branch-graph");
   if (!el) return;
-  const { nodes, edges, experiments } = state.branches || {};
-  if (!nodes || !nodes.length) {
+  const { nodes: allNodes, edges: allEdges, experiments } = state.branches || {};
+  if (!allNodes || !allNodes.length) {
+    syncBranchTimeControls(0);
     el.innerHTML = '<div class="empty">No runs yet. Ask Fox to run an experiment in chat — each run becomes a node.</div>';
     return;
   }
-  const lane = assignBranchLanes(nodes, edges);
-  const best = branchBestNodes(nodes);
-  const sorted = [...nodes].sort(
-    (a, b) => (a.started_at || 0) - (b.started_at || 0) || (a.id - b.id));
+  // ensure the experiment filter is populated from the branches payload
+  const expSel = $("branch-exp-filter");
+  if (expSel && !expSel.options.length && (experiments || []).length) {
+    expSel.innerHTML = `<option value="">all experiments</option>` +
+      experiments.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+    const target = branchExpChoice !== null ? branchExpChoice
+      : (state.activeExperiment != null ? String(state.activeExperiment) : "");
+    expSel.value = [...expSel.options].some((o) => o.value === target) ? target : "";
+  }
+  // 1) filter by experiment + status, ordered chronologically (stable lanes)
+  const eid = $("branch-exp-filter") ? $("branch-exp-filter").value : "";
+  const filtered = allNodes.filter((n) =>
+    (!eid || String(n.experiment_id) === String(eid)) &&
+    (branchStatusFilter === "" ||
+     (branchStatusFilter === "error" ? n.status === "error" : n.status !== "error")))
+    .sort((a, b) => (a.started_at || 0) - (b.started_at || 0) || (a.id - b.id));
+  syncBranchTimeControls(filtered.length);
+  if (!filtered.length) {
+    el.innerHTML = '<div class="empty">No runs match the current filters.</div>';
+    return;
+  }
+  // 2) time slice from the evolution slider
+  const reveal = branchTimeIdx == null ? filtered.length
+    : Math.max(1, Math.min(filtered.length, branchTimeIdx));
+  const visible = filtered.slice(0, reveal);
+  // 3) stable lanes over the filtered set (scrubbing doesn't jitter)
+  const fset = new Set(filtered.map((n) => n.id));
+  const fedges = (allEdges || []).filter((e) => fset.has(e.parent) && fset.has(e.child));
+  const lane = assignBranchLanes(filtered, fedges);
+  const best = branchBestNodes(allNodes);
+  const parentOf = {};
+  const childrenOf = {};
+  for (const e of allEdges || []) {
+    parentOf[e.child] = e.parent;
+    (childrenOf[e.parent] = childrenOf[e.parent] || []).push(e.child);
+  }
   const rowH = 56, laneW = 150, padL = 14, padT = 26;
   const nLanes = Math.max(1, ...Object.values(lane)) + 1;
   const W = padL + nLanes * laneW + 220;
-  const H = padT + sorted.length * rowH + 24;
+  const H = padT + filtered.length * rowH + 24;
   const cx = (l) => padL + l * laneW + laneW / 2;
   const cy = (i) => padT + i * rowH + rowH / 2;
   const pos = {};
-  sorted.forEach((n, i) => { pos[n.id] = { x: cx(lane[n.id]), y: cy(i) }; });
-  firstOfExp = {};
-  sorted.forEach((n) => {
-    if (n.experiment_id != null && firstOfExp[n.experiment_id] === undefined)
-      firstOfExp[n.experiment_id] = n;
-  });
-  const parentOf = {};
-  for (const e of edges || []) parentOf[e.child] = e.parent;
-  const childrenOf = {};
-  for (const e of edges || []) (childrenOf[e.parent] = childrenOf[e.parent] || []).push(e.child);
-  const tipOf = {};
-  (state.branches.tips || []).forEach((t) => { tipOf[t] = true; });
+  filtered.forEach((n, i) => { pos[n.id] = { x: cx(lane[n.id]), y: cy(i) }; });
+  // 4) edges to draw
+  const vset = new Set(visible.map((n) => n.id));
+  let drawEdges;
+  if (branchCompact) {
+    // skeleton: each visible node connects to its nearest visible ancestor
+    const up = [];
+    for (const n of visible) {
+      let p = parentOf[n.id];
+      while (p !== undefined && !vset.has(p)) p = parentOf[p];
+      if (p !== undefined) up.push({ parent: p, child: n.id });
+    }
+    drawEdges = up;
+  } else {
+    drawEdges = (allEdges || []).filter((e) => vset.has(e.parent) && vset.has(e.child));
+  }
+  const hasVisibleChild = new Set();
+  for (const e of drawEdges) hasVisibleChild.add(e.parent);
 
+  // 5) svg
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px">`;
-
-  // edges (drawn underneath nodes)
-  for (const e of edges || []) {
+  for (const e of drawEdges) {
     const p = pos[e.parent], c = pos[e.child];
     if (!p || !c) continue;
     const same = lane[e.parent] === lane[e.child];
-    let d;
-    if (same) {
-      d = `M ${p.x} ${p.y + 9} L ${c.x} ${c.y - 9}`;
-    } else {
-      const ym = (p.y + c.y) / 2;
-      d = `M ${p.x} ${p.y + 9} L ${p.x} ${ym} L ${c.x} ${ym} L ${c.x} ${c.y - 9}`;
-    }
+    const d = same
+      ? `M ${p.x} ${p.y + 9} L ${c.x} ${c.y - 9}`
+      : `M ${p.x} ${p.y + 9} L ${p.x} ${(p.y + c.y) / 2} L ${c.x} ${(p.y + c.y) / 2} L ${c.x} ${c.y - 9}`;
     svg += `<path class="branch-edge" d="${d}"></path>`;
   }
-
-  // nodes
-  sorted.forEach((n, i) => {
+  const showLabels = visible.length <= 40;
+  visible.forEach((n) => {
     const x = pos[n.id].x, y = pos[n.id].y;
     const color = n.experiment_id != null ? expColor(n.experiment_id) : "#9b93ab";
     const sel = state.branchSelected === n.id ? " selected" : "";
     const isBest = best[n.experiment_id] && best[n.experiment_id].id === n.id;
-    const isTip = tipOf[n.id];
+    const isTip = !hasVisibleChild.has(n.id);
     const failed = n.status === "error";
     const children = (childrenOf[n.id] || []).length;
     const tipText = `run #${n.id} · ${n.label || ""}\n${n.experiment_name ? "experiment: " + n.experiment_name : ""}\n` +
@@ -4278,31 +4616,31 @@ function renderBranchGraph() {
       + (isTip ? `<circle r="15" fill="none" stroke="${color}" stroke-dasharray="3 3" opacity=".5"></circle>` : "")
       + `<circle r="9" fill="${color}" stroke-dasharray="${failed ? "3 2" : "0"}" stroke="#e06c6c"></circle>`
       + (isBest ? `<text y="-12" text-anchor="middle" font-size="11">★</text>` : "")
-      + `<text x="14" y="4" class="branch-label">#${esc(n.id)} ${esc((n.label || n.kind || "").slice(0, 26))}</text>`
+      + (showLabels ? `<text x="14" y="4" class="branch-label">#${esc(n.id)} ${esc((n.label || n.kind || "").slice(0, 26))}</text>` : "")
       + `</g>`;
   });
-
-  // experiment lane headers (experiment name at top of its lane)
-  const expStartRow = {};
-  sorted.forEach((n, i) => {
-    if (n.experiment_id != null && expStartRow[n.experiment_id] === undefined)
-      expStartRow[n.experiment_id] = { y: cy(i), name: n.experiment_name };
+  // experiment lane headers for experiments that have visible nodes
+  const expVisible = {};
+  visible.forEach((n) => {
+    if (n.experiment_id != null && expVisible[n.experiment_id] === undefined)
+      expVisible[n.experiment_id] = n;
   });
-  for (const eid in expStartRow) {
-    const info = expStartRow[eid];
-    svg += `<text x="${cx(lane[firstOfExp[eid].id])}" y="${padT - 8}" text-anchor="middle" font-size="11" font-weight="700" fill="${expColor(eid)}">${esc(info.name || "experiment")}</text>`;
+  for (const eid2 in expVisible) {
+    const n = expVisible[eid2];
+    svg += `<text x="${pos[n.id].x}" y="${padT - 8}" text-anchor="middle" font-size="11" font-weight="700" fill="${expColor(eid2)}">${esc(n.experiment_name || "experiment")}</text>`;
   }
-
   svg += `</svg>`;
 
-  // legend
+  // 6) legend + count
   const leg = $("branch-legend");
   if (leg) {
-    leg.innerHTML = (experiments || []).map((e) =>
+    const shownExps = [...new Set(visible.map((n) => n.experiment_id).filter((x) => x != null))];
+    const legExps = (experiments || []).filter((e) => shownExps.includes(e.id));
+    leg.innerHTML = legExps.map((e) =>
       `<span class="exp-legend-item"><span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}`
       + (e.goal_metric ? ` <span class="muted">(goal ${esc(e.goal_metric)}${e.goal_target != null ? " → " + e.goal_target : ""})</span>` : "")
       + ` · ${e.run_count} run(s)</span>`).join("")
-      + `<span class="exp-legend-item muted">★ best · ⦿ branch tip · dashed = failed</span>`;
+      + `<span class="exp-legend-item muted">${visible.length}/${filtered.length} runs shown · ★ best · ⦿ branch tip · dashed = failed</span>`;
   }
 
   el.innerHTML = svg;
@@ -4313,9 +4651,6 @@ function renderBranchGraph() {
       showBranchDetail(state.branchSelected);
     }));
 }
-
-// first node per experiment (for lane headers)
-let firstOfExp = {};
 
 function showBranchDetail(id) {
   const el = $("branch-detail");
@@ -4406,12 +4741,12 @@ function fmtVal(v) {
 $("branch-toggle").addEventListener("click", toggleBranches);
 const quickBranches = $("quick-branches");
 if (quickBranches) quickBranches.addEventListener("click", toggleBranches);
-const expBranches = $("exp-branches");
-if (expBranches) expBranches.addEventListener("click", toggleBranches);
 $("branch-close").addEventListener("click", () => {
   $("branch-overlay").classList.add("hidden");
   $("branch-toggle").classList.remove("active");
 });
+const branchChat = $("branch-chat");
+if (branchChat) branchChat.addEventListener("click", () => switchMainView("chat"));
 $("branch-refresh").addEventListener("click", loadBranches);
 
 // Resizable split: drag the divider to widen the description/summary pane.

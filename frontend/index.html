@@ -24,26 +24,39 @@
     <div class="brand">🦊 <span>Fox</span><span class="brand-sub">Experiment workbench</span></div>
     <div class="topbar-center">
       <div class="mainview-tabs">
-        <button id="mainview-chat" class="mainview-btn active" data-mainview="chat">Chat</button>
-        <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments">Experiments</button>
-        <button id="mainview-agent" class="mainview-btn" data-mainview="agent">Agent</button>
-        <button id="mainview-editor" class="mainview-btn" data-mainview="editor">Editor</button>
-        <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg">Knowledge Graphs</button>
-        <button id="mainview-audit" class="mainview-btn" data-mainview="audit">Audit Trail</button>
+        <button id="mainview-chat" class="mainview-btn active" data-mainview="chat" title="Chat">💬 Chat</button>
+        <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments" title="Experiments">🧪 Experiments</button>
+        <button id="mainview-agent" class="mainview-btn" data-mainview="agent" title="Agent">🤖 Agent</button>
+        <button id="mainview-editor" class="mainview-btn" data-mainview="editor" title="Editor">🖊 Editor</button>
+        <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg" title="Knowledge Graphs">🕸 Graphs</button>
+        <button id="mainview-audit" class="mainview-btn" data-mainview="audit" title="Audit Trail">🛡 Audit</button>
       </div>
-      <select id="project-select" title="Project"></select>
-      <button id="new-project-btn" class="btn subtle" title="New project">+</button>
-      <button id="fork-project-btn" class="btn subtle" title="Fork this project into a new session">⧉</button>
-      <button id="delete-project-btn" class="btn subtle" title="Delete this project">✕</button>
+      <div id="session-ctrl" class="session-ctrl" title="Sessions">
+        <button id="session-switch" class="session-switch" title="Switch session">
+          <span class="session-ico">🗂</span>
+          <span id="session-current" class="session-current">—</span>
+          <span class="session-caret">▾</span>
+        </button>
+        <div id="session-menu" class="session-menu hidden">
+          <div class="session-head">
+            <span class="session-title">Sessions</span>
+            <span class="spacer"></span>
+            <button id="session-new" class="session-act" title="New session">＋</button>
+            <button id="session-fork" class="session-act" title="Fork this session">⧉</button>
+            <button id="session-del" class="session-act danger" title="Delete this session">🗑</button>
+          </div>
+          <div id="session-list" class="session-list"></div>
+        </div>
+      </div>
       <select id="model-select" title="Model"></select>
     </div>
     <div class="topbar-right">
       <span id="conn-status" class="status-dot" title="Connection status"></span>
       <span id="kernel-status" class="kernel-pill" title="Kernel status" hidden></span>
       <button id="side-toggle" class="btn subtle" title="Toggle side panel"></button>
-      <button id="print-btn" class="btn subtle" title="Export this chat as PDF">Export PDF</button>
+      <button id="print-btn" class="btn subtle" title="Export this chat as PDF">🖨</button>
       <button id="theme-toggle" class="btn subtle" title="Toggle light / dark theme">🌓</button>
-      <button id="settings-btn" class="btn subtle">Settings</button>
+      <button id="settings-btn" class="btn subtle" title="Settings">⚙</button>
     </div>
   </header>
 
@@ -61,9 +74,6 @@
         <select id="exp-metric-main" title="Metric"></select>
         <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
         <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
-        <button id="exp-branches" class="btn subtle small" title="Experiment branch history (git-flow)">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg> Branches
-        </button>
         <span class="spacer"></span>
         <span class="muted exp-hint">Timeline = evolution · Graph = similarity edges · click a node for details · ⇄ Compare = click two runs</span>
       </div>
@@ -324,10 +334,6 @@
         <button id="stop-btn" class="btn danger hidden" title="Stop generating">Stop</button>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
       </div>
-      <button id="branch-toggle" class="branch-fab" title="Experiment branch history (git-flow)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg>
-        <span>Branches</span>
-      </button>
     </section>
 
     <aside id="side-panel" class="scroll">
@@ -398,7 +404,58 @@
         <div id="approval-list" class="vlist"></div>
       </div>
     </aside>
+
+    <!-- Experiment branch history (git-flow), rendered at chat's size in the main area -->
+    <div id="branch-overlay" class="branch-overlay hidden">
+      <div class="branch-overlay-box">
+        <div class="branch-head">
+          <span class="agent-title">Experiment branch history</span>
+          <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
+          <div class="branch-views">
+            <button class="branch-view-btn" data-branchview="branches">Branches</button>
+            <button class="branch-view-btn active" data-branchview="timeline">Timeline</button>
+            <button class="branch-view-btn" data-branchview="graph">Graph</button>
+            <select id="branch-exp-filter" class="branch-metric" title="Experiment"></select>
+            <select id="branch-metric" class="branch-metric" title="Metric"></select>
+          </div>
+          <span class="spacer"></span>
+          <button id="branch-refresh" class="btn subtle small">Refresh</button>
+          <button id="branch-chat" class="mainview-btn" title="Back to chat">💬 Chat</button>
+          <button id="branch-close" class="btn subtle">✕</button>
+        </div>
+        <div id="branch-filters" class="branch-filters">
+          <div class="branch-filter-group">
+            <span class="bf-label">evolution</span>
+            <button id="branch-play" class="btn subtle small" title="Play run-by-run evolution (1 second per run)">▶</button>
+            <input id="branch-time" type="range" min="1" max="1" value="1">
+            <span id="branch-time-label" class="bf-time">1/1 runs</span>
+            <button id="branch-time-full" class="btn subtle small" title="Reveal all runs">All</button>
+          </div>
+          <div class="branch-filter-group">
+            <span class="bf-label">status</span>
+            <select id="branch-status-filter" class="branch-metric" title="Only show runs with this status">
+              <option value="">all statuses</option>
+              <option value="ok">successful</option>
+              <option value="error">failed</option>
+            </select>
+          </div>
+          <button id="branch-compact" class="btn subtle small active" title="Collapse linear runs between forks to reduce clutter">🌲 Compact</button>
+        </div>
+        <div class="branch-body">
+          <div id="branch-legend" class="branch-legend"></div>
+          <div class="branch-main">
+            <div id="branch-graph" class="branch-graph scroll"></div>
+            <div id="branch-resizer" class="branch-resizer" title="Drag to resize detail pane"></div>
+            <div id="branch-detail" class="branch-detail scroll"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
+  <button id="branch-toggle" class="branch-fab" title="Experiment branch history (git-flow)">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg>
+    <span>Branches</span>
+  </button>
 </div>
 
 <!-- Artifact modal -->
@@ -539,7 +596,10 @@
     <div class="modal-head">
       <h3 id="graph-title">Knowledge graph</h3>
       <div class="modal-head-actions">
-        <button id="graph-relayout" class="btn subtle small" title="Recompute the layout">Relayout</button>
+        <label class="graph-wt" title="How strongly edge weights shape the layout (drag a node to move the graph)">
+          <span>⚖</span><input id="graph-weights" type="range" min="0" max="200" value="100">
+        </label>
+        <button id="graph-relayout" class="btn subtle small" title="Recompute the layout from scratch">Relayout</button>
         <button id="graph-export" class="btn subtle small" title="Open the raw graph JSON">JSON</button>
         <button id="graph-minimize" class="btn subtle small" title="Minimize">▁</button>
         <button class="btn subtle" id="graph-close" title="Close">✕</button>
@@ -577,34 +637,6 @@
   </div>
 </div>
 
-<!-- Experiment branch history overlay (git-flow) -->
-<div id="branch-overlay" class="branch-overlay hidden">
-  <div class="branch-overlay-box">
-    <div class="branch-head">
-      <span class="agent-title">Experiment branch history</span>
-      <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
-      <div class="branch-views">
-        <button class="branch-view-btn" data-branchview="branches">Branches</button>
-        <button class="branch-view-btn active" data-branchview="timeline">Timeline</button>
-        <button class="branch-view-btn" data-branchview="graph">Graph</button>
-        <select id="branch-exp-filter" class="branch-metric" title="Experiment"></select>
-        <select id="branch-metric" class="branch-metric" title="Metric"></select>
-      </div>
-      <span class="spacer"></span>
-      <button id="branch-refresh" class="btn subtle small">Refresh</button>
-      <button id="branch-close" class="btn subtle">✕</button>
-    </div>
-    <div class="branch-body">
-      <div id="branch-legend" class="branch-legend"></div>
-      <div class="branch-main">
-        <div id="branch-graph" class="branch-graph scroll"></div>
-        <div id="branch-resizer" class="branch-resizer" title="Drag to resize detail pane"></div>
-        <div id="branch-detail" class="branch-detail scroll"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Audit event detail overlay -->
 <div id="audit-event-overlay" class="branch-overlay hidden">
   <div class="branch-overlay-box audit-eo">
@@ -627,7 +659,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v77";
+  window.FOX_VER = "v87";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

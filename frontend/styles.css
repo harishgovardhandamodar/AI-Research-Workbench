@@ -61,7 +61,50 @@ select, input, textarea {
   padding: 6px 10px; font: inherit;
 }
 select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
-#model-select, #project-select { min-width: 180px; max-width: 280px; }
+#model-select { min-width: 180px; max-width: 280px; }
+
+/* ---------- unified session control (single top-bar widget) ---------- */
+.session-ctrl { position: relative; }
+.session-switch {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-3); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; font: inherit; cursor: pointer;
+  max-width: 240px;
+}
+.session-switch:hover { border-color: var(--accent); }
+.session-ico { color: var(--accent-2); line-height: 1; }
+.session-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-caret { color: var(--text-dim); font-size: 10px; }
+.session-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  min-width: 240px; max-width: 320px; max-height: 320px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; flex-direction: column;
+}
+.session-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.session-title { font-weight: 700; font-size: 12px; letter-spacing: .3px; text-transform: uppercase; color: var(--text-dim); }
+.session-act {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); width: 26px; height: 26px; line-height: 1; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+}
+.session-act:hover { border-color: var(--accent); }
+.session-act.danger:hover { border-color: var(--danger); color: var(--danger); }
+.session-list { overflow-y: auto; padding: 5px; display: flex; flex-direction: column; gap: 2px; }
+.session-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  color: var(--text); text-align: left; padding: 7px 9px; font: inherit; cursor: pointer;
+}
+.session-item:hover { background: var(--bg-3); border-color: var(--border); }
+.session-item.active { background: rgba(53,196,182,.1); border-color: var(--accent); }
+.session-item-ico { color: var(--text-dim); width: 10px; text-align: center; flex: 0 0 auto; }
+.session-item.active .session-item-ico { color: var(--accent); }
+.session-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .btn {
   background: var(--bg-3); color: var(--text);
@@ -77,7 +120,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .btn.danger:hover { border-color: var(--danger); filter: brightness(1.15); }
 
 /* ---------- layout ---------- */
-#main { display: flex; flex: 1 1 auto; min-height: 0; }
+#main { display: flex; flex: 1 1 auto; min-height: 0; position: relative; }
 #chat-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; position: relative; }
 #side-panel {
   flex: 0 0 360px; width: 360px;
@@ -498,7 +541,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 .gx-edge { stroke: #463a66; stroke-width: 1; }
 .gx-edge.sel { stroke: #a974ff; stroke-width: 1.6; filter: drop-shadow(0 0 4px rgba(169,116,255,.6)); }
-.gx-node { cursor: pointer; }
+.gx-node { cursor: grab; }
+.gx-node:active { cursor: grabbing; }
 .gx-node circle { filter: drop-shadow(0 0 6px rgba(169,116,255,.35)); transition: r .1s ease, filter .1s ease; }
 .gx-node:hover circle { filter: brightness(1.25) drop-shadow(0 0 10px rgba(169,116,255,.6)); stroke: #fff; }
 .gx-node.sel circle { stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 14px rgba(169,116,255,.9)); }
@@ -614,6 +658,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 /* ---------- notebooks ---------- */
 .modal-box.nb { width: calc(100vw - 24px); height: calc(100vh - 24px); }
 .modal-head-actions { display: flex; gap: 6px; align-items: center; }
+.graph-wt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); cursor: pointer; }
+.graph-wt input[type="range"] { width: 88px; accent-color: var(--accent); cursor: pointer; }
 .nb-cells { flex: 1 1 auto; overflow-y: auto; padding: 12px 18px; display: flex; flex-direction: column; gap: 14px; width: 100%; }
 .nb-status { flex: 0 0 auto; padding: 8px 4px 0; font-size: 12px; color: var(--text-dim); min-height: 18px; }
 .nb-status.err { color: var(--danger); }
@@ -946,7 +992,7 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 /* ===================== experiment branch history overlay ===================== */
 
 .branch-fab {
-  position: absolute;
+  position: fixed;
   right: 18px;
   bottom: 78px;
   z-index: 40;
@@ -967,24 +1013,27 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .branch-fab.active { background: var(--accent); color: #04201d; border-color: var(--accent); }
 
 .branch-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 60;
-  background: rgba(4, 8, 12, .78);
-  backdrop-filter: blur(3px);
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 .branch-overlay-box {
-  width: min(1180px, 96vw);
-  height: min(760px, 92vh);
+  width: 100%;
+  height: 100%;
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border: none;
+  border-radius: 0;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 18px 60px rgba(0,0,0,.6);
+}
+/* the audit event detail overlay stays a centered modal popup */
+#audit-event-overlay {
+  position: fixed;
+  background: rgba(4, 8, 12, .78);
+  backdrop-filter: blur(3px);
+  align-items: center;
+  justify-content: center;
 }
 .branch-head {
   display: flex;
@@ -994,6 +1043,20 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
   border-bottom: 1px solid var(--border);
 }
 .branch-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.branch-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.branch-filter-group { display: inline-flex; align-items: center; gap: 6px; }
+.bf-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+.bf-time { font-family: var(--mono); font-size: 11px; color: var(--text-dim); min-width: 86px; }
+#branch-time { width: 200px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.branch-filters .btn.active { background: var(--accent); color: #04201d; border-color: var(--accent); font-weight: 600; }
 .branch-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1043,7 +1106,7 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ===================== audit event detail overlay ===================== */
 
-.audit-eo { width: min(820px, 96vw); height: min(640px, 88vh); }
+.audit-eo { width: min(820px, 96vw); height: min(640px, 88vh); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,.6); }
 .audit-eo-body { padding: 14px 18px; overflow: auto; }
 .audit-eo-body .ad-body { grid-template-columns: 190px 1fr; }
 .audit-eo-body .ad-k { color: var(--text-dim); font-size: 11px; text-align: right; padding-top: 2px; }
@@ -1120,7 +1183,17 @@ html[data-theme="light"] .msg.user .msg-body h1,
 html[data-theme="light"] .msg.user .msg-body h2,
 html[data-theme="light"] .msg.user .msg-body h3,
 html[data-theme="light"] .msg.user .msg-body blockquote { color: #eaf7f5; }
-html[data-theme="light"] .msg.user .m-tag { color: #fff; }
+html[data-theme="light"] .msg.user .m-tag { color: var(--danger); }
+
+/* code blocks flip to light backgrounds with dark text in light mode
+   (permission popup commands, message code, toolcards, notebook output) */
+html[data-theme="light"] .msg-body pre,
+html[data-theme="light"] .codeblock,
+html[data-theme="light"] .toolcard-body pre,
+html[data-theme="light"] .nb-out {
+  background: #f3f4f6; border-color: var(--border); color: #1b2230;
+}
+html[data-theme="light"] .msg-body code { background: rgba(0,0,0,.07); color: var(--text); }
 
 @media (prefers-color-scheme: light) {
   html:not([data-theme]) { color-scheme: light; }
