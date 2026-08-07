@@ -6,6 +6,36 @@ so your data never leaves home unless you explicitly approve a network command.
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New
+
+**🛡 Local agent audit trail** — every agent tool call, MCP request, permission
+decision, network access and filesystem touch is now captured, **redacted** and
+**hash-chained** (SHA-256, tamper-evident) into SQLite + append-only JSONL per
+project. The new **Audit Trail** view in the top bar shows a severity-coloured
+**event timeline** with **clickable KPI cards** (Events / Critical / Overrides /
+Denials / Data access / Network / Filesystem / Open deviations / Active agents)
+that filter the list, plus per-agent history, a **permissions vs observed
+drift** panel, an **Investigation** search tab, and **deviation flags**
+(novel tools, network destinations, data classes) with scan/review/false-positive
+workflow. Ships with a standalone **`agent-audit`** CLI, a transparent **MCP
+proxy** for Claude Desktop / Cursor / custom hosts, Python middleware
+(`@audit_tool`), a Streamlit dashboard, and a **hash-chain integrity check**.
+See [docs/AUDIT-TRAIL.md](docs/AUDIT-TRAIL.md) and the `fox audit <project>`
+command.
+
+**⛙ Git-flow branch history** — experiments now carry a **git-style branching
+lineage**: each run records the run it was derived from (`parent_run_id`, set
+automatically for improve-loop iterations, fresh reruns, autoresearch attempts
+and workflow reruns; inferred chronologically otherwise). The **Branches**
+overlay (button next to the chat composer, or **⛙ Experiment branches** in the
+Experiments toolbar) renders the lineage as a branch timeline — nodes carry
+their **experiment parameters** (config + metrics), best runs are starred,
+branch tips are marked, and clicking a node shows its objective, summary,
+findings and review notes.
+
+Also in this release: `.env` is now gitignored, and the audit CLI ships via the
+`audit` extras (`pip install -e ".[audit]"`).
+
 ## Top features
 
 - **Agentic experimentation** — the agent plans experiments, runs variants, and a
@@ -22,6 +52,11 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
   coloring, goal lines, best-run highlight, per-run **suggestions 💡**, and
   one-click **compare vs best** / **improve from here**.
   ![Experiment tracking view](docs/images/experiment-tracking.png) ![Experiment timeline view](docs/images/experiment-timeline.png) ![Experiment graph view](docs/images/experiment-graph.png)
+- **Git-flow branch history** — a toggleable overlay in the chat window renders
+  the experiment lineage as a **git-style branching timeline**: experiments are
+  branches, each run (baseline, improve-loop iteration, fresh rerun) is a node
+  with its **experiment parameters** (config + metrics), best runs starred and
+  branch tips marked. Use the **⛙ Branches** button next to the chat composer.
 - **Experiment source control** — version experiments, runs and artifacts in a
   sibling git repo (e.g. `personal-experiments`) with **auto-commit/push to
   GitHub** and manual Commit/Push buttons; see
@@ -47,6 +82,14 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 - **Built-in VS Code editor** — edit agent-generated scripts in-app.
 - **Workflow progress panel** — live per-stage progress for improve loops, arXiv
   replication, the privacy workflow, notebooks, and any agent tool run.
+- **🛡 Local agent audit trail** — every agent tool call, MCP request,
+  permission decision, network access and filesystem touch is captured,
+  **redacted** and **hash-chained** (tamper-evident) into SQLite + append-only
+  JSONL, then shown in an **Audit Trail** view with a **timeline of events**,
+  KPI cards, agent history, deviation flags and permission-vs-observed drift.
+  Includes a standalone `agent-audit` CLI, a transparent **MCP proxy** for
+  Claude Desktop / Cursor / custom hosts, and Python middleware (`@audit_tool`)
+  for your own agents. See [docs/AUDIT-TRAIL.md](docs/AUDIT-TRAIL.md).
 - **Built-in workflows** — privacy peer-exploitation / red-team / DP-robustness,
   and arXiv ingestion → knowledge graph → replication.
 
@@ -118,6 +161,7 @@ fox scheduler             # research scheduler status
 fox pool                  # research pool / topics / imports
 
 fox manage status         # experiment management repo (commit/push/link)
+fox audit <project>       # agent audit trail (overview/events/deviations/agents/verify)
 fox manual                # the manual (or: fox manual <section>)
 ```
 

@@ -283,6 +283,119 @@ def build_graph(records: list[dict], artifact_store=None) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+# ------------------------------------------------------ git-flow branches ----
+
+def build_branch_graph(runs: list[dict], experiments: list[dict]) -> dict:
+    """Git-flow branching history: runs as commit-like nodes, parent→child
+    edges, experiments as branches.
+
+    Parentage comes from each run's explicit `parent_run_id` (improve loops,
+    reruns, fresh reruns). When missing it is inferred: runs within the same
+    experiment chain chronologically (children branch off the experiment's
+    current tip); standalone runs of the same `kind` (fresh reruns, notebook
+    reruns) chain too. Returns {nodes, edges, experiments, tips}.
+    """
+    exp_by_id = {e.get("id"): e for e in experiments}
+    # Deterministic experiment ordering for stable branch colors/lanes.
+    exp_order = {eid: i for i, eid in enumerate(e for e in exp_by_id)}
+
+    nodes = []
+    by_id: dict[int, dict] = {}
+    for r in sorted(runs, key=lambda x: (x.get("started_at") or 0)):
+        eid = r.get("experiment_id")
+        exp = exp_by_id.get(eid) if eid is not None else None
+        metrics = metrics_from_run(r)
+        goal_metric = (exp or {}).get("goal_metric")
+        goal_value = metrics.get(goal_metric) if goal_metric else None
+        review = r.get("review") or {}
+        findings = findings_from_run(r)
+        for f in review.get("findings") or []:
+            msg = f.get("message") or (f if isinstance(f, str) else "")
+            if msg and msg not in findings:
+                findings.append(msg)
+        nodes.append({
+            "id": r.get("id"),
+            "label": r.get("label") or r.get("kind") or f"run {r.get('id')}",
+            "kind": r.get("kind") or "agent_run",
+            "status": r.get("status"),
+            "started_at": r.get("started_at"),
+            "finished_at": r.get("finished_at"),
+            "experiment_id": eid,
+            "experiment_name": (exp or {}).get("name"),
+            "experiment_branch": exp_order.get(eid) if eid is not None else None,
+            "config": r.get("config") or {},
+            "metrics": metrics,
+            "goal_metric": goal_metric,
+            "goal_value": goal_value,
+            "artifacts": len(r.get("artifact_ids") or []),
+            "tools": len(r.get("tool_sequence") or []),
+            "parent_run_id": r.get("parent_run_id"),
+            "timestamp": _timestamp(r),
+            # narrative fields for the branch-history detail panel
+            "objective": (r.get("prompt") or "")[:600],
+            "summary": (r.get("reply") or "")[:800],
+            "findings": findings[:20],
+            "notes": [(s.get("title") or s.get("action") or "")
+                      for s in (review.get("suggestions") or [])][:10],
+        })
+        by_id[r.get("id")] = r
+
+    # ---- edges -----------------------------------------------------------
+    edges = []
+    chain_tip: dict[object, int] = {}   # experiment_id / kind -> last run id
+    for n in nodes:
+        rid = n["id"]
+        parent = n.get("parent_run_id")
+        if parent is not None and parent in by_id:
+            edges.append({"parent": parent, "child": rid})
+            # track per-experiment tip for inference on other roots
+            key = ("exp", n.get("experiment_id")) if n.get("experiment_id") is not None \
+                else ("kind", n.get("kind"))
+            chain_tip[key] = rid
+            continue
+        # Infer a parent when none is explicit.
+        inferred = None
+        if n.get("experiment_id") is not None:
+            key = ("exp", n.get("experiment_id"))
+            inferred = chain_tip.get(key)
+        if inferred is None and n.get("experiment_id") is None:
+            key = ("kind", n.get("kind"))
+            inferred = chain_tip.get(key)
+        if inferred is not None:
+            edges.append({"parent": inferred, "child": rid})
+            n["parent_run_id"] = inferred
+        # advance the chain tip for this experiment/kind
+        key = ("exp", n.get("experiment_id")) if n.get("experiment_id") is not None \
+            else ("kind", n.get("kind"))
+        chain_tip[key] = rid
+
+    child_count = {}
+    for e in edges:
+        child_count[e["parent"]] = child_count.get(e["parent"], 0) + 1
+    tips = [n["id"] for n in nodes if child_count.get(n["id"], 0) == 0]
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "experiments": [
+            {
+                "id": e.get("id"),
+                "name": e.get("name"),
+                "goal_metric": e.get("goal_metric"),
+                "goal_target": e.get("goal_target"),
+                "higher_better": e.get("higher_better"),
+                "status": e.get("status"),
+                "hypothesis": (e.get("hypothesis") or "")[:600],
+                "plan": (e.get("plan") or "")[:800],
+                "run_count": len([n for n in nodes
+                                  if n.get("experiment_id") == e.get("id")]),
+            }
+            for e in experiments
+        ],
+        "tips": tips,
+    }
+
+
 # -------------------------------------------------------------- leaderboard ----
 
 def rank_runs(runs: list[dict], metric: str, higher_better: bool = True,

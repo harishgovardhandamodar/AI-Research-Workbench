@@ -29,6 +29,7 @@
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent">Agent</button>
         <button id="mainview-editor" class="mainview-btn" data-mainview="editor">Editor</button>
         <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg">Knowledge Graphs</button>
+        <button id="mainview-audit" class="mainview-btn" data-mainview="audit">Audit Trail</button>
       </div>
       <select id="project-select" title="Project"></select>
       <button id="new-project-btn" class="btn subtle" title="New project">+</button>
@@ -40,6 +41,7 @@
       <span id="conn-status" class="status-dot" title="Connection status"></span>
       <button id="side-toggle" class="btn subtle" title="Toggle side panel"></button>
       <button id="print-btn" class="btn subtle" title="Export this chat as PDF">Export PDF</button>
+      <button id="theme-toggle" class="btn subtle" title="Toggle light / dark theme">🌓</button>
       <button id="settings-btn" class="btn subtle">Settings</button>
     </div>
   </header>
@@ -58,6 +60,9 @@
         <select id="exp-metric-main" title="Metric"></select>
         <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
         <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
+        <button id="exp-branches" class="btn subtle small" title="Experiment branch history (git-flow)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg> Branches
+        </button>
         <span class="spacer"></span>
         <span class="muted exp-hint">Timeline = evolution · Graph = similarity edges · click a node for details · ⇄ Compare = click two runs</span>
       </div>
@@ -173,6 +178,64 @@
       </div>
     </section>
 
+    <section id="audit-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">Agent audit trail</span>
+        <span class="muted exp-hint">data access · network · filesystem · permissions · deviations · hash-chained</span>
+        <span class="spacer"></span>
+        <span id="audit-chain-status" class="muted audit-chain" title="JSONL hash-chain integrity"></span>
+        <button id="audit-scan" class="btn subtle small" title="Run a deviation scan now">Scan</button>
+        <button id="audit-export" class="btn subtle small" title="Export the audit log as JSON">Export</button>
+        <button id="audit-refresh" class="btn subtle small">Refresh</button>
+      </div>
+
+      <div id="audit-kpis" class="audit-kpis"></div>
+
+      <div class="audit-tabs">
+        <button class="audit-tab active" data-auditview="overview">Overview</button>
+        <button class="audit-tab" data-auditview="agents">Agents</button>
+        <button class="audit-tab" data-auditview="deviations">Deviations</button>
+        <button class="audit-tab" data-auditview="permissions">Permissions</button>
+        <button class="audit-tab" data-auditview="search">Investigation</button>
+      </div>
+
+      <div id="audit-filters" class="audit-filters">
+        <select id="audit-agent" title="Agent"></select>
+        <select id="audit-severity" title="Severity">
+          <option value="">all severities</option>
+          <option value="info">info</option>
+          <option value="warning">warning</option>
+          <option value="critical">critical</option>
+        </select>
+        <select id="audit-source" title="Source">
+          <option value="">all sources</option>
+          <option value="coordinator">coordinator</option>
+          <option value="mcp_proxy">mcp proxy</option>
+          <option value="approval">approval</option>
+          <option value="middleware">middleware</option>
+          <option value="system">system</option>
+        </select>
+        <select id="audit-range" title="Time range">
+          <option value="3600">last hour</option>
+          <option value="86400" selected>last day</option>
+          <option value="604800">last 7 days</option>
+          <option value="2592000">last 30 days</option>
+          <option value="0">all time</option>
+        </select>
+        <input id="audit-q" placeholder="search event text…" class="audit-q">
+        <span class="spacer"></span>
+        <span id="audit-count" class="muted audit-count"></span>
+      </div>
+
+      <div id="audit-overview">
+        <div id="audit-timeline"></div>
+      </div>
+      <div id="audit-agents" class="hidden"></div>
+      <div id="audit-deviations" class="hidden"></div>
+      <div id="audit-permissions" class="hidden"></div>
+      <div id="audit-search" class="hidden"></div>
+    </section>
+
     <section id="chat-panel">
       <div id="workflow-panel" class="workflow-panel">
         <div class="workflow-head">
@@ -186,25 +249,34 @@
         <div id="workflow-stages" class="workflow-stages"></div>
       </div>
 
-      <!-- Experiment context bar: navigate / act on the active experiment -->
+      <!-- Experiment status pill: compact collapsible overlay (click to expand) -->
       <div id="exp-context" class="exp-context hidden">
-        <div class="ec-head">
-          <select id="ec-select" class="ec-select" title="Switch experiment"></select>
-          <span id="ec-status" class="exp-badge det">active</span>
-          <span class="spacer"></span>
-          <button id="ec-prev" class="btn subtle small" title="Previous experiment message">◀</button>
-          <button id="ec-next" class="btn subtle small" title="Next experiment message">▶</button>
-          <button id="ec-improve" class="btn subtle small" title="Run the improve loop for this experiment">Improve</button>
-          <button id="ec-commit" class="btn subtle small" title="Commit experiment artifacts to the management repo">Commit</button>
-          <button id="ec-push" class="btn subtle small" title="Push the management repo to GitHub">Push</button>
-        </div>
-        <div class="ec-goal-row">
+        <button id="ec-toggle" class="ec-toggle" title="Show / hide experiment controls">
+          <span class="ec-dot" id="ec-dot"></span>
+          <span class="ec-name" id="ec-name">experiment</span>
+          <span class="ec-divider"></span>
           <span id="ec-goal" class="ec-goal muted">goal —</span>
-          <div class="ec-progress"><div id="ec-fill" class="ec-fill" style="width:0%"></div></div>
+          <span class="ec-divider"></span>
           <span id="ec-best" class="ec-best">best —</span>
+          <span class="ec-chev" id="ec-chev">▾</span>
+        </button>
+        <div id="ec-body" class="ec-body hidden">
+          <div class="ec-head">
+            <select id="ec-select" class="ec-select" title="Switch experiment"></select>
+            <span id="ec-status" class="exp-badge det">active</span>
+            <span class="spacer"></span>
+            <button id="ec-prev" class="btn subtle small" title="Previous experiment message">◀</button>
+            <button id="ec-next" class="btn subtle small" title="Next experiment message">▶</button>
+            <button id="ec-improve" class="btn subtle small" title="Run the improve loop for this experiment">Improve</button>
+            <button id="ec-commit" class="btn subtle small" title="Commit experiment artifacts to the management repo">Commit</button>
+            <button id="ec-push" class="btn subtle small" title="Push the management repo to GitHub">Push</button>
+          </div>
+          <div class="ec-goal-row">
+            <div class="ec-progress"><div id="ec-fill" class="ec-fill" style="width:0%"></div></div>
+          </div>
+          <div id="ec-runs" class="ec-runs"></div>
+          <div id="ec-mgmt-msg" class="ec-mgmt-msg muted"></div>
         </div>
-        <div id="ec-runs" class="ec-runs"></div>
-        <div id="ec-mgmt-msg" class="ec-mgmt-msg muted"></div>
       </div>
 
       <div id="chat-stats" class="chat-stats muted" title="UI build + render status"></div>
@@ -226,6 +298,8 @@
                 title="Autonomous research loop over research/experiment.py">🤖 Autoresearch</button>
         <button class="btn subtle small quick" data-intent="improve_loop"
                 data-text="Improve the latest experiment toward its goal">🔁 Improve experiment</button>
+        <button id="quick-branches" class="btn subtle small quick"
+                title="Experiment branch history (git-flow)">⛙ Experiment branches</button>
         <button class="btn subtle small quick"
                 data-text="Plan and create an experiment to answer a research question">⚗ New experiment</button>
         <button class="btn subtle small quick"
@@ -249,6 +323,10 @@
         <button id="stop-btn" class="btn danger hidden" title="Stop generating">Stop</button>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
       </div>
+      <button id="branch-toggle" class="branch-fab" title="Experiment branch history (git-flow)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg>
+        <span>Branches</span>
+      </button>
     </section>
 
     <aside id="side-panel" class="scroll">
@@ -497,12 +575,57 @@
   </div>
 </div>
 
+<!-- Experiment branch history overlay (git-flow) -->
+<div id="branch-overlay" class="branch-overlay hidden">
+  <div class="branch-overlay-box">
+    <div class="branch-head">
+      <span class="agent-title">Experiment branch history</span>
+      <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
+      <div class="branch-views">
+        <button class="branch-view-btn active" data-branchview="branches">Branches</button>
+        <button class="branch-view-btn" data-branchview="timeline">Timeline</button>
+        <button class="branch-view-btn" data-branchview="graph">Graph</button>
+        <select id="branch-exp-filter" class="branch-metric" title="Experiment"></select>
+        <select id="branch-metric" class="branch-metric" title="Metric"></select>
+      </div>
+      <span class="spacer"></span>
+      <button id="branch-refresh" class="btn subtle small">Refresh</button>
+      <button id="branch-close" class="btn subtle">✕</button>
+    </div>
+    <div class="branch-body">
+      <div id="branch-legend" class="branch-legend"></div>
+      <div class="branch-main">
+        <div id="branch-graph" class="branch-graph scroll"></div>
+        <div id="branch-resizer" class="branch-resizer" title="Drag to resize detail pane"></div>
+        <div id="branch-detail" class="branch-detail scroll"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Audit event detail overlay -->
+<div id="audit-event-overlay" class="branch-overlay hidden">
+  <div class="branch-overlay-box audit-eo">
+    <div class="branch-head">
+      <span class="agent-title">Audit event</span>
+      <span id="audit-eo-id" class="muted exp-hint"></span>
+      <span class="spacer"></span>
+      <button id="audit-eo-prev" class="btn subtle small" title="Previous event">◀</button>
+      <button id="audit-eo-next" class="btn subtle small" title="Next event">▶</button>
+      <button id="audit-eo-close" class="btn subtle">✕</button>
+    </div>
+    <div class="branch-body">
+      <div id="audit-eo-body" class="audit-eo-body scroll"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast" class="hidden"></div>
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v61";
+  window.FOX_VER = "v76";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

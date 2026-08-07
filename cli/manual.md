@@ -80,6 +80,18 @@ fox projects fork <name> <target>     # fork a project
 ### `fox runs <project>`
 Recent agent runs for a project (id, label, status, best metric, started).
 
+### `fox audit <project> [action]`
+Local agent audit trail for a project:
+```
+fox audit <project>                # KPI overview (events, criticals, overrides, deviations)
+fox audit <project> events         # recent audit events table
+fox audit <project> deviations     # flagged behavioural deviations
+fox audit <project> agents         # per-agent activity
+fox audit <project> verify         # JSONL hash-chain integrity (exit 1 if broken)
+```
+See `docs/AUDIT-TRAIL.md` for the full audit system (MCP proxy, redaction,
+deviation detector, in-app Audit Trail timeline).
+
 ### `fox run <project> <id> [report]`
 Inspect a single run (metrics, prompt, review findings, artifacts), or
 `report` to generate + print its lab-notebook report.

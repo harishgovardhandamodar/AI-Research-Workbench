@@ -19,9 +19,15 @@ from uuid import uuid4
 
 class ApprovalBroker:
     def __init__(self, emit: Callable[[str, dict], Awaitable[None]],
-                 store=None, timeout: float = 300.0):
+                 store=None, timeout: float = 300.0, audit=None,
+                 session_id: str | None = None, trace_id: str | None = None,
+                 agent_id: str = "user"):
         self.emit = emit
         self.store = store
+        self.audit = audit
+        self.session_id = session_id
+        self.trace_id = trace_id
+        self.agent_id = agent_id
         self.timeout = timeout
         self._pending: dict[str, asyncio.Future] = {}
 
@@ -40,7 +46,7 @@ class ApprovalBroker:
         try:
             res = await asyncio.wait_for(fut, timeout=self.timeout)
         except asyncio.TimeoutError:
-            self._log(kind, command, "timeout", False)
+            await self._log(kind, command, "timeout", False)
             try:
                 await self.emit("approval_result", {
                     "request_id": rid, "decision": "timeout",
@@ -51,16 +57,28 @@ class ApprovalBroker:
             return False, False
         decision = bool(res.get("decision", False))
         temporary = bool(res.get("temporary", False))
-        self._log(kind, command, "allow" if decision else "deny", temporary)
+        await self._log(kind, command, "allow" if decision else "deny", temporary)
         return decision, temporary
 
-    def _log(self, kind: str, command: str, decision: str, temporary: bool):
-        if self.store is None:
-            return
-        try:
-            self.store.log_approval(kind, command, decision, temporary)
-        except Exception:  # noqa: BLE001
-            pass
+    async def _log(self, kind: str, command: str, decision: str, temporary: bool):
+        if self.store is not None:
+            try:
+                self.store.log_approval(kind, command, decision, temporary)
+            except Exception:  # noqa: BLE001
+                pass
+        if self.audit is not None:
+            try:
+                from ..audit import emit_policy_event
+
+                await emit_policy_event(
+                    self.audit,
+                    agent_id=self.agent_id or "user",
+                    session_id=self.session_id, trace_id=self.trace_id,
+                    kind=kind, command=command, decision=decision,
+                    temporary=temporary,
+                    reason="approval resolved by user")
+            except Exception:  # noqa: BLE001
+                pass
 
     def resolve(self, request_id: str, decision: bool, temporary: bool = False):
         fut = self._pending.pop(request_id, None)

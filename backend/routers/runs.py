@@ -55,6 +55,17 @@ async def project_experiments_graph(name: str):
     return build_graph(rt.store.list_runs(), rt.artifacts)
 
 
+@router.get("/api/projects/{name}/experiments/branches")
+async def project_experiments_branches(name: str):
+    """Git-flow branching history: runs as commit-like nodes, parent→child
+    edges, experiments as branches, run parameters (config/metrics) per node."""
+    from ..experiments import build_branch_graph
+
+    rt = get_runtime(name)
+    return build_branch_graph(rt.store.list_runs(),
+                              rt.store.list_experiments())
+
+
 @router.post("/api/projects/{name}/experiments")
 async def create_project_experiment(name: str, body: dict):
     """Create an experiment (name + optional hypothesis/goal/plan) and return it."""

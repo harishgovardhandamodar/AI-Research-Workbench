@@ -75,6 +75,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_runs = sub.add_parser("runs", help="list runs of a project")
     p_runs.add_argument("project")
 
+    p_audit = sub.add_parser("audit", help="agent audit trail for a project")
+    p_audit.add_argument("project")
+    p_audit.add_argument("action", nargs="?", default="overview",
+                         choices=["overview", "events", "deviations",
+                                  "agents", "verify"])
+
     p_run = sub.add_parser("run", help="inspect a run / generate report")
     p_run.add_argument("project")
     p_run.add_argument("rid", help="run id")
@@ -181,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         "projects": commands.cmd_projects,
         "runs": commands.cmd_runs,
         "run": commands.cmd_run,
+        "audit": commands.cmd_audit,
         "experiments": commands.cmd_experiments,
         "experiment": commands.cmd_experiment,
         "compare": commands.cmd_compare,

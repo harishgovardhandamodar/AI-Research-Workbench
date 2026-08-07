@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from ..llm import LLMClient
@@ -153,6 +154,7 @@ class Coordinator:
                  persist: Callable[[str, str, dict], None] | None = None,
                  record: Callable[[dict], int] | None = None,
                  max_iters: int = 8, mcp=None,
+                 audit=None,
                  check_abort: Callable[[], bool] | None = None):
         self.llm = llm
         self.ctx = ctx
@@ -161,6 +163,7 @@ class Coordinator:
         self.record = record or (lambda r: None)
         self.max_iters = max_iters
         self.mcp = mcp
+        self.audit = audit
         self.check_abort = check_abort
         self.tools = build_tools(ctx)
         self._mcp_loaded = False
@@ -244,6 +247,8 @@ class Coordinator:
         self.ctx.run_id = ""
         status = "done"
         text = ""
+        audit_meta = self._audit_meta()
+        await self._audit_turn_event("turn_start", audit_meta)
         try:
             await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
@@ -299,6 +304,7 @@ class Coordinator:
                                                 skills=self._skill_names)
                         if workflow is not None:
                             await workflow.on_tool_start(name)
+                        t0 = time.perf_counter()
                         try:
                             if name == "run_shell":
                                 result = await self.tools[name](command=args.get("command", ""),
@@ -309,6 +315,23 @@ class Coordinator:
                         except Exception as e:  # noqa: BLE001
                             result = f"[error] {type(e).__name__}: {e}"
                             ok = False
+                        duration_ms = (time.perf_counter() - t0) * 1000.0
+                        if self.audit is not None:
+                            try:
+                                from ..audit import emit_tool_audit
+
+                                await emit_tool_audit(
+                                    self.audit,
+                                    agent_id=self.agent_name,
+                                    session_id=audit_meta["session_id"],
+                                    trace_id=audit_meta["trace_id"],
+                                    tool_name=name, method=name,
+                                    args=args, result=result, ok=ok,
+                                    duration_ms=duration_ms,
+                                    source="mcp_proxy" if "__" in name else "coordinator",
+                                    mcp_server=mcp_server or None)
+                            except Exception:  # noqa: BLE001
+                                pass
                         if workflow is not None:
                             await workflow.on_tool_end(name, ok)
                         await self.emit("tool_result", {"id": tc.get("id"), "name": name,
@@ -359,7 +382,38 @@ class Coordinator:
                 await workflow.finish()
             raise
         finally:
+            await self._audit_turn_event(
+                "turn_end", audit_meta, status=status)
             self._record_run(messages, status, text)
+
+    def _audit_meta(self) -> dict:
+        """Session/trace identity for audit events: project name + turn id."""
+        session = getattr(getattr(self.ctx, "store", None), "name", None) or "workbench"
+        if session == "workbench":
+            try:
+                session = getattr(self.ctx.artifacts, "project_dir", Path(".")).name
+            except Exception:  # noqa: BLE001
+                pass
+        return {"session_id": str(session or "workbench"),
+                "trace_id": str(getattr(self.ctx, "message_id", "") or "") or None}
+
+    async def _audit_turn_event(self, kind: str, meta: dict, status: str = "") -> None:
+        if self.audit is None:
+            return
+        try:
+            from ..audit import emit_session_event
+
+            payload = {"event": kind}
+            if status:
+                payload["status"] = status
+            await emit_session_event(
+                self.audit, agent_id=self.agent_name,
+                session_id=meta.get("session_id"), trace_id=meta.get("trace_id"),
+                kind=kind, tool_name=None, payload=payload,
+                severity="info" if kind == "turn_start" else
+                        ("critical" if status == "error" else "info"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _record_run(self, messages: list[dict], status: str, text: str) -> None:
         prompt = ""
@@ -386,6 +440,7 @@ class Coordinator:
             "config": (variant.get("config") if variant else None)
                       or self.ctx.experiment_config,
             "label": (variant.get("label") if variant else None),
+            "parent_run_id": getattr(self.ctx, "parent_run_id", None),
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)
