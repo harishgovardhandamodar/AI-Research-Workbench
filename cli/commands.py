@@ -757,6 +757,60 @@ def cmd_compare(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- eda ---
+def cmd_eda(args) -> int:
+    """Run a full Exploratory Data Analysis on a local dataset or URL and
+    produce a professional Markdown report (all-local; optional local-LLM
+    narrative). Uses the five eda-mcp servers' analysis code in-process."""
+    _log.debug("eda dataset={} format={} llm={}", getattr(args, "dataset", None),
+               getattr(args, "format", "auto"), getattr(args, "llm", False))
+    if not args.dataset:
+        return _fail(args, "a dataset path or URL is required, e.g. `fox eda data/titanic.csv`", 2)
+    # Make the eda_mcp package importable regardless of cwd.
+    try:
+        import sys as _sys
+        from pathlib import Path as _P
+        _root = _P(__file__).resolve().parents[1]
+        if str(_root) not in _sys.path:
+            _sys.path.insert(0, str(_root))
+        from mcp_servers.eda_mcp.common.store import DatasetStore
+        from mcp_servers.eda_mcp import report
+    except ImportError as e:  # pragma: no cover
+        return _fail(args, f"eda-mcp package not importable: {e}")
+    try:
+        store = DatasetStore()
+        ov = _spinner(args, f"loading {args.dataset}", store.load,
+                      args.dataset, getattr(args, "format", "auto"))
+        did = ov["dataset_id"]
+        def _compile():
+            return report.compile_report_impl(store, did, sections=None,
+                                              fmt="markdown", use_llm=bool(getattr(args, "llm", False)))
+        res = _spinner(args, f"profiling + analysing + writing report", _compile)
+    except Exception as e:  # noqa: BLE001
+        return _fail(args, f"EDA failed: {type(e).__name__}: {e}")
+    if _want_json(args):
+        return _emit(args, {
+            "dataset_id": did,
+            "shape": ov["shape"],
+            "report_path": res["report_path"],
+            "sections": res["sections"],
+            "executive_summary": res["executive_summary"],
+            "workspace": str(store.root),
+        })
+    print(panel(
+        f"eda · {did}",
+        keyval("rows", ov["rows"]) + keyval("columns", ov["columns"])
+        + keyval("report", res["report_path"]) + "\n\n  "
+        + res["executive_summary"]))
+    if getattr(args, "html", False):
+        try:
+            out = report.export_report_impl(store, res["report_id"], "html")
+            print(f"\n  {ok('html')} {dim(out['report_path'])}")
+        except Exception as e:  # noqa: BLE001
+            print(f"\n  {warn('html export skipped')} {dim(str(e))}")
+    return 0
+
+
 # ---------------------------------------------------------------- research ---
 def _scenario_phase(s: dict) -> str:
     st = s.get("status")

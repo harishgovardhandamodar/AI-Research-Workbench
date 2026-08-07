@@ -81,6 +81,47 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    # ---- EDA suite (five servers sharing a disk-backed DatasetStore) ----
+    {
+        "name": "eda_profiler",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.eda_mcp.profiler"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+    {
+        "name": "eda_univariate",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.eda_mcp.univariate"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+    {
+        "name": "eda_multivariate",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.eda_mcp.multivariate"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+    {
+        "name": "eda_visualizer",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.eda_mcp.visualizer"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+    {
+        "name": "eda_report",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.eda_mcp.report"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
