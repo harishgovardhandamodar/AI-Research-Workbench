@@ -587,7 +587,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 /* ---------- modals ---------- */
 .modal {
-  position: fixed; inset: 0; background: rgba(4,6,9,.72); z-index: 50;
+  position: fixed; inset: 0; background: rgba(4,6,9,.72); z-index: 80;
   display: flex; align-items: center; justify-content: center;
 }
 .modal.hidden { display: none; }
@@ -991,8 +991,8 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ===================== experiment branch history overlay ===================== */
 
-.branch-fab { position: fixed; right: 18px; bottom: 78px; z-index: 40; display: flex; align-items: center; gap: 6px; background: linear-gradient(135deg, var(--bg-3), var(--bg-2)); border: 1px solid var(--accent); border-radius: 20px; padding: 7px 14px; color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
-.branch-fab-icon { font-size: 15px; line-height: 1; }
+.branch-fab { position: fixed; right: 18px; bottom: 78px; z-index: 40; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--bg-3), var(--bg-2)); border: 1px solid var(--accent); border-radius: 50%; width: 44px; height: 44px; color: var(--accent); cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+.branch-fab-icon { font-size: 20px; line-height: 1; }
 .branch-fab:hover { border-color: var(--accent); background: var(--bg-3); transform: translateY(-1px); }
 .branch-fab.active { background: var(--accent); color: #04201d; border-color: var(--accent); }
 
@@ -1233,6 +1233,10 @@ html[data-theme="light"] .nb-out {
   background: #f3f4f6; border-color: var(--border); color: #1b2230;
 }
 html[data-theme="light"] .msg-body code { background: rgba(0,0,0,.07); color: var(--text); }
+/* artifact modal: light backgrounds + dark text for rendered markdown/code */
+html[data-theme="light"] .art-view { background: #fff; }
+html[data-theme="light"] .art-view pre { background: #f3f4f6; color: #1b2230; }
+html[data-theme="light"] .art-md pre { background: #f3f4f6; color: #1b2230; }
 
 @media (prefers-color-scheme: light) {
   html:not([data-theme]) { color-scheme: light; }
