@@ -2812,9 +2812,14 @@ function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
 
 function populateExpMetrics() {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  const keys = new Set();
-  nodes.forEach((n) => Object.keys(n.metrics || {}).forEach((k) => keys.add(k)));
-  const opts = [...keys].sort();
+  // only list metrics that actually have a value in the runs
+  const withValue = new Set();
+  nodes.forEach((n) => {
+    for (const k of Object.keys(n.metrics || {})) {
+      if (expNodeValue(n, k) != null) withValue.add(k);
+    }
+  });
+  const opts = [...withValue].sort();
   if (!opts.includes(state.expMetric)) state.expMetric = opts[0] || "";
   const fill = (sel) => {
     if (!sel) return;
@@ -4221,6 +4226,9 @@ async function loadBranches() {
   const graphEl = $("branch-graph");
   if (!graphEl) return;
   try {
+    // always refetch the timeline/graph data too, so newly collected runs and
+    // their metrics show up for both new and old runs (not a stale cache)
+    state._branchGraphProject = null;
     const r = await api(`/api/projects/${encodeURIComponent(state.project)}/experiments/branches`);
     state.branches = r || { nodes: [], edges: [], experiments: [], tips: [] };
     await switchBranchView(branchView);
@@ -4259,9 +4267,14 @@ async function loadBranchGraphData() {
 
 function populateBranchMetric() {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
-  const keys = new Set();
-  nodes.forEach((n) => Object.keys(n.metrics || {}).forEach((k) => keys.add(k)));
-  const opts = [...keys].sort();
+  // only list metrics that actually have a value in the runs being shown
+  const withValue = new Set();
+  nodes.forEach((n) => {
+    for (const k of Object.keys(n.metrics || {})) {
+      if (expNodeValue(n, k) != null) withValue.add(k);
+    }
+  });
+  const opts = [...withValue].sort();
   const sel = $("branch-metric");
   if (!sel) return;
   sel.innerHTML = opts.map((k) => `<option value="${esc(k)}">${esc(k.replace(/_/g, " "))}</option>`).join("");
