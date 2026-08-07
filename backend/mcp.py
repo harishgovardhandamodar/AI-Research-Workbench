@@ -161,6 +161,13 @@ class MCPConnection:
                     mgmt = (CONFIG.get("management") or {}).get("repo_dir") or ""
                     if mgmt:
                         env["FOX_MGMT_REPO"] = str(Path(mgmt).expanduser().resolve())
+                    # Give the git MCP server the configured GitHub repo so it can
+                    # point `origin` at it before pushing (same as the app's push).
+                    from . import experiment_repo
+
+                    gurl = experiment_repo.github_remote_url()
+                    if gurl:
+                        env["FOX_MGMT_GITHUB_URL"] = gurl
                 except Exception:  # noqa: BLE001
                     pass
                 params = StdioServerParameters(

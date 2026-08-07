@@ -431,7 +431,12 @@ async def commit_project_async(rt, message: str | None = None) -> dict:
 
 
 def push(repo: Path | None = None) -> dict:
-    """Push the management repo's current branch to its remote (GitHub)."""
+    """Push the management repo's current branch to its remote (GitHub).
+
+    Resilient to divergence: if the remote has commits the local repo lacks, the
+    remote is fetched and merged with ``-X ours`` (the app owns the ``fox/``
+    snapshot subtree, so local content wins conflicts while the remote's commits
+    are preserved) before pushing again."""
     try:
         repo = repo or management_repo_dir()
         if repo is None:
@@ -444,6 +449,19 @@ def push(repo: Path | None = None) -> dict:
         code, out = _git(repo, "push")
         if code != 0:
             code, out = _git(repo, "push", "-u", "origin", "HEAD")
+            if code != 0 and _looks_diverged(out):
+                # remote advanced elsewhere: fetch + merge (app-owned fox/ wins
+                # conflicts, remote history is kept) then retry.
+                _git(repo, "fetch", "origin")
+                code_m, out_m = _git(repo, "merge", "origin/HEAD",
+                                     "--no-edit", "-X", "ours")
+                if code_m == 0:
+                    code, out = _git(repo, "push")
+                    if code != 0:
+                        code, out = _git(repo, "push", "-u", "origin", "HEAD")
+                else:
+                    return {"ok": False, "message": f"push failed (diverged; "
+                            f"auto-merge failed): {out_m or out}"}
             if code != 0:
                 return {"ok": False, "message": f"push failed: {out}"}
         result = {"ok": True, "message": "pushed",
@@ -452,3 +470,8 @@ def push(repo: Path | None = None) -> dict:
         return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+
+def _looks_diverged(out: str) -> bool:
+    low = out.lower()
+    return "behind" in low or "rejected" in low or "fetch first" in low
