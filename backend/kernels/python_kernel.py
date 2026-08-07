@@ -22,7 +22,12 @@ class KernelError(RuntimeError):
 
 
 class PythonKernel:
-    """Async wrapper around one kernel subprocess."""
+    """Async wrapper around one kernel subprocess.
+
+    Tracks lifecycle/execution status (idle/busy, uptime, current code) and
+    broadcasts structured events to subscribers, so a headless kernel server
+    or the web UI can reflect the live state of execution.
+    """
 
     def __init__(self, cwd: Path | None = None):
         self.cwd = cwd or Path.cwd()
@@ -31,6 +36,51 @@ class PythonKernel:
         self._pending: dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
         self._stderr_tail: str = ""
+        # --- status / observability ---------------------------------------
+        self._listeners: list = []
+        self._state = "idle"          # idle | busy
+        self._current_code: str = ""  # code of the execution in flight (if busy)
+        self._started_at: float = 0.0
+        self._last_start: float = 0.0
+        self._last_duration_ms: float = 0.0
+        self._last_ok: bool | None = None
+        self._last_error: str | None = None
+        self._exec_count = 0
+
+    # -- status / events -----------------------------------------------------
+    def subscribe(self, listener) -> callable:
+        """Register a listener invoked as listener(event, payload).
+
+        Events: "started" | "stopped" | "busy" | "idle" | "output" |
+        "execution_done". Returns an unsubscribe callable.
+        """
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener) if listener in self._listeners else None
+
+    def _notify(self, event: str, payload: dict):
+        for ln in list(self._listeners):
+            try:
+                ln(event, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def status(self) -> dict:
+        """Snapshot of the kernel's live status for UIs / headless clients."""
+        uptime = 0.0
+        if self._started_at:
+            uptime = asyncio.get_event_loop().time() - self._started_at \
+                if asyncio.get_event_loop().is_running() else 0.0
+        return {
+            "state": self._state,
+            "pid": self._proc.pid if self._proc and self._proc.returncode is None else None,
+            "cwd": str(self.cwd),
+            "uptime": round(uptime, 2),
+            "current_code": self._current_code,
+            "last_ok": self._last_ok,
+            "last_error": self._last_error,
+            "last_duration_ms": round(self._last_duration_ms, 2),
+            "exec_count": self._exec_count,
+        }
 
     # -- lifecycle ----------------------------------------------------------
     async def _start(self):
@@ -47,6 +97,9 @@ class PythonKernel:
             # run_code results routinely exceed that, so allow large lines.
             limit=64 * 1024 * 1024,
         )
+        self._started_at = asyncio.get_event_loop().time()
+        self._state = "idle"
+        self._notify("started", {"pid": self._proc.pid})
         self._reader_task = asyncio.create_task(self._read_loop())
 
     async def _read_loop(self):
@@ -65,6 +118,11 @@ class PythonKernel:
                 try:
                     msg = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if msg.get("frame") == "output":
+                    # Streaming stdout emitted while code runs.
+                    self._notify("output", {"text": msg.get("text", ""),
+                                            "id": msg.get("id")})
                     continue
                 fut = self._pending.pop(msg.get("id"), None)
                 if fut and not fut.done():
@@ -133,11 +191,35 @@ class PythonKernel:
         self._proc = None
 
     # -- public API ----------------------------------------------------------
-    async def run_code(self, code: str, timeout: float = 30.0) -> dict:
-        resp = await self._send({"op": "run_code", "code": code, "timeout": timeout})
-        if not resp.get("ok"):
+    async def run_code(self, code: str, timeout: float = 30.0,
+                       stream: bool = False) -> dict:
+        """Execute code in the persistent kernel.
+
+        When `stream` is true the kernel streams stdout as execution progresses
+        (each chunk broadcast to subscribers as an "output" event) — used by the
+        headless kernel server and live execution overlays.
+        """
+        self._state = "busy"
+        self._current_code = code
+        self._last_start = asyncio.get_event_loop().time()
+        self._notify("busy", {"code": code, "pid": self._proc.pid if self._proc else None})
+        try:
+            resp = await self._send({"op": "run_code", "code": code,
+                                     "timeout": timeout, "stream": bool(stream)})
+            self._last_ok = bool(resp.get("ok"))
+            self._last_error = resp.get("error")
+            self._exec_count += 1
+            if not resp.get("ok"):
+                return resp
             return resp
-        return resp
+        finally:
+            self._last_duration_ms = \
+                (asyncio.get_event_loop().time() - self._last_start) * 1000.0
+            self._state = "idle"
+            self._current_code = ""
+            self._notify("idle", {"last_ok": self._last_ok,
+                                  "duration_ms": self._last_duration_ms})
+            self._notify("execution_done", self.status())
 
     async def list_variables(self) -> dict:
         resp = await self._send({"op": "list_variables"})
@@ -148,13 +230,26 @@ class PythonKernel:
         return resp.get("env", {})
 
     async def reset(self) -> dict:
-        resp = await self._send({"op": "reset"})
-        return resp
+        self._notify("busy", {"code": "", "reason": "reset"})
+        try:
+            resp = await self._send({"op": "reset"})
+            self._last_ok = bool(resp.get("ok"))
+            self._last_error = resp.get("error")
+            self._exec_count += 1
+            return resp
+        finally:
+            self._state = "idle"
+            self._current_code = ""
+            self._notify("reset", {"ok": self._last_ok})
+            self._notify("idle", {"last_ok": self._last_ok,
+                                  "duration_ms": self._last_duration_ms})
 
     async def stop(self):
         if self._reader_task:
             self._reader_task.cancel()
         self._kill()
+        self._state = "stopped"
+        self._notify("stopped", {"pid": None})
         if self._proc:
             try:
                 await self._proc.wait()

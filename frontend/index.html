@@ -39,6 +39,7 @@
     </div>
     <div class="topbar-right">
       <span id="conn-status" class="status-dot" title="Connection status"></span>
+      <span id="kernel-status" class="kernel-pill" title="Kernel status" hidden></span>
       <button id="side-toggle" class="btn subtle" title="Toggle side panel"></button>
       <button id="print-btn" class="btn subtle" title="Export this chat as PDF">Export PDF</button>
       <button id="theme-toggle" class="btn subtle" title="Toggle light / dark theme">🌓</button>
@@ -355,6 +356,7 @@
           <span class="pane-title">Python kernel (persistent)</span>
           <button id="kernel-reset-btn" class="btn subtle small">Reset</button>
         </div>
+        <div id="kernel-status-detail" class="kernel-status vlist"></div>
         <div id="kernel-vars" class="vlist"></div>
         <div class="pane-toolbar"><span class="pane-title">Environment</span></div>
         <div id="kernel-env" class="vlist"></div>
@@ -582,8 +584,8 @@
       <span class="agent-title">Experiment branch history</span>
       <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
       <div class="branch-views">
-        <button class="branch-view-btn active" data-branchview="branches">Branches</button>
-        <button class="branch-view-btn" data-branchview="timeline">Timeline</button>
+        <button class="branch-view-btn" data-branchview="branches">Branches</button>
+        <button class="branch-view-btn active" data-branchview="timeline">Timeline</button>
         <button class="branch-view-btn" data-branchview="graph">Graph</button>
         <select id="branch-exp-filter" class="branch-metric" title="Experiment"></select>
         <select id="branch-metric" class="branch-metric" title="Metric"></select>
@@ -625,7 +627,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v76";
+  window.FOX_VER = "v77";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

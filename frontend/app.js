@@ -766,6 +766,61 @@ function kv(k, val) {
   return d;
 }
 
+/* ======================== kernel live status ======================== */
+
+let _kernelPollTimer = null;
+
+function renderKernelStatus(st) {
+  const pill = $("kernel-status");
+  if (!pill) return;
+  if (!st || !st.state) { pill.hidden = true; return; }
+  const state = st.state || "unknown";
+  const busy = state === "busy";
+  pill.hidden = false;
+  pill.classList.toggle("busy", busy);
+  pill.classList.toggle("stopped", state === "stopped" || state === "dead");
+  pill.classList.toggle("remote", !!st.remote);
+  const label = busy ? "kernel busy" : (state === "idle" ? "kernel idle" : state);
+  pill.innerHTML = `<span class="kp-dot"></span><span>${esc(label)}${st.remote ? " (remote)" : ""}</span>`;
+
+  const detail = $("kernel-status-detail");
+  if (detail) {
+    detail.innerHTML = "";
+    const rows = [
+      ["state", state],
+      ["pid", st.pid != null ? st.pid : "—"],
+      ["uptime", st.uptime != null ? `${st.uptime}s` : "—"],
+      ["executions", st.exec_count],
+      ["cwd", st.cwd || "—"],
+    ];
+    if (st.current_code) rows.push(["running", String(st.current_code).slice(0, 80)]);
+    if (st.remote_url) rows.push(["server", st.remote_url]);
+    if (st.last_error) rows.push(["last error", String(st.last_error).slice(0, 120)]);
+    const d = document.createElement("div");
+    d.className = busy ? "finding info" : "finding";
+    d.innerHTML = rows.map(([k, v]) =>
+      `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("");
+    detail.appendChild(d);
+  }
+}
+
+function startKernelPolling() {
+  stopKernelPolling();
+  _kernelPollTimer = setInterval(fetchKernelStatus, 3000);
+}
+
+function stopKernelPolling() {
+  if (_kernelPollTimer) { clearInterval(_kernelPollTimer); _kernelPollTimer = null; }
+}
+
+async function fetchKernelStatus() {
+  if (!state.project) return;
+  try {
+    const st = await api(`/api/projects/${state.project}/kernel/status`);
+    renderKernelStatus(st);
+  } catch (e) { /* silent: server may be between states */ }
+}
+
 /* ============================ review / grants ============================ */
 
 function renderReview(findings, suggestions) {
@@ -1127,6 +1182,7 @@ async function switchProject(name) {
   state.activeExperiment = null;
   await refreshState();
   connect();
+  startKernelPolling();
 }
 
 async function refreshState() {
@@ -1145,6 +1201,7 @@ async function refreshState() {
   loadWorkflow();
   loadFiles();
   loadApprovals();
+  fetchKernelStatus();
   loadGraphs();
 }
 
@@ -3963,7 +4020,7 @@ if (auditEoOv) auditEoOv.addEventListener("click", (e) => {
 
 /* ===================== experiment branch history (git-flow) ===================== */
 
-let branchView = "branches";
+let branchView = "timeline";
 let branchExpChoice = null;  // explicit user choice; null = auto (active experiment)
 
 async function loadBranches() {
@@ -4680,6 +4737,7 @@ async function refreshKernelPanel() {
     const r = await api(`/api/projects/${state.project}/state`);
     renderKernel(r.variables, r.env);
   } catch (e) { /* silent */ }
+  fetchKernelStatus();
 }
 
 $("nb-new-btn").addEventListener("click", () => {
