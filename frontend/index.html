@@ -409,8 +409,8 @@
     <div id="branch-overlay" class="branch-overlay hidden">
       <div class="branch-overlay-box">
         <div class="branch-head">
-          <span class="agent-title">Experiment branch history</span>
-          <span class="muted exp-hint">git-style flow · experiments as branches · runs as nodes with parameters</span>
+          <span class="agent-title">Experiments</span>
+          <span class="muted exp-hint"></span>
           <div class="branch-views">
             <button class="branch-view-btn" data-branchview="branches">Branches</button>
             <button class="branch-view-btn active" data-branchview="timeline">Timeline</button>
@@ -448,13 +448,35 @@
             <div id="branch-resizer" class="branch-resizer" title="Drag to resize detail pane"></div>
             <div id="branch-detail" class="branch-detail scroll"></div>
           </div>
+          <div id="branch-insights" class="branch-insights">
+            <section class="bi-card">
+              <h4>Experiments</h4>
+              <div id="bi-experiments" class="bi-body"></div>
+            </section>
+            <section class="bi-card">
+              <h4>Recent runs</h4>
+              <div id="bi-recent" class="bi-body"></div>
+            </section>
+            <section class="bi-card">
+              <h4>Goals</h4>
+              <div id="bi-goals" class="bi-body"></div>
+            </section>
+            <section class="bi-card">
+              <h4>Run comparison</h4>
+              <div id="bi-compare" class="bi-body"></div>
+            </section>
+            <section class="bi-card">
+              <h4>Artifacts</h4>
+              <div id="bi-artifacts" class="bi-body"></div>
+            </section>
+          </div>
         </div>
       </div>
     </div>
   </div>
   <button id="branch-toggle" class="branch-fab" title="Experiment branch history (git-flow)">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h9"/><path d="M6 9c0-1.5 0-3 3-3h6"/></svg>
-    <span>Branches</span>
+    <span class="branch-fab-icon">🧪🦊</span>
+    <span>Experiments</span>
   </button>
 </div>
 
@@ -659,7 +681,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v90";
+  window.FOX_VER = "v95";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

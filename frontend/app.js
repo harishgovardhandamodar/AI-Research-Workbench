@@ -2810,6 +2810,15 @@ function expNodeValue(node, metric) {
 }
 function _fmtAxis(v) { return String(Math.round(Number(v) * 1000) / 1000); }
 
+// Prefer `accuracy` as the default metric whenever it is available.
+function preferMetricDefault(opts) {
+  if (!opts.length) return "";
+  const exact = opts.find((k) => String(k).toLowerCase() === "accuracy");
+  if (exact) return exact;
+  const like = opts.find((k) => String(k).toLowerCase().includes("accuracy"));
+  return like || opts[0];
+}
+
 function populateExpMetrics() {
   const nodes = (state.expGraph && state.expGraph.nodes) || [];
   // only list metrics that actually have a value in the runs
@@ -2820,7 +2829,7 @@ function populateExpMetrics() {
     }
   });
   const opts = [...withValue].sort();
-  if (!opts.includes(state.expMetric)) state.expMetric = opts[0] || "";
+  if (!opts.includes(state.expMetric)) state.expMetric = preferMetricDefault(opts);
   const fill = (sel) => {
     if (!sel) return;
     sel.innerHTML = opts.map((k) =>
@@ -4221,6 +4230,7 @@ let branchTimeIdx = null;    // runs revealed by the evolution slider; null = al
 let branchStatusFilter = ""; // "" | "ok" | "error"
 let branchCompact = true;    // collapse linear runs between forks
 let branchPlayInt = 0;       // evolution play interval (1 run / second)
+let branchMetricUserPicked = false;  // user explicitly changed the metric
 
 async function loadBranches() {
   const graphEl = $("branch-graph");
@@ -4229,9 +4239,15 @@ async function loadBranches() {
     // always refetch the timeline/graph data too, so newly collected runs and
     // their metrics show up for both new and old runs (not a stale cache)
     state._branchGraphProject = null;
-    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/experiments/branches`);
+    const [r, st] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(state.project)}/experiments/branches`),
+      api(`/api/projects/${encodeURIComponent(state.project)}/state`),
+    ]);
     state.branches = r || { nodes: [], edges: [], experiments: [], tips: [] };
+    if (st && Array.isArray(st.artifacts)) state.artifacts = st.artifacts;
+    await loadBranchGraphData();   // expList/expRuns for the insight cards
     await switchBranchView(branchView);
+    renderBranchInsights();
     if (state.branchSelected) showBranchDetail(state.branchSelected);
   } catch (e) {
     graphEl.innerHTML = '<div class="empty">Could not load branch history.</div>';
@@ -4278,7 +4294,10 @@ function populateBranchMetric() {
   const sel = $("branch-metric");
   if (!sel) return;
   sel.innerHTML = opts.map((k) => `<option value="${esc(k)}">${esc(k.replace(/_/g, " "))}</option>`).join("");
-  if (!opts.includes(state.branchMetric)) state.branchMetric = opts[0] || "";
+  // accuracy is the default whenever it's available, until the user picks one
+  if (!branchMetricUserPicked || !opts.includes(state.branchMetric)) {
+    state.branchMetric = preferMetricDefault(opts);
+  }
   sel.value = state.branchMetric;
 }
 
@@ -4408,11 +4427,180 @@ function branchRerenderCurrent() {
   renderBranchGraphView();
 }
 
+// ----------------------------------------------------------------------------
+// Below-the-graph insight cards: experiments, recent runs, goals, run
+// comparison and artifacts, all drawn from the loaded branch/experiment state.
+
+function renderBranchInsights() {
+  const exps = $("bi-experiments"), recent = $("bi-recent"), goals = $("bi-goals"),
+        cmp = $("bi-compare"), arts = $("bi-artifacts");
+  if (!exps && !recent && !goals && !cmp && !arts) return;
+  const branches = state.branches || {};
+  const expData = (state.expList && state.expList.length) ? state.expList
+    : (branches.experiments || []);
+  const runData = (state.expRuns && state.expRuns.length) ? state.expRuns
+    : (branches.nodes || []);
+  const runCountOf = (eid) =>
+    (branches.nodes || []).filter((n) => String(n.experiment_id) === String(eid)).length;
+  const best = branchBestNodes(branches.nodes || []);
+
+  // -- experiments -------------------------------------------------------
+  if (exps) {
+    if (!expData.length) {
+      exps.innerHTML = '<div class="muted">No experiments yet.</div>';
+    } else {
+      exps.innerHTML = expData.slice(0, 12).map((e) => {
+        const rc = e.run_count != null ? e.run_count : runCountOf(e.id);
+        const goal = e.goal_metric
+          ? `${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"}${e.goal_target != null ? " → " + _fmtNum(e.goal_target) : ""}`
+          : "no goal";
+        const st = e.status || "active";
+        const badge = st === "active" ? "det" : (st === "completed" ? "ok" : "warn");
+        return `<button class="bi-exp" data-id="${esc(e.id)}">
+          <span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>
+          <b>${esc(e.name)}</b>
+          <span class="exp-badge ${badge}">${esc(st)}</span>
+          <span class="muted">${rc} run(s) · goal ${goal}</span>
+        </button>`;
+      }).join("");
+    }
+    exps.querySelectorAll(".bi-exp").forEach((b) => b.addEventListener("click", () => {
+      branchExpChoice = b.dataset.id;
+      const sel = $("branch-exp-filter");
+      if (sel && sel.options.length) sel.value = b.dataset.id;
+      switchBranchView(branchView);
+    }));
+  }
+
+  // -- recent runs -------------------------------------------------------
+  if (recent) {
+    const sorted = [...runData].sort(
+      (a, b) => ((b.started_at || 0) - (a.started_at || 0)) || (b.id - a.id));
+    if (!sorted.length) {
+      recent.innerHTML = '<div class="muted">No runs yet.</div>';
+    } else {
+      recent.innerHTML = sorted.slice(0, 10).map((n) => {
+        const failed = n.status === "error";
+        const meta = [
+          n.experiment_name ? "· " + n.experiment_name : "",
+          n.goal_value != null ? `· ${n.goal_metric}=${_fmtNum(n.goal_value)}` : "",
+          n.started_at ? `· ${new Date(n.started_at * 1000).toLocaleDateString()}` : "",
+        ].filter(Boolean).join(" ");
+        return `<button class="bi-run" data-id="${esc(n.id)}">
+          <span class="bi-status ${failed ? "fail" : "ok"}"></span>
+          <b>#${esc(n.id)}</b> <span>${esc((n.label || n.kind || "").slice(0, 26))}</span>
+          <span class="muted">${meta}</span>
+        </button>`;
+      }).join("");
+    }
+    recent.querySelectorAll(".bi-run").forEach((b) => b.addEventListener("click", () => {
+      state.branchSelected = Number(b.dataset.id);
+      state.expSelected = state.branchSelected;
+      showBranchDetail(state.branchSelected);
+      branchRerenderCurrent();
+    }));
+  }
+
+  // -- goals -------------------------------------------------------------
+  if (goals) {
+    const withGoal = expData.filter((e) => e.goal_metric);
+    if (!withGoal.length) {
+      goals.innerHTML = '<div class="muted">No goals defined — add a goal metric to an experiment.</div>';
+    } else {
+      goals.innerHTML = withGoal.map((e) => {
+        const b = best[e.id];
+        const cur = (b && b.goal_value != null)
+          ? `${e.goal_metric}=${_fmtNum(b.goal_value)}` : "no best run yet";
+        const target = e.goal_target != null ? "target " + _fmtNum(e.goal_target) : "no target";
+        const reached = e.goal_target != null && b && b.goal_value != null &&
+          (e.higher_better !== false
+            ? Number(b.goal_value) >= Number(e.goal_target)
+            : Number(b.goal_value) <= Number(e.goal_target));
+        return `<div class="bi-goal">
+          <span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>
+          <b>${esc(e.name)}</b> — ${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"} ${target}
+          <span class="muted">best: ${cur}</span>
+          ${reached ? '<span class="exp-badge ok">✓ reached</span>' : ""}
+        </div>`;
+      }).join("");
+    }
+  }
+
+  // -- run comparison ----------------------------------------------------
+  if (cmp) {
+    const runs = branches.nodes || [];
+    if (!runs.length) {
+      cmp.innerHTML = '<div class="muted">No runs yet to compare.</div>';
+    } else {
+      const opts = [...runs].sort((a, b) => (b.started_at || 0) - (a.started_at || 0))
+        .map((n) => `<option value="${esc(n.id)}">#${esc(n.id)} ${esc((n.label || n.kind || "").slice(0, 40))}</option>`).join("");
+      cmp.innerHTML = `<div class="bi-cmp">
+          <select id="bi-cmp-a">${opts}</select>
+          <span class="muted">vs</span>
+          <select id="bi-cmp-b">${opts}</select>
+          <button id="bi-cmp-go" class="btn subtle small">Compare</button>
+          <div id="bi-cmp-result" class="bi-cmp-result"></div>
+        </div>`;
+      const selA = $("bi-cmp-a"), selB = $("bi-cmp-b");
+      if (selA && selB && selB.options.length > 1) selB.selectedIndex = 1;
+      $("bi-cmp-go").addEventListener("click", () => {
+        renderBranchCompare(selA ? selA.value : "", selB ? selB.value : "");
+      });
+    }
+  }
+
+  // -- artifacts ---------------------------------------------------------
+  if (arts) {
+    const arr = state.artifacts || [];
+    if (!arr.length) {
+      arts.innerHTML = '<div class="muted">No artifacts yet — figures and saved tables appear here.</div>';
+    } else {
+      arts.innerHTML = arr.slice(0, 14).map((a) => `
+        <button class="bi-art" data-id="${esc(a.id)}">
+          ${a.data_type === "png"
+            ? `<img class="bi-art-thumb" src="${B(`/artifacts/${a.id}`)}" alt="">`
+            : `<span class="bi-art-ic">📄</span>`}
+          <span class="bi-art-name">${esc(a.name)}</span>
+          <span class="muted">${esc(a.kind || "")}</span>
+        </button>`).join("");
+    }
+    arts.querySelectorAll(".bi-art").forEach((b) => b.addEventListener("click", () => {
+      const a = (state.artifacts || []).find((x) => String(x.id) === String(b.dataset.id));
+      if (a) openArtifact(a);
+    }));
+  }
+}
+
+async function renderBranchCompare(a, b) {
+  const el = $("bi-cmp-result");
+  if (!el) return;
+  if (!a || !b) { el.innerHTML = ""; return; }
+  el.innerHTML = '<div class="muted">Comparing…</div>';
+  try {
+    const r = await api(`/api/projects/${state.project}/compare?run_a=${encodeURIComponent(a)}&run_b=${encodeURIComponent(b)}`);
+    const c = r.comparison;
+    if (!c.rows.length) {
+      el.innerHTML = '<div class="muted">No shared numeric metrics between the two runs.</div>';
+      return;
+    }
+    let rows = `<tr><th>metric</th><th>${esc(c.a)}</th><th>${esc(c.b)}</th><th>Δ</th></tr>`;
+    for (const row of c.rows) {
+      const arrow = row.delta > 0 ? "▲" : row.delta < 0 ? "▼" : "—";
+      rows += `<tr><td>${esc(row.metric)}</td><td>${_fmtNum(row.a)}</td><td>${_fmtNum(row.b)}</td>
+        <td class="${row.delta > 0 ? "delta-up" : row.delta < 0 ? "delta-down" : ""}">${arrow} ${_fmtNum(row.delta)}</td></tr>`;
+    }
+    el.innerHTML = `<table class="cmp-table"><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="muted">Comparison failed: ${esc(e.message || e)}</div>`;
+  }
+}
+
 document.querySelectorAll(".branch-view-btn").forEach((b) =>
   b.addEventListener("click", () => switchBranchView(b.dataset.branchview)));
 const branchMetricSel = $("branch-metric");
 if (branchMetricSel) branchMetricSel.addEventListener("change", (e) => {
   state.branchMetric = e.target.value;
+  branchMetricUserPicked = true;
   switchBranchView(branchView);
 });
 const branchExpSel = $("branch-exp-filter");
@@ -4602,7 +4790,7 @@ function renderBranchGraph() {
   for (const e of drawEdges) hasVisibleChild.add(e.parent);
 
   // 5) svg
-  let svg = `<svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px">`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}">`;
   for (const e of drawEdges) {
     const p = pos[e.parent], c = pos[e.child];
     if (!p || !c) continue;
