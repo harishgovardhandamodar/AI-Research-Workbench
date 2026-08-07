@@ -287,7 +287,27 @@ runs and a **ranking** (leaderboard) of variants by the goal metric.
 
 - **Timeline** — metric evolution across runs over time.
 - **Graph** — similarity edges between runs (thicker = more similar). Click a
-  node for details.
+  node for details. The graph is **weighted and draggable**: edge weights
+  (relation-derived, or from the graph JSON) drive the layout — **drag any node**
+  and the graph re-settles around it (the node stays pinned until Relayout), and
+  a **⚖ weight-strength slider** in the graph modal tunes how strongly weights
+  shape the layout.
+
+### Branch history (Branches overlay)
+
+The **⛙ Branches** button next to the chat composer (or the FAB in the top
+bar) opens a git-style lineage overlay with three views:
+
+- **Branches** — a lane-per-experiment tree of runs (nodes = config + metrics,
+  ★ = best, ⦿ = branch tip, dashed = failed). **🌲 Compact** collapses linear
+  runs between forks into a skeleton; **experiment** and **status** filters
+  narrow the view.
+- **Timeline / Graph** — the metric timeline and similarity graph from above,
+  in the overlay.
+
+All three views share a **time / evolution slider**: drag it to reveal the
+history run-by-run, or press **▶** to animate one run per second. Labels
+auto-hide when more than 40 runs are shown.
 
 ### Goals
 

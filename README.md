@@ -60,6 +60,33 @@ with `clean filter 'lfs' failed` on hosts without `git-lfs` installed. The
 light theme got a readability pass so **user bubbles keep readable light text**
 on their dark-green background.
 
+**🧭 Session control & symbolic top bar** — projects are managed through a
+single **session control**: one `🗂` widget in the top bar (open a session,
+fork it, or delete it) replaces the old project dropdown plus `+` / fork /
+delete buttons. The top bar went **symbolic** — one-emoji tabs (💬 Chat,
+🧪 Experiments, 🤖 Agent, 🖊 Editor, 🕸 Graphs, 🛡 Audit) and icon-only actions
+(🖨 Export PDF, ⚙ Settings).
+
+**🎛 Branch history with evolution** — the experiment branch overlay
+(Branches / Timeline / Graph) was re-engineered to de-clutter and visualize
+evolution. The **🌲 Compact** toggle collapses linear runs between forks into a
+readable skeleton (roots, forks, merges, best ★, branch tips ⦿); **status** and
+**experiment** filters narrow the view; and a **time / evolution slider** reveals
+the history run-by-run — draggable, or **▶ play** animates one run per second —
+in all three views (labels auto-hide past 40 runs, and Timeline/Graph keep their
+positions stable while scrubbing).
+
+**🕸 Interactive knowledge graph** — the knowledge-graph viewer is now
+**weighted and draggable**: edge weights (relation-derived, or an explicit
+`weight` from the graph JSON) scale spring attraction and edge thickness;
+**drag any node** and the graph re-settles around it in real time, with dragged
+nodes **pinned** until Relayout; and a **⚖ weight-strength slider** tunes how
+strongly weights shape the layout (0 = uniform, 200 = amplified).
+
+**🌗 Light-mode readability** — code blocks, inline code, user tags, session
+dropdowns and chart labels are now readable in light mode (no more white-on-
+white).
+
 Also in this release: `.env` is now gitignored, and the audit CLI ships via the
 `audit` extras (`pip install -e ".[audit]"`).
 
@@ -77,13 +104,18 @@ Also in this release: `.env` is now gitignored, and the audit CLI ships via the
   ![Autoresearch timeline](docs/images/ar-timeline.png)
 - **Experiment tracking cockpit** — timeline + similarity graph with experiment
   coloring, goal lines, best-run highlight, per-run **suggestions 💡**, and
-  one-click **compare vs best** / **improve from here**.
+  one-click **compare vs best** / **improve from here**; the graph is **weighted
+  and draggable** (edge weights drive the layout, drag nodes to re-arrange) and
+  both charts share the run-by-run **evolution slider**.
   ![Experiment tracking view](docs/images/experiment-tracking.png) ![Experiment timeline view](docs/images/experiment-timeline.png) ![Experiment graph view](docs/images/experiment-graph.png)
 - **Git-flow branch history** — a toggleable overlay in the chat window renders
   the experiment lineage as a **git-style branching timeline**: experiments are
   branches, each run (baseline, improve-loop iteration, fresh rerun) is a node
   with its **experiment parameters** (config + metrics), best runs starred and
-  branch tips marked. Use the **⛙ Branches** button next to the chat composer.
+  branch tips marked. Filter by experiment/status, collapse linear runs with
+  **🌲 Compact**, and scrub a **run-by-run evolution slider** (▶ plays one run
+  per second) across the Branches, Timeline and Graph views. Use the **⛙
+  Branches** button next to the chat composer.
 - **Experiment source control** — version experiments, runs and artifacts in a
   sibling git repo (e.g. `personal-experiments`) with **auto-commit/push to
   GitHub** and manual Commit/Push buttons; see
