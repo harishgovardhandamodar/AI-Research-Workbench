@@ -405,6 +405,99 @@ def cmd_runs(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------ audit trail ----
+def cmd_audit(args) -> int:
+    _log.debug("audit project={} action={}", getattr(args, "project", None),
+               getattr(args, "action", "overview"))
+    cli = _client(args)
+    name = args.project
+    action = getattr(args, "action", "overview")
+
+    def fetch(path: str) -> dict:
+        return _spinner(args, f"loading audit {action}", cli.get,
+                        f"/api/projects/{name}/audit{path}")
+
+    try:
+        if action == "verify":
+            data = fetch("/verify")
+            if _want_json(args):
+                return _emit(args, data)
+            ch = data.get("chain", {})
+            status = ok("intact") if ch.get("ok") else err("broken")
+            print(panel(f"audit chain · {name}",
+                        f"{status} · {ch.get('checked', 0)} event(s) hashed"))
+            return 0 if ch.get("ok") else 1
+        if action == "deviations":
+            data = fetch("/deviations?limit=50")
+            if _want_json(args):
+                return _emit(args, data)
+            devs = data.get("deviations", [])
+            if not devs:
+                print(panel(f"audit deviations · {name}", dim("no deviations")))
+                return 0
+            rows = [[d.get("severity", "?").upper(),
+                     str(d.get("rule", "?"))[:30],
+                     str(d.get("agent_id", "?"))[:16],
+                     "✓" if d.get("reviewed") else "—",
+                     ui.fmt_time(d.get("created_at"))]
+                    for d in devs[:20]]
+            print(panel(f"audit deviations · {name}",
+                        table(["sev", "rule", "agent", "reviewed", "when"], rows)))
+            return 0
+        if action == "events":
+            data = fetch("/events?limit=50")
+            if _want_json(args):
+                return _emit(args, data)
+            evs = data.get("events", [])
+            if not evs:
+                print(panel(f"audit events · {name}", dim("no events yet")))
+                return 0
+            rows = [[str(e.get("timestamp", "?"))[:19],
+                     str(e.get("severity", "?"))[:8],
+                     str(e.get("agent_id", "?"))[:14],
+                     str(e.get("tool_name") or e.get("method", "?"))[:26],
+                     str((e.get("policy_decision") or {}).get("outcome", ""))]
+                    for e in evs[:30]]
+            print(panel(f"audit events · {name}",
+                        table(["time", "sev", "agent", "tool", "policy"], rows)))
+            return 0
+        if action == "agents":
+            data = fetch("/agents")
+            if _want_json(args):
+                return _emit(args, data)
+            ags = data.get("agents", [])
+            if not ags:
+                print(panel(f"audit agents · {name}", dim("no audited agents")))
+                return 0
+            rows = [[str(a.get("agent_id", "?"))[:24],
+                     a.get("events", "?"),
+                     a.get("criticals", 0),
+                     ui.fmt_time(a.get("last_ts"))]
+                    for a in ags]
+            print(panel(f"audit agents · {name}",
+                        table(["agent", "events", "criticals", "last"], rows)))
+            return 0
+        # overview / summary (default)
+        data = fetch("/summary")
+        if _want_json(args):
+            return _emit(args, data)
+        s = data.get("summary", {})
+        lines = [keyval("events", s.get("total", 0)),
+                 keyval("critical", s.get("critical", 0)),
+                 keyval("overrides", s.get("overrides", 0)),
+                 keyval("denials", s.get("denials", 0)),
+                 keyval("data access", s.get("data_access", 0)),
+                 keyval("network", s.get("network", 0)),
+                 keyval("filesystem", s.get("filesystem", 0)),
+                 keyval("open deviations", s.get("open_deviations", 0)),
+                 keyval("active agents", len(s.get("active_agents", [])))]
+        print(panel(f"audit overview · {name}", "\n".join(lines)))
+        return 0
+    except FoxClientError as e:
+        return _fail(args, str(e))
+
+
+
 # ------------------------------------------------------------ experiments ----
 def cmd_experiments(args) -> int:
     _log.debug("experiments project={} action={}",

@@ -162,3 +162,70 @@ class TestBuildGraph(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBranchGraph(unittest.TestCase):
+    def test_branch_graph_chains_and_branches(self):
+        from backend.experiments import build_branch_graph
+
+        exps = [{"id": 1, "name": "eps sweep", "goal_metric": "acc",
+                 "goal_target": 0.9, "higher_better": True, "status": "active"}]
+        # e1: baseline run, then improve iteration explicitly branching off it
+        runs = [
+            {"id": 1, "experiment_id": 1, "kind": "agent_run", "label": "baseline",
+             "config": {"eps": 0.1}, "metrics": {"acc": 0.80},
+             "started_at": 100.0, "parent_run_id": None},
+            {"id": 2, "experiment_id": 1, "kind": "agent_run", "label": "improve-1",
+             "config": {"eps": 0.3}, "metrics": {"acc": 0.86},
+             "started_at": 200.0, "parent_run_id": 1},
+            {"id": 3, "experiment_id": 1, "kind": "agent_run", "label": "improve-2",
+             "config": {"eps": 0.5}, "metrics": {"acc": 0.92},
+             "started_at": 300.0, "parent_run_id": 2},
+        ]
+        g = build_branch_graph(runs, exps)
+        self.assertEqual(len(g["nodes"]), 3)
+        parents = {e["child"]: e["parent"] for e in g["edges"]}
+        self.assertEqual(parents, {2: 1, 3: 2})
+        self.assertEqual(g["tips"], [3])
+        n1 = g["nodes"][0]
+        self.assertEqual(n1["experiment_name"], "eps sweep")
+        self.assertEqual(n1["config"]["eps"], 0.1)
+        self.assertEqual(n1["goal_value"], 0.80)
+
+    def test_branch_graph_infers_parents_chronologically(self):
+        from backend.experiments import build_branch_graph
+
+        exps = [{"id": 7, "name": "exp", "goal_metric": "", "goal_target": None,
+                 "higher_better": True, "status": "active"}]
+        runs = [
+            {"id": 10, "experiment_id": 7, "kind": "agent_run", "label": None,
+             "config": {}, "metrics": {}, "started_at": 10.0, "parent_run_id": None},
+            {"id": 11, "experiment_id": 7, "kind": "agent_run", "label": None,
+             "config": {}, "metrics": {}, "started_at": 20.0, "parent_run_id": None},
+        ]
+        g = build_branch_graph(runs, exps)
+        parents = {e["child"]: e["parent"] for e in g["edges"]}
+        self.assertEqual(parents, {11: 10})
+        # the inferred parent is written back onto the node
+        n11 = next(n for n in g["nodes"] if n["id"] == 11)
+        self.assertEqual(n11["parent_run_id"], 10)
+
+    def test_branch_graph_chains_same_kind_standalone(self):
+        from backend.experiments import build_branch_graph
+
+        # privacy fresh reruns have no experiment; they chain by kind
+        runs = [
+            {"id": 1, "experiment_id": None, "kind": "privacy_workflow",
+             "label": "privacy workflow", "config": {"fresh": False}, "metrics": {},
+             "started_at": 1.0, "parent_run_id": None},
+            {"id": 2, "experiment_id": None, "kind": "privacy_workflow",
+             "label": "privacy workflow (fresh)", "config": {"fresh": True},
+             "metrics": {}, "started_at": 2.0, "parent_run_id": None},
+            {"id": 3, "experiment_id": None, "kind": "notebook",
+             "label": "nb", "config": {}, "metrics": {},
+             "started_at": 3.0, "parent_run_id": None},
+        ]
+        g = build_branch_graph(runs, [])
+        parents = {e["child"]: e["parent"] for e in g["edges"]}
+        self.assertEqual(parents, {2: 1})
+        self.assertNotIn(3, parents)  # different kind -> separate root

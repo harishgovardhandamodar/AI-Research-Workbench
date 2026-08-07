@@ -85,6 +85,9 @@ app.include_router(projects.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
 app.include_router(notebooks.router)
+from .routers.audit import router as audit_router
+
+app.include_router(audit_router)
 from .research_knowledge_graphs.router import router as rkg_router
 
 app.include_router(rkg_router)
@@ -313,6 +316,17 @@ async def run_notebook_intent(rt: ProjectRuntime, emit, name: str,
                 outs.append("".join(o.get("text", [])))
     if outs:
         lines.append("\n```text\n" + "\n".join(outs)[-2500:] + "\n```")
+    try:
+        from .audit import emit_tool_audit
+
+        await emit_tool_audit(
+            rt.audit_emitter, agent_id="Fox", session_id=rt.name,
+            trace_id=message_id or None, tool_name="run_notebook",
+            method="run_notebook", args={"notebook": name, "fresh": fresh},
+            result="\n".join(lines), ok=True,
+            duration_ms=0.0, source="coordinator")
+    except Exception:  # noqa: BLE001
+        pass
     return "\n".join(lines)
 
 
@@ -518,6 +532,16 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
                 data = json.loads(runs_file.read_text())
                 if data and isinstance(data, list):
                     last = data[-1]
+            # Branching lineage: fresh reruns derive from the previous workflow
+            # run so the branch-history graph chains them.
+            parent_run_id = None
+            try:
+                prior = [r for r in rt.store.list_runs()
+                         if r.get("kind") == "privacy_workflow"]
+                if prior:
+                    parent_run_id = prior[-1]["id"]
+            except Exception:  # noqa: BLE001
+                pass
             rt.store.add_run(
                 prompt=prompt or "privacy workflow",
                 reply=message[:4000],
@@ -529,9 +553,22 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
                 label="privacy workflow" + (" (fresh)" if fresh else ""),
                 config={"findings": findings_from_run(last),
                         "seed": last.get("seed"), "fresh": bool(fresh)},
+                parent_run_id=parent_run_id,
             )
         except Exception:  # noqa: BLE001
             pass
+    try:
+        from .audit import emit_tool_audit
+
+        await emit_tool_audit(
+            rt.audit_emitter, agent_id="Fox", session_id=rt.name,
+            trace_id=prompt[:120] or None, tool_name="privacy_workflow",
+            method="privacy_workflow",
+            args={"fresh": fresh, "compare": compare},
+            result=message[:2000], ok=True,
+            duration_ms=0.0, source="coordinator")
+    except Exception:  # noqa: BLE001
+        pass
     return message[:60_000] if message else "(workflow produced no output)"
 
 
@@ -856,7 +893,8 @@ async def ws_chat(ws: WebSocket, name: str):
     # keeps the latest snapshot so page/section loads can fetch it via REST.
     rt.workflow.subscribe(emit)
 
-    broker = ApprovalBroker(emit, store=rt.store)
+    broker = ApprovalBroker(emit, store=rt.store, audit=rt.audit_emitter,
+                            session_id=rt.name, agent_id="Fox")
 
     def _record_run(r: dict) -> int:
         rid = rt.store.add_run(
@@ -871,7 +909,8 @@ async def ws_chat(ws: WebSocket, name: str):
             review=r.get("review"),
             experiment_id=r.get("experiment_id") or None,
             config=r.get("config"),
-            label=r.get("label"))
+            label=r.get("label"),
+            parent_run_id=r.get("parent_run_id") or None)
         # Auto-commit experiment artifacts to the management repo (best-effort,
         # off the event loop) when a run is part of an experiment.
         try:
@@ -889,6 +928,7 @@ async def ws_chat(ws: WebSocket, name: str):
                               persist=lambda r, c, m: rt.store.add_message(r, c, m),
                               record=_record_run,
                               max_iters=rt.max_iters, mcp=mcp_registry,
+                              audit=rt.audit_emitter,
                               check_abort=abort_event.is_set)
 
     async def handle_turn(text: str, intent: str = "", experiment_id: str = "",
@@ -973,6 +1013,7 @@ async def ws_chat(ws: WebSocket, name: str):
                     return
                 mid = rt.store.add_message("user", text, {"tags": user_tags})
                 coordinator.ctx.message_id = str(mid)
+                broker.trace_id = str(mid)
                 await emit("user_message", {"id": mid, "content": text,
                                             "tags": user_tags,
                                             "created_at": _msg_created_at(rt, mid)})
@@ -1037,6 +1078,19 @@ async def ws_chat(ws: WebSocket, name: str):
                 await emit("status", {"message": "Agent is thinking…"})
                 await rt.maybe_compact()
                 llm_msgs = rt.build_llm_messages()
+                # Branching lineage: a turn that applies a reviewer suggestion
+                # ("Apply & rerun") derives from the run it improves; anything
+                # after a "fresh rerun"/autoresearch rerun derives from the last
+                # run of the same kind. Used by the branch-history graph.
+                try:
+                    if intent == "rerun_suggestion":
+                        last = rt.store.list_runs()
+                        if last:
+                            coordinator.ctx.parent_run_id = last[-1]["id"]
+                    elif intent == "autoresearch" or (text and "autoresearch" in text):
+                        pass  # handled by the autoresearch loop itself
+                except Exception:  # noqa: BLE001
+                    pass
                 # God mode: auto-approve everything and confine shell work to a
                 # quarantined per-turn folder. Restore normal policy afterwards.
                 saved_perms = coordinator.ctx.permissions
@@ -1085,6 +1139,12 @@ async def ws_chat(ws: WebSocket, name: str):
                     except Exception:  # noqa: BLE001
                         await emit("review", {"findings": [], "suggestions": []})
                 await emit("status", {"message": ""})
+                # Background deviation scan: flag novel tools, sequences,
+                # data classes and network destinations after the turn.
+                try:
+                    rt.audit_scanner.scan()
+                except Exception:  # noqa: BLE001
+                    pass
                 await emit("done", {})
             except TurnAborted:
                 await emit("status", {"message": ""})

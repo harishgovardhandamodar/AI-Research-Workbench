@@ -23,14 +23,16 @@ dependencies = [
 
 [project.optional-dependencies]
 jupyter = ["jupyter_server>=2.0"]
+audit = ["streamlit>=1.30"]
 
 [project.scripts]
 fox = "cli.main:main"
+agent-audit = "audit.cli:main"
 
 [project.entry-points."jupyter_server.extension"]
 fox = "jupyter_fox"
 
 [tool.setuptools]
-packages = ["jupyter_fox", "cli"]
+packages = ["jupyter_fox", "cli", "audit"]
 [tool.setuptools.package-data]
 cli = ["manual.md"]

@@ -14,6 +14,7 @@ import time
 
 from .agents.tools import ToolContext
 from .artifacts.store import ArtifactStore
+from .audit import ProjectDeviationScanner, make_audit
 from .kernels.manager import KernelManager
 from .notebooks import NotebookService
 from .permissions import PermissionManager
@@ -46,12 +47,16 @@ class ProjectRuntime:
             self.workflow.restore(json.loads(latest) if latest else None)
         except Exception:  # noqa: BLE001
             pass
+        # Local agent audit trail (SQLite + hash-chained JSONL).
+        self.audit_store, self.audit_emitter = make_audit(self.dir)
+        self.audit_scanner = ProjectDeviationScanner(self.audit_store)
+        self.audit_emitter.start()
 
     def ctx(self, emit, approval) -> ToolContext:
         return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
                            store=self.store, permissions=self.permissions,
                            approval=approval, emit=emit, notebooks=self.notebooks,
-                           workflow=self.workflow)
+                           workflow=self.workflow, audit=self.audit_emitter)
 
     def build_llm_messages(self) -> list[dict]:
         from .agents.coordinator import SYSTEM_PROMPT
@@ -115,6 +120,10 @@ class ProjectRuntime:
         self.store.set_setting("context_cutoff", str(new_cutoff))
 
     async def stop(self):
+        try:
+            await self.audit_emitter.stop()
+        except Exception:  # noqa: BLE001
+            pass
         await self.kernels.stop()
 
 

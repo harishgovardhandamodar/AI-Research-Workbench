@@ -43,6 +43,10 @@ class ToolContext:
     # God mode: when set, shell/agent work is confined to this quarantined
     # folder (full-access turns).
     quarantine_dir: str = ""
+    # Audit emitter for the local agent audit trail (optional).
+    audit: "Any | None" = None
+    # The run this turn derives from (improve loops / reruns / branching).
+    parent_run_id: "int | None" = None
     # Artifact ids produced by the most recent tool call, so the coordinator can
     # record exact run↔artifact linkage instead of parsing tool text.
     last_artifact_ids: list = dataclasses.field(default_factory=list)

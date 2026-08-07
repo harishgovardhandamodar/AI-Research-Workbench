@@ -89,6 +89,11 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
 
     # Attach loop-produced runs to the experiment.
     coordinator.ctx.experiment_id = str(experiment_id)
+    # Branching lineage: iteration 1 derives from the experiment's best prior
+    # run; each later iteration derives from the run the previous iteration
+    # produced, so the branch-history graph shows the improvement chain.
+    parent_run_id = best_id or (runs_all[-1]["id"] if runs_all else None)
+    coordinator.ctx.parent_run_id = parent_run_id
 
     for i in range(1, iterations + 1):
         if workflow is not None:
@@ -127,6 +132,10 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
 
         runs = store.list_runs()
         run = runs[-1] if runs else None
+        if run is not None:
+            # The next improvement iteration branches off this run.
+            parent_run_id = run["id"]
+            coordinator.ctx.parent_run_id = parent_run_id
         review = {"findings": [], "suggestions": []}
         try:
             review = await reviewer() if reviewer else review

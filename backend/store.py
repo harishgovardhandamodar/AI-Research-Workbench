@@ -130,6 +130,12 @@ class ProjectStore:
             c.execute("ALTER TABLE runs ADD COLUMN kind TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: older databases predate git-style run branching (which run
+        # a run was derived from, for the branch-history graph).
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN parent_run_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
         # Migration: older databases predate the experiment plan (B1: explicit
         # experiment-plan step the agent records when creating an experiment).
         try:
@@ -250,22 +256,25 @@ class ProjectStore:
                 experiment_id: int | None = None,
                 config: dict | None = None,
                 label: str | None = None,
-                kind: str = "agent_run") -> int:
+                kind: str = "agent_run",
+                parent_run_id: int | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
         privacy_workflow, ...) so the Experiments UI can render it generically.
+        `parent_run_id` links a run to the run it was derived from (improve
+        loops, reruns, branching) for the branch-history graph.
         """
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
-            " label, kind)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " label, kind, parent_run_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
              json.dumps(metrics or {}), json.dumps(review or {}),
              experiment_id, json.dumps(config or {}), label or None,
-             kind or "agent_run"))
+             kind or "agent_run", parent_run_id))
         self._conn.commit()
         return cur.lastrowid
 
@@ -310,7 +319,8 @@ class ProjectStore:
                 "experiment_id": r["experiment_id"],
                 "config": _jload(r["config"], {}),
                 "label": r["label"],
-                "kind": r["kind"] or "agent_run"}
+                "kind": r["kind"] or "agent_run",
+                "parent_run_id": r["parent_run_id"]}
 
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",

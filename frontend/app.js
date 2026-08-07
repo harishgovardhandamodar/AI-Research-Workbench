@@ -3,6 +3,41 @@
 const $ = (id) => document.getElementById(id);
 const FOX_BASE = window.FOX_BASE || "";
 const B = (path) => (FOX_BASE ? FOX_BASE + path : path);
+
+/* ---------- theme (light / dark) ---------- */
+
+let themeVars = {};
+function cssVar(name, fallback) {
+  if (themeVars[name] === undefined) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    themeVars[name] = v || fallback || "";
+  }
+  return themeVars[name];
+}
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") || "dark";
+}
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+  themeVars = {};  // invalidate cached chart colours
+  try { localStorage.setItem("fox-theme", theme === "light" ? "light" : "dark"); } catch (e) {}
+  const btn = $("theme-toggle");
+  if (btn) btn.textContent = theme === "light" ? "🌙" : "🌓";
+}
+function toggleTheme() {
+  applyTheme(currentTheme() === "light" ? "dark" : "light");
+  // re-render charts whose colours come from CSS variables
+  if (state.expRuns) renderExperiments();
+  if (state.branches && branchView === "branches") renderBranchGraph();
+  if (state.audit) renderAuditOverview();
+  if (state.branches && branchView !== "branches") switchBranchView(branchView);
+}
+(function initTheme() {
+  let saved = "dark";
+  try { saved = localStorage.getItem("fox-theme") || "dark"; } catch (e) {}
+  const reduced = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  applyTheme(saved === "light" ? "light" : (saved === "dark" ? "dark" : (reduced ? "light" : "dark")));
+})();
 const state = {
   projects: [],
   project: "",
@@ -1867,6 +1902,7 @@ $("model-select").addEventListener("change", async (e) => {
   setTimeout(connect, 200);
 });
 $("settings-btn").addEventListener("click", openSettings);
+$("theme-toggle").addEventListener("click", toggleTheme);
 $("side-toggle").addEventListener("click", () => {
   const collapsed = document.getElementById("app").classList.toggle("side-collapsed");
   try { localStorage.setItem("fox.sidePanel", collapsed ? "0" : "1"); } catch (e) {}
@@ -2182,6 +2218,16 @@ async function renderExpContext() {
     : "no goal metric";
   $("ec-goal").textContent = goal;
 
+  const nameEl = $("ec-name");
+  if (nameEl) nameEl.textContent = (exp && exp.name) || "experiment";
+  const dotEl = $("ec-dot");
+  if (dotEl) {
+    const st = (exp && exp.status) || "active";
+    dotEl.style.background = st === "completed" ? "var(--ok)"
+      : st === "cancelled" ? "var(--warn)" : "var(--accent)";
+    dotEl.style.boxShadow = `0 0 6px ${dotEl.style.background}`;
+  }
+
   const bestTxt = best
     ? `best ${_fmtNum(best.v)}${best.run.id != null ? " (run #" + best.run.id + ")" : ""}`
     : "no runs yet";
@@ -2325,6 +2371,12 @@ async function ecManagementAction(kind) {
 }
 
 $("ec-select").addEventListener("change", (e) => focusExperiment(parseInt(e.target.value, 10)));
+$("ec-toggle").addEventListener("click", () => {
+  const toggle = $("ec-toggle");
+  const body = $("ec-body");
+  const open = body.classList.toggle("hidden");
+  toggle.classList.toggle("open", !open);
+});
 $("ec-prev").addEventListener("click", () => jumpExpMessage(-1));
 $("ec-next").addEventListener("click", () => jumpExpMessage(1));
 $("ec-improve").addEventListener("click", () => {
@@ -2757,7 +2809,7 @@ function buildTimelineSvg(metric, W) {
 
   for (let k = 0; k <= 4; k++) {
     const v = min + span * k / 4, yy = y(v);
-    out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#332d44" stroke-width="0.5"></line>`;
+    out += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="${cssVar("--chart-grid", "#332d44")}" stroke-width="0.5"></line>`;
     out += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="#9b93ab">${_fmtNum(v)}</text>`;
   }
   // Goal lines.
@@ -2785,7 +2837,7 @@ function buildTimelineSvg(metric, W) {
     const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
     let mark = "";
     if (isBest) {
-      mark = `<circle r="12" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
+      mark = `<circle r="12" fill="none" stroke="${cssVar("--chart-title", "#f3f0fa")}" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
     }
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${xs[i]},${y(vals[i])})">`
       + `<title>${esc(tip)}</title>`
@@ -2797,7 +2849,7 @@ function buildTimelineSvg(metric, W) {
       + `<text y="22" text-anchor="middle" font-size="9" fill="#9b93ab">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
   });
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
   out += `</svg>`;
   const legend = expLegend();
   return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
@@ -2946,12 +2998,12 @@ function buildGraphSvg(metric, W) {
       + `<title>${esc(tip)}</title>`
       + (n.g.experiment_id != null
         ? `<circle r="21" fill="none" stroke="${ec}" stroke-width="2" opacity="0.75"></circle>` : "")
-      + (isBest ? `<circle r="25" fill="none" stroke="#f3f0fa" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"></circle>` : "")
+      + (isBest ? `<circle r="25" fill="none" stroke="${cssVar("--chart-title", "#f3f0fa")}" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"></circle>` : "")
       + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
       + (v != null ? `<text y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#0a0a0d">${_fmtNum(v)}</text>` : "")
       + (isBest ? `<text y="-34" text-anchor="middle" font-size="11">★</text>` : "")
       + (sug ? `<text y="-46" text-anchor="middle" font-size="11">💡</text>` : "")
-      + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="#f3f0fa">Run #${i + 1}</text>`
+      + `<text y="-28" text-anchor="middle" font-size="11" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">Run #${i + 1}</text>`
       + `<text y="34" text-anchor="middle" font-size="9" fill="#9b93ab">${esc((n.run.label || "run " + n.id).slice(0, 18))}</text></g>`;
 
     const subs = expSubNodes(n.run);
@@ -2982,7 +3034,7 @@ function buildGraphSvg(metric, W) {
     + `<text x="78" y="20" font-size="9" fill="#b98cff">● finding</text>`
     + `<text x="78" y="31" font-size="9" fill="#a974ff">● artifact</text></g>`;
 
-  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#f3f0fa">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap; ring = experiment)</text>`;
+  out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">experiment graph — ${metric.replace(/_/g, " ")} (spokes = tags · findings · artifacts; edge labels = similarity/overlap; ring = experiment)</text>`;
   out += `</svg>`;
   const legend = expLegend();
   return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
@@ -3019,10 +3071,11 @@ function switchMainView(view) {
   $("agent-panel").classList.toggle("hidden", view !== "agent");
   $("editor-panel").classList.toggle("hidden", view !== "editor");
   $("rkg-panel").classList.toggle("hidden", view !== "rkg");
+  $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
   const app = document.getElementById("app");
-  if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg") {
+  if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg" || view === "audit") {
     // maximize width: collapse the side panel for the expanded views
     if (state._sideBefore == null)
       state._sideBefore = app.classList.contains("side-collapsed");
@@ -3035,6 +3088,7 @@ function switchMainView(view) {
   if (view === "agent") loadAgent();
   if (view === "editor") loadEditor();
   if (view === "rkg") loadRkg();
+  if (view === "audit") loadAudit();
 }
 
 /* ============================ research knowledge graphs ============================ */
@@ -3462,11 +3516,890 @@ function bindExpView(scope) {
 bindExpView("side");
 bindExpView("main");
 
+/* ====================== agent audit trail view ====================== */
+
+const AUDIT_SEV_COLOR = { info: "#9b93ab", warning: "#d29922", critical: "#e06c6c" };
+const AUDIT_SOURCE_LABEL = { coordinator: "coordinator", mcp_proxy: "MCP", approval: "approval", middleware: "middleware", os_monitor: "OS", system: "system", policy: "policy", deviation: "deviation" };
+
+function auditApi(path) { return api(`/api/projects/${encodeURIComponent(state.project)}/audit${path}`); }
+
+function auditFilters() {
+  return new URLSearchParams({
+    agent: $("audit-agent").value || "",
+    severity: $("audit-severity").value || "",
+    source: $("audit-source").value || "",
+    range: $("audit-range").value || "86400",
+  });
+}
+
+async function loadAudit() {
+  const panel = $("audit-panel");
+  if (!panel) return;
+  const view = document.querySelector(".audit-tab.active");
+  const which = view ? view.dataset.auditview : "overview";
+  try {
+    const f = auditFilters();
+    const range = f.get("range");
+    const since = range && range !== "0" ? Date.now() / 1000 - Number(range) : "";
+    const [summ, timeline, agents, chain] = await Promise.all([
+      auditApi("/summary" + (since ? `?since=${since}` : "")).catch(() => ({ summary: {}, agents: [], tool_usage: [] })),
+      auditApi("/timeline" + (since ? `?since=${since}` : "") + `&agent=${f.get("agent")}&severity=${f.get("severity")}&source=${f.get("source")}&limit=800`).catch(() => ({ events: [] })),
+      auditApi("/agents").catch(() => ({ agents: [] })),
+      auditApi("/verify").catch(() => ({ chain: {} })),
+    ]);
+    state.audit = { summary: summ.summary || {}, toolUsage: summ.tool_usage || [], agents: agents.agents || [], timeline: timeline.events || [], chain: chain.chain || {} };
+    renderAuditKpis();
+    renderAuditChain();
+    populateAuditAgentSelect();
+    if (which === "overview") renderAuditOverview();
+  } catch (e) { /* silent */ }
+}
+
+function renderAuditChain() {
+  const el = $("audit-chain-status");
+  if (!el) return;
+  const ch = (state.audit && state.audit.chain) || {};
+  el.textContent = ch.events == null ? "chain —" : `🔗 ${ch.ok ? "✓" : "✗"} ${ch.events} chained`;
+  el.title = JSON.stringify(ch);
+}
+
+function renderAuditKpis() {
+  const el = $("audit-kpis");
+  if (!el) return;
+  const s = (state.audit && state.audit.summary) || {};
+  const cards = [
+    ["total", "Events", s.total || 0, ""],
+    ["critical", "Critical", s.critical || 0, s.critical ? "sev-critical" : ""],
+    ["overrides", "Overrides", s.overrides || 0, s.overrides ? "sev-warning" : ""],
+    ["denials", "Denials", s.denials || 0, ""],
+    ["data_access", "Data access", s.data_access || 0, ""],
+    ["network", "Network", s.network || 0, ""],
+    ["filesystem", "Filesystem", s.filesystem || 0, ""],
+    ["deviations", "Open deviations", s.open_deviations || 0, s.open_deviations ? "sev-warning" : ""],
+    ["agents", "Active agents", s.active_agents ? s.active_agents.length : 0, ""],
+  ];
+  el.innerHTML = cards.map(([k, v, n, cls]) =>
+    `<div class="audit-kpi ${cls}${state.auditKpi === k ? " active" : ""}" data-kpi="${k}" title="Filter the list by ${esc(v)}"><div class="audit-kpi-v">${n}</div><div class="audit-kpi-k">${esc(v)}</div></div>`).join("");
+  el.querySelectorAll(".audit-kpi").forEach((c) =>
+    c.addEventListener("click", () => kpiFilterClick(c.dataset.kpi)));
+}
+
+function kpiFilterClick(kpi) {
+  if (kpi === "deviations") { switchAuditView("deviations"); return; }
+  if (kpi === "agents") { switchAuditView("agents"); return; }
+  state.auditKpi = state.auditKpi === kpi ? "" : kpi;
+  renderAuditKpis();
+  renderAuditOverview();
+}
+
+function populateAuditAgentSelect() {
+  const sel = $("audit-agent");
+  if (!sel || !state.audit) return;
+  const agents = (state.audit.agents || []).map((a) => a.agent_id);
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">all agents</option>' +
+    agents.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  sel.value = agents.includes(prev) ? prev : "";
+}
+
+function renderAuditOverview() {
+  const f = auditFilters();
+  const q = ($("audit-q").value || "").toLowerCase();
+  let events = (state.audit && state.audit.timeline) || [];
+  if (q) events = events.filter((e) => JSON.stringify(e).toLowerCase().includes(q));
+  const kpi = state.auditKpi;
+  if (kpi) {
+    events = events.filter((e) => {
+      switch (kpi) {
+        case "critical": return e.severity === "critical";
+        case "overrides": return e.policy === "OVERRIDE";
+        case "denials": return e.policy === "DENY";
+        case "data_access": return !!e.data_access;
+        case "network": return !!e.network;
+        case "filesystem": return !!e.filesystem;
+        default: return true;
+      }
+    });
+  }
+  $("audit-count").textContent = `${events.length} event(s)`;
+  // ordered event ids for the overlay's prev/next navigation
+  state.auditEventIds = events.map((e) => e.event_id);
+  $("audit-timeline").innerHTML = buildAuditTimeline(events);
+  $("audit-timeline").querySelectorAll("[data-eid]").forEach((r) =>
+    r.addEventListener("click", () => showAuditEvent(r.dataset.eid)));
+}
+
+function buildAuditTimeline(events) {
+  const el = $("audit-timeline");
+  if (!el) return "";
+  if (!events.length) return '<div class="empty">No audit events match the filters. Ask Fox to run an analysis in chat and every tool call will appear here.</div>';
+
+  // Distribution strip: event count per bucket (hour when range >= 1 day).
+  const range = Number($("audit-range").value || 86400);
+  const bucket = range >= 604800 ? 86400 : range >= 86400 ? 3600 : 60;
+  const buckets = {};
+  let t0 = Infinity, t1 = -Infinity;
+  events.forEach((e) => {
+    const ts = new Date(e.timestamp).getTime();
+    const b = Math.floor(ts / 1000 / bucket) * bucket;
+    buckets[b] = (buckets[b] || 0) + 1;
+    t0 = Math.min(t0, ts); t1 = Math.max(t1, ts);
+  });
+  const keys = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+  const maxB = Math.max(1, ...Object.values(buckets));
+  const W = 1200, H = 74, bw = keys.length ? (W - 20) / keys.length : 20;
+  let strip = `<svg viewBox="0 0 ${W} ${H}" class="audit-strip">`;
+  keys.forEach((k, i) => {
+    const bh = Math.max(3, (buckets[k] / maxB) * (H - 26));
+    strip += `<rect x="${10 + i * bw}" y="${H - 12 - bh}" width="${Math.max(2, bw - 2)}" height="${bh}" fill="#a974ff" opacity="${0.35 + 0.65 * (buckets[k] / maxB)}" rx="1.5"><title>${buckets[k]} event(s) at ${new Date(k * 1000).toLocaleString()}</title></rect>`;
+  });
+  strip += `</svg>`;
+
+  let h = strip + '<div class="audit-tl">';
+  let lastDay = "";
+  events.forEach((e) => {
+    const dt = new Date(e.timestamp);
+    const day = dt.toLocaleDateString();
+    if (day !== lastDay) {
+      lastDay = day;
+      h += `<div class="audit-tl-day">${esc(day)}</div>`;
+    }
+    const sev = e.severity || "info";
+    const color = AUDIT_SEV_COLOR[sev] || "#9b93ab";
+    const time = dt.toLocaleTimeString();
+    const icon = e.network ? "🌐" : e.filesystem ? "📁" : e.policy ? (e.policy === "OVERRIDE" ? "⚠️" : "🔒") : "";
+    const flags = [e.source ? AUDIT_SOURCE_LABEL[e.source] || e.source : "", sev, e.policy && e.policy !== "ALLOW" ? e.policy : "", ...(e.tags || []).filter((t) => t === "critical" || t === "high")].filter(Boolean).map((x) => `<span class="audit-tag tag-${x.toLowerCase().replace(/[^a-z0-9]/g, "")}">${esc(x)}</span>`).join("");
+    const dur = e.duration_ms != null ? ` · ${e.duration_ms.toFixed(0)}ms` : "";
+    h += `<div class="audit-tl-row" data-eid="${esc(e.event_id)}" data-sev="${sev}">`
+      + `<div class="audit-tl-time">${esc(time)}${dur}</div>`
+      + `<div class="audit-tl-track"><span class="audit-tl-dot" style="background:${color}"></span><span class="audit-tl-line"></span></div>`
+      + `<div class="audit-tl-body">`
+      + `<div class="audit-tl-title"><span class="audit-agent-badge">${esc(e.agent_id || "?")}</span> ${icon} ${esc(e.tool_name || e.method || "event")}</div>`
+      + `<div class="audit-tl-meta">${flags}</div>`
+      + `</div></div>`;
+  });
+  h += "</div>";
+  return h;
+}
+
+async function showAuditEvent(eid) {
+  const ov = $("audit-event-overlay");
+  if (!ov) { return; }
+  try {
+    const r = await auditApi(`/event/${encodeURIComponent(eid)}`);
+    const ev = r.event || {};
+    state.auditEventId = eid;
+    const pd = ev.policy_decision || {};
+    const rs = ev.result_summary || {};
+    let rows = "";
+    const row = (k, v) => `<div class="ad-row"><span class="ad-k">${esc(k)}</span><span class="ad-v">${v == null ? "—" : esc(typeof v === "string" ? v : JSON.stringify(v, null, 2))}</span></div>`;
+    rows += row("event_id", ev.event_id);
+    rows += row("timestamp", ev.timestamp);
+    rows += row("agent", ev.agent_id);
+    rows += row("session / trace", (ev.session_id || "—") + " / " + (ev.trace_id || "—"));
+    rows += row("source", ev.source + (ev.mcp_server ? ` (${ev.mcp_server})` : ""));
+    rows += row("tool", ev.tool_name || ev.method);
+    rows += row("severity", ev.severity);
+    rows += row("duration_ms", ev.duration_ms);
+    rows += row("arguments (redacted)", ev.arguments_redacted);
+    rows += row("result summary", rs);
+    if (ev.network) rows += row("network", ev.network);
+    if (ev.filesystem) rows += row("filesystem", ev.filesystem);
+    if (pd.outcome) rows += row("policy decision", pd);
+    rows += row("chain", `prev ${(ev.prev_hash || "").slice(0, 16)}… → ${(ev.event_hash || "").slice(0, 16)}…`);
+    // flag chips: source, severity, policy outcome, tags, network/filesystem,
+    // duration — mirroring the timeline row badges.
+    const sev = ev.severity || "info";
+    const flags = [];
+    if (ev.source) flags.push({ t: AUDIT_SOURCE_LABEL[ev.source] || ev.source, cls: "tag-" + ev.source.replace(/[^a-z0-9]/g, "") });
+    if (sev) flags.push({ t: sev, cls: "tag-" + sev });
+    if (pd.outcome) flags.push({ t: pd.outcome, cls: "tag-" + String(pd.outcome).toLowerCase() });
+    if (ev.mcp_server) flags.push({ t: "MCP " + ev.mcp_server, cls: "tag-mcp" });
+    for (const tag of ev.tags || []) {
+      if (["critical", "high", "warning", "denied", "override", "permissions", "approval", "network", "filesystem", "middleware", "mcp"].includes(String(tag).toLowerCase())) {
+        flags.push({ t: String(tag).toLowerCase(), cls: "tag-" + String(tag).toLowerCase() });
+      }
+    }
+    if (ev.network) flags.push({ t: "network", cls: "tag-network" });
+    if (ev.filesystem) flags.push({ t: "filesystem", cls: "tag-filesystem" });
+    if (ev.duration_ms != null) flags.push({ t: ev.duration_ms.toFixed(0) + "ms", cls: "" });
+    const flagsHtml = `<div class="audit-eo-flags">${flags.map((f) =>
+      `<span class="audit-tag ${f.cls}">${esc(f.t)}</span>`).join("")}</div>`;
+    $("audit-eo-body").innerHTML = flagsHtml + `<div class="ad-body">${rows}</div>`;
+    $("audit-eo-id").textContent = eid;
+    const ids = state.auditEventIds || [];
+    const idx = ids.indexOf(eid);
+    const prevBtn = $("audit-eo-prev"), nextBtn = $("audit-eo-next");
+    if (prevBtn) prevBtn.disabled = idx <= 0;
+    if (nextBtn) nextBtn.disabled = idx < 0 || idx >= ids.length - 1;
+    ov.classList.remove("hidden");
+  } catch (e) { /* silent */ }
+}
+
+function closeAuditEventOverlay() {
+  const ov = $("audit-event-overlay");
+  if (ov) ov.classList.add("hidden");
+}
+
+function auditEventNav(dir) {
+  const ids = state.auditEventIds || [];
+  const idx = ids.indexOf(state.auditEventId);
+  const target = idx + dir;
+  if (target >= 0 && target < ids.length) showAuditEvent(ids[target]);
+}
+
+function switchAuditView(view) {
+  document.querySelectorAll(".audit-tab").forEach((b) =>
+    b.classList.toggle("active", b.dataset.auditview === view));
+  ["overview", "agents", "deviations", "permissions", "search"].forEach((v) => {
+    const el = $("audit-" + v);
+    if (el) el.classList.toggle("hidden", v !== view);
+  });
+  if (view === "overview") renderAuditOverview();
+  if (view === "agents") loadAuditAgents();
+  if (view === "deviations") loadAuditDeviations();
+  if (view === "permissions") loadAuditPermissions();
+  if (view === "search") loadAuditSearch();
+}
+
+/* ---------- agents ---------- */
+async function loadAuditAgents() {
+  const el = $("audit-agents");
+  if (!el) return;
+  const agents = (state.audit && state.audit.agents) || [];
+  let h = '<div class="agent-card"><div class="agent-card-head">Agents</div>';
+  if (!agents.length) { h += '<div class="empty">No audited agents yet.</div></div>'; el.innerHTML = h; return; }
+  h += agents.map((a) => {
+    const pct = a.criticals ? ` · <span class="sev-critical">${a.criticals} critical</span>` : "";
+    return `<div class="audit-agent-row"><button class="audit-agent-btn" data-agent="${esc(a.agent_id)}">${esc(a.agent_id)}</button>`
+      + `<span class="muted">${a.events} events${pct}</span>`
+      + ` · <span class="muted">last ${a.last_ts ? new Date(a.last_ts * 1000).toLocaleString() : "—"}</span></div>`;
+  }).join("");
+  h += "</div>";
+  el.innerHTML = h;
+  el.querySelectorAll(".audit-agent-btn").forEach((b) =>
+    b.addEventListener("click", () => showAuditAgent(b.dataset.agent)));
+}
+
+async function showAuditAgent(agentId) {
+  const el = $("audit-agents");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const [hist, perms] = await Promise.all([
+      auditApi(`/agents/${encodeURIComponent(agentId)}/history?limit=500`).catch(() => ({})),
+      auditApi(`/agents/${encodeURIComponent(agentId)}/permissions`).catch(() => ({})),
+    ]);
+    const evs = hist.events || [];
+    const usage = hist.tool_usage || [];
+    const maxU = Math.max(1, ...usage.map((u) => u.count));
+    let h = `<button class="btn subtle small audit-back">← agents</button>`;
+    h += `<div class="agent-card"><div class="agent-card-head">${esc(agentId)} — audit history (${evs.length})</div>`;
+    h += `<div class="audit-agent-metrics muted">data classes: ${(hist.data_classes || []).join(", ") || "—"} · network: ${(hist.network_destinations || []).join(", ") || "—"}</div>`;
+    h += `<div class="audit-agent-chart">${usage.map((u) => {
+      const w = Math.max(2, (u.count / maxU) * 100);
+      return `<div class="audit-usage-row"><span class="audit-usage-label">${esc(u.tool)}</span><span class="audit-usage-bar-wrap"><span class="audit-usage-bar ${u.flags ? "sev-warning-bg" : ""}" style="width:${w}%"></span></span><span class="audit-usage-n">${u.count}</span></div>`;
+    }).join("") || '<div class="empty">No tool usage recorded.</div>'}</div>`;
+    h += "</div>";
+    const p = perms || {};
+    h += `<div class="agent-card"><div class="agent-card-head">Permission vs observed (${agentId})</div>`;
+    h += `<div class="audit-perm-grid">`;
+    h += `<div class="audit-perm-col"><div class="audit-perm-head">Granted / overridden</div>` + ((p.grants || []).length ? (p.grants || []).map((g) =>
+      `<div class="audit-perm-item">${esc(g.kind || g.pattern)}<span class="muted">${esc((g.pattern || "").slice(0, 60))}</span>${g.overrides ? ` <span class="sev-warning">· ${g.overrides} override(s)</span>` : ""}</div>`).join("") : '<div class="muted">no grants recorded</div>') + `</div>`;
+    h += `<div class="audit-perm-col"><div class="audit-perm-head">Observed tools</div>` + ((p.observed_tools || []).length ? (p.observed_tools || []).slice(0, 30).map((t) =>
+      `<div class="audit-perm-item">${esc(t.tool)}<span class="muted">· ${t.count}</span></div>`).join("") : '<div class="muted">none observed</div>') + `</div>`;
+    h += `</div></div>`;
+    // recent events for this agent
+    h += `<div class="agent-card"><div class="agent-card-head">Recent events</div>`;
+    h += evs.slice(0, 200).map((e) => auditMiniEvent(e)).join("");
+    h += "</div>";
+    el.innerHTML = h;
+    const back = el.querySelector(".audit-back");
+    if (back) back.addEventListener("click", loadAuditAgents);
+    el.querySelectorAll("[data-eid]").forEach((r) => r.addEventListener("click", () => showAuditEvent(r.dataset.eid)));
+  } catch (e) { el.innerHTML = '<div class="empty">failed to load agent audit history</div>'; }
+}
+
+function auditMiniEvent(e) {
+  const sev = e.severity || "info";
+  const color = AUDIT_SEV_COLOR[sev] || "#9b93ab";
+  const dt = new Date(e.timestamp);
+  return `<div class="audit-mini" data-eid="${esc(e.event_id)}"><span class="audit-tl-dot" style="background:${color}"></span>`
+    + `<span class="muted">${esc(dt.toLocaleTimeString())}</span> ${esc(e.tool_name || e.method || "event")}`
+    + (e.policy ? ` <span class="audit-tag tag-${esc(e.policy.toLowerCase())}">${esc(e.policy)}</span>` : "")
+    + `</div>`;
+}
+
+/* ---------- deviations ---------- */
+async function loadAuditDeviations() {
+  const el = $("audit-deviations");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const r = await auditApi("/deviations?limit=200");
+    const devs = r.deviations || [];
+    const open = devs.filter((d) => !d.reviewed);
+    const closed = devs.filter((d) => d.reviewed);
+    let h = `<div class="agent-card"><div class="agent-card-head">Open deviations (${open.length})</div>`;
+    h += open.length ? open.map((d) => auditDeviationCard(d)).join("") : '<div class="empty">No open deviations. Run a scan after more activity.</div>';
+    h += "</div>";
+    h += `<div class="agent-card"><div class="agent-card-head">Reviewed / false positives (${closed.length})</div>`;
+    h += closed.length ? closed.map((d) => auditDeviationCard(d)).join("") : '<div class="empty">None.</div>';
+    h += "</div>";
+    el.innerHTML = h;
+    bindDeviationButtons(el);
+  } catch (e) { el.innerHTML = '<div class="empty">failed to load deviations</div>'; }
+}
+
+function auditDeviationCard(d) {
+  const color = AUDIT_SEV_COLOR[d.severity] || "#d29922";
+  return `<div class="audit-dev" style="border-left-color:${color}">`
+    + `<div class="audit-dev-head"><span class="audit-dev-sev" style="color:${color}">${esc(d.severity.toUpperCase())}</span> ${esc(d.rule)} <span class="muted">· ${esc(d.agent_id)} · ${esc(new Date(d.created_at * 1000).toLocaleString())}</span></div>`
+    + `<div class="audit-dev-exp">${esc(d.explanation)}</div>`
+    + (Object.keys(d.detail || {}).length ? `<pre class="audit-dev-detail">${esc(JSON.stringify(d.detail, null, 2))}</pre>` : "")
+    + `<div class="audit-dev-actions"><span class="muted">${(d.event_ids || []).length} linked event(s)</span>`
+    + (d.reviewed ? `<span class="muted">${d.false_positive ? "false positive" : "reviewed"}${d.reviewed_by ? " by " + esc(d.reviewed_by) : ""}</span>`
+        : `<span class="spacer"></span><button class="btn subtle small audit-dev-fp" data-id="${esc(d.deviation_id)}">False positive</button>`
+        + `<button class="btn subtle small audit-dev-done" data-id="${esc(d.deviation_id)}">Mark reviewed</button>`)
+    + `</div></div>`;
+}
+
+function bindDeviationButtons(root) {
+  root.querySelectorAll(".audit-dev-done").forEach((b) => b.addEventListener("click", () =>
+    auditReview(b.dataset.id, { reviewed: true, reviewed_by: "ui" })));
+  root.querySelectorAll(".audit-dev-fp").forEach((b) => b.addEventListener("click", () =>
+    auditReview(b.dataset.id, { reviewed: true, false_positive: true, reviewed_by: "ui" })));
+}
+
+async function auditReview(id, body) {
+  try { await auditApi(`/deviations/${encodeURIComponent(id)}/review`, { method: "POST", body: JSON.stringify(body) }); }
+  catch (e) { /* silent */ }
+  loadAuditDeviations();
+}
+
+/* ---------- permissions ---------- */
+async function loadAuditPermissions() {
+  const el = $("audit-permissions");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const agents = (state.audit && state.audit.agents) || [];
+    if (!agents.length) { el.innerHTML = '<div class="empty">No audited agents yet.</div>'; return; }
+    let h = "";
+    for (const a of agents) {
+      const p = await auditApi(`/agents/${encodeURIComponent(a.agent_id)}/permissions`).catch(() => ({}));
+      h += `<div class="agent-card"><div class="agent-card-head">${esc(a.agent_id)} — permissions</div>`;
+      h += `<div class="audit-perm-grid">`;
+      h += `<div class="audit-perm-col"><div class="audit-perm-head">Granted / overridden</div>` +
+        ((p.grants || []).length ? (p.grants || []).map((g) =>
+          `<div class="audit-perm-item">${esc(g.kind || g.pattern)} <span class="muted">${esc((g.pattern || "").slice(0, 70))}</span>${g.overrides ? ` <span class="sev-warning">· ${g.overrides} override(s)</span>` : ""}</div>`).join("")
+          : '<div class="muted">no grants recorded yet</div>') + `</div>`;
+      h += `<div class="audit-perm-col"><div class="audit-perm-head">Observed tools</div>` +
+        ((p.observed_tools || []).slice(0, 40).map((t) =>
+          `<div class="audit-perm-item">${esc(t.tool)} <span class="muted">· ${t.count}</span></div>`).join("")
+          || '<div class="muted">none observed</div>') + `</div>`;
+      h += `</div></div>`;
+    }
+    el.innerHTML = h;
+  } catch (e) { el.innerHTML = '<div class="empty">failed to load permissions</div>'; }
+}
+
+/* ---------- investigation / search ---------- */
+async function loadAuditSearch() {
+  const el = $("audit-search");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const f = auditFilters();
+    const range = f.get("range");
+    const since = range && range !== "0" ? Date.now() / 1000 - Number(range) : "";
+    const r = await auditApi(`/events?limit=1000` + (since ? `&since=${since}` : "") +
+      `&agent=${f.get("agent")}&severity=${f.get("severity")}&source=${f.get("source")}` +
+      (($("audit-q").value || "") ? `&q=${encodeURIComponent($("audit-q").value)}` : ""));
+    const evs = r.events || [];
+    let h = `<div class="agent-card"><div class="agent-card-head">Event search — ${evs.length} of ${r.total || evs.length}</div>`;
+    h += evs.map((e) => auditMiniEvent(e)).join("");
+    h += "</div>";
+    el.innerHTML = h;
+    el.querySelectorAll("[data-eid]").forEach((r2) => r2.addEventListener("click", () => showAuditEvent(r2.dataset.eid)));
+  } catch (e) { el.innerHTML = '<div class="empty">failed to load events</div>'; }
+}
+
+/* ---------- audit view wiring ---------- */
+document.querySelectorAll(".audit-tab").forEach((b) =>
+  b.addEventListener("click", () => switchAuditView(b.dataset.auditview)));
+["audit-agent", "audit-severity", "audit-source", "audit-range"].forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener("change", () => { loadAudit(); });
+});
+const auditQ = $("audit-q");
+if (auditQ) auditQ.addEventListener("input", () => { clearTimeout(auditQ._t); auditQ._t = setTimeout(() => { loadAudit(); renderAuditOverview(); }, 400); });
+const auditRefresh = $("audit-refresh");
+if (auditRefresh) auditRefresh.addEventListener("click", loadAudit);
+const auditScan = $("audit-scan");
+if (auditScan) auditScan.addEventListener("click", async () => {
+  try {
+    const r = await auditApi("/scan", { method: "POST", body: "{}" });
+    toast(`Deviation scan recorded ${r.recorded || 0} new deviation(s)`);
+    loadAudit();
+  } catch (e) { toast("scan failed"); }
+});
+const auditExport = $("audit-export");
+if (auditExport) auditExport.addEventListener("click", () => {
+  window.open(B(`/api/projects/${encodeURIComponent(state.project)}/audit/export?fmt=json&limit=2000`), "_blank");
+});
+
+// Audit event detail overlay wiring.
+const auditEoClose = $("audit-eo-close");
+if (auditEoClose) auditEoClose.addEventListener("click", closeAuditEventOverlay);
+const auditEoPrev = $("audit-eo-prev");
+if (auditEoPrev) auditEoPrev.addEventListener("click", () => auditEventNav(-1));
+const auditEoNext = $("audit-eo-next");
+if (auditEoNext) auditEoNext.addEventListener("click", () => auditEventNav(1));
+const auditEoOv = $("audit-event-overlay");
+if (auditEoOv) auditEoOv.addEventListener("click", (e) => {
+  if (e.target === auditEoOv) closeAuditEventOverlay();
+});
+
+/* ===================== experiment branch history (git-flow) ===================== */
+
+let branchView = "branches";
+let branchExpChoice = null;  // explicit user choice; null = auto (active experiment)
+
+async function loadBranches() {
+  const graphEl = $("branch-graph");
+  if (!graphEl) return;
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/experiments/branches`);
+    state.branches = r || { nodes: [], edges: [], experiments: [], tips: [] };
+    await switchBranchView(branchView);
+    if (state.branchSelected) showBranchDetail(state.branchSelected);
+  } catch (e) {
+    graphEl.innerHTML = '<div class="empty">Could not load branch history.</div>';
+  }
+}
+
+async function loadBranchGraphData() {
+  // The timeline / graph views reuse the Experiments-panel renderers, so they
+  // need the same state they do (/experiments/graph + /experiments + /runs).
+  // Fetch fresh for the current project (the global exp* state is shared and
+  // can be stale when the overlay is opened before the Experiments tab).
+  const proj = state.project;
+  if (state._branchGraphProject === proj) return;
+  try {
+    const [g, exps, runs, hist] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(proj)}/experiments/graph`),
+      api(`/api/projects/${encodeURIComponent(proj)}/experiments`),
+      api(`/api/projects/${encodeURIComponent(proj)}/runs`),
+      api(`/api/projects/${encodeURIComponent(proj)}/experiments/history`),
+    ]);
+    state.expGraph = g;
+    state.expList = exps.experiments || [];
+    state.agentRuns = runs.runs || [];
+    state.expRuns = hist.experiments || [];
+    state._branchGraphProject = proj;
+    // make sure the overlay's experiment filter tracks the current experiment
+    if (state.activeExperiment == null ||
+        !state.expList.some((e) => String(e.id) === String(state.activeExperiment))) {
+      detectActiveExperiment();
+    }
+  } catch (e) { /* silent */ }
+}
+
+function populateBranchMetric() {
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  const keys = new Set();
+  nodes.forEach((n) => Object.keys(n.metrics || {}).forEach((k) => keys.add(k)));
+  const opts = [...keys].sort();
+  const sel = $("branch-metric");
+  if (!sel) return;
+  sel.innerHTML = opts.map((k) => `<option value="${esc(k)}">${esc(k.replace(/_/g, " "))}</option>`).join("");
+  if (!opts.includes(state.branchMetric)) state.branchMetric = opts[0] || "";
+  sel.value = state.branchMetric;
+}
+
+function populateBranchExpFilter() {
+  const sel = $("branch-exp-filter");
+  if (!sel) return;
+  const exps = state.expList || [];
+  sel.innerHTML = `<option value="">all experiments</option>` +
+    exps.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+  let target;
+  if (branchExpChoice !== null) {
+    target = branchExpChoice;
+    // stale choice (e.g. the project was switched) -> fall back to current exp
+    if (target !== "" && !exps.some((e) => String(e.id) === target)) {
+      branchExpChoice = null;
+      target = (state.activeExperiment != null) ? String(state.activeExperiment) : "";
+    }
+  } else {
+    // first open: default to the current experiment so timeline/graph show it
+    target = (state.activeExperiment != null) ? String(state.activeExperiment) : "";
+  }
+  sel.value = (target === "" || exps.some((e) => String(e.id) === target)) ? target
+    : (exps[0] ? String(exps[0].id) : "");
+}
+
+function filterGraphForExp(graph, eid) {
+  if (!eid || !graph) return graph;
+  const nodeIds = new Set((graph.nodes || []).filter((n) => String(n.experiment_id) === String(eid)).map((n) => n.id));
+  return {
+    nodes: (graph.nodes || []).filter((n) => nodeIds.has(n.id)),
+    edges: (graph.edges || []).filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target)),
+  };
+}
+
+async function switchBranchView(view) {
+  branchView = view;
+  document.querySelectorAll(".branch-view-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.branchview === view));
+  const metricSel = $("branch-metric");
+  const expSel = $("branch-exp-filter");
+  const showCharts = view !== "branches";
+  if (metricSel) metricSel.style.display = showCharts ? "" : "none";
+  if (expSel) expSel.style.display = showCharts ? "" : "none";
+  if (view === "branches") { renderBranchGraph(); return; }
+  await loadBranchGraphData();
+  populateBranchExpFilter();
+  const eid = $("branch-exp-filter").value || "";
+  const graph = filterGraphForExp(state.expGraph, eid);
+  const origGraph = state.expGraph;
+  state.expGraph = graph;              // the builders read state.expGraph
+  populateBranchMetric();
+  const el = $("branch-graph");
+  if (!el) return;
+  const runs = state.expRuns || graph.nodes || [];
+  if (!runs.length) { state.expGraph = origGraph; el.innerHTML = '<div class="empty">No runs yet in this project.</div>'; return; }
+  const metric = state.branchMetric || "";
+  const W = 1240;
+  const H = view === "timeline" ? 330 : 580;
+  el.innerHTML = view === "timeline" ? buildTimelineSvg(metric, W) : buildGraphSvg(metric, W);
+  state.expGraph = origGraph;
+  const svg = el.querySelector("svg");
+  if (svg) {
+    graphViewRestore(svg, "branch-" + view, W, H);
+    attachGraphControls(el, "branch-" + view, () => el.querySelector("svg"), W, H);
+  }
+  // clicking a run shows it in the detail pane (no full re-render)
+  el.querySelectorAll(".exp-node").forEach((nd) => nd.addEventListener("click", () => {
+    const rid = Number(nd.dataset.id);
+    state.expSelected = rid;
+    state.branchSelected = rid;
+    showBranchDetail(rid);
+    el.querySelectorAll(".exp-node.selected").forEach((x) => x.classList.remove("selected"));
+    nd.classList.add("selected");
+  }));
+}
+
+document.querySelectorAll(".branch-view-btn").forEach((b) =>
+  b.addEventListener("click", () => switchBranchView(b.dataset.branchview)));
+const branchMetricSel = $("branch-metric");
+if (branchMetricSel) branchMetricSel.addEventListener("change", (e) => {
+  state.branchMetric = e.target.value;
+  switchBranchView(branchView);
+});
+const branchExpSel = $("branch-exp-filter");
+if (branchExpSel) branchExpSel.addEventListener("change", () => {
+  branchExpChoice = $("branch-exp-filter").value;
+  switchBranchView(branchView);
+});
+
+function toggleBranches() {
+  const ov = $("branch-overlay");
+  if (!ov) return;
+  const show = ov.classList.contains("hidden");
+  ov.classList.toggle("hidden", !show);
+  $("branch-toggle").classList.toggle("active", show);
+  if (show) {
+    loadBranches();
+  }
+}
+
+function assignBranchLanes(nodes, edges) {
+  const parentOf = {};
+  const childrenOf = {};
+  for (const e of edges || []) {
+    parentOf[e.child] = e.parent;
+    (childrenOf[e.parent] = childrenOf[e.parent] || []).push(e.child);
+  }
+  const lane = {};
+  const expLane = {};
+  let freeLane = 0;
+  const sorted = [...nodes].sort(
+    (a, b) => (a.started_at || 0) - (b.started_at || 0) || (a.id - b.id));
+  for (const n of sorted) {
+    const p = parentOf[n.id];
+    if (p !== undefined && lane[p] !== undefined) {
+      const placedSibs = (childrenOf[p] || []).filter((s) => lane[s] !== undefined).length;
+      lane[n.id] = lane[p] + placedSibs;
+    } else if (n.experiment_id != null) {
+      if (expLane[n.experiment_id] === undefined) expLane[n.experiment_id] = freeLane++;
+      lane[n.id] = expLane[n.experiment_id];
+    } else {
+      lane[n.id] = freeLane++;
+    }
+    freeLane = Math.max(freeLane, lane[n.id] + 1);
+  }
+  return lane;
+}
+
+function branchBestNodes(nodes) {
+  // best goal-value per experiment (star markers)
+  const best = {};
+  for (const n of nodes) {
+    if (n.goal_value == null || n.experiment_id == null) continue;
+    const cur = best[n.experiment_id];
+    if (!cur || Number(n.goal_value) > Number(cur.goal_value)) best[n.experiment_id] = n;
+  }
+  return best;
+}
+
+function renderBranchGraph() {
+  const el = $("branch-graph");
+  if (!el) return;
+  const { nodes, edges, experiments } = state.branches || {};
+  if (!nodes || !nodes.length) {
+    el.innerHTML = '<div class="empty">No runs yet. Ask Fox to run an experiment in chat — each run becomes a node.</div>';
+    return;
+  }
+  const lane = assignBranchLanes(nodes, edges);
+  const best = branchBestNodes(nodes);
+  const sorted = [...nodes].sort(
+    (a, b) => (a.started_at || 0) - (b.started_at || 0) || (a.id - b.id));
+  const rowH = 56, laneW = 150, padL = 14, padT = 26;
+  const nLanes = Math.max(1, ...Object.values(lane)) + 1;
+  const W = padL + nLanes * laneW + 220;
+  const H = padT + sorted.length * rowH + 24;
+  const cx = (l) => padL + l * laneW + laneW / 2;
+  const cy = (i) => padT + i * rowH + rowH / 2;
+  const pos = {};
+  sorted.forEach((n, i) => { pos[n.id] = { x: cx(lane[n.id]), y: cy(i) }; });
+  firstOfExp = {};
+  sorted.forEach((n) => {
+    if (n.experiment_id != null && firstOfExp[n.experiment_id] === undefined)
+      firstOfExp[n.experiment_id] = n;
+  });
+  const parentOf = {};
+  for (const e of edges || []) parentOf[e.child] = e.parent;
+  const childrenOf = {};
+  for (const e of edges || []) (childrenOf[e.parent] = childrenOf[e.parent] || []).push(e.child);
+  const tipOf = {};
+  (state.branches.tips || []).forEach((t) => { tipOf[t] = true; });
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px">`;
+
+  // edges (drawn underneath nodes)
+  for (const e of edges || []) {
+    const p = pos[e.parent], c = pos[e.child];
+    if (!p || !c) continue;
+    const same = lane[e.parent] === lane[e.child];
+    let d;
+    if (same) {
+      d = `M ${p.x} ${p.y + 9} L ${c.x} ${c.y - 9}`;
+    } else {
+      const ym = (p.y + c.y) / 2;
+      d = `M ${p.x} ${p.y + 9} L ${p.x} ${ym} L ${c.x} ${ym} L ${c.x} ${c.y - 9}`;
+    }
+    svg += `<path class="branch-edge" d="${d}"></path>`;
+  }
+
+  // nodes
+  sorted.forEach((n, i) => {
+    const x = pos[n.id].x, y = pos[n.id].y;
+    const color = n.experiment_id != null ? expColor(n.experiment_id) : "#9b93ab";
+    const sel = state.branchSelected === n.id ? " selected" : "";
+    const isBest = best[n.experiment_id] && best[n.experiment_id].id === n.id;
+    const isTip = tipOf[n.id];
+    const failed = n.status === "error";
+    const children = (childrenOf[n.id] || []).length;
+    const tipText = `run #${n.id} · ${n.label || ""}\n${n.experiment_name ? "experiment: " + n.experiment_name : ""}\n` +
+      (n.goal_value != null ? `${n.goal_metric}: ${Number(n.goal_value).toFixed(4)}\n` : "") +
+      (children ? `branches: ${children}\n` : "") +
+      `config: ${JSON.stringify(n.config || {})}\n${new Date(n.started_at * 1000).toLocaleString()}`;
+    svg += `<g class="branch-node${sel}" data-id="${esc(n.id)}" transform="translate(${x},${y})">`
+      + `<title>${esc(tipText)}</title>`
+      + (isTip ? `<circle r="15" fill="none" stroke="${color}" stroke-dasharray="3 3" opacity=".5"></circle>` : "")
+      + `<circle r="9" fill="${color}" stroke-dasharray="${failed ? "3 2" : "0"}" stroke="#e06c6c"></circle>`
+      + (isBest ? `<text y="-12" text-anchor="middle" font-size="11">★</text>` : "")
+      + `<text x="14" y="4" class="branch-label">#${esc(n.id)} ${esc((n.label || n.kind || "").slice(0, 26))}</text>`
+      + `</g>`;
+  });
+
+  // experiment lane headers (experiment name at top of its lane)
+  const expStartRow = {};
+  sorted.forEach((n, i) => {
+    if (n.experiment_id != null && expStartRow[n.experiment_id] === undefined)
+      expStartRow[n.experiment_id] = { y: cy(i), name: n.experiment_name };
+  });
+  for (const eid in expStartRow) {
+    const info = expStartRow[eid];
+    svg += `<text x="${cx(lane[firstOfExp[eid].id])}" y="${padT - 8}" text-anchor="middle" font-size="11" font-weight="700" fill="${expColor(eid)}">${esc(info.name || "experiment")}</text>`;
+  }
+
+  svg += `</svg>`;
+
+  // legend
+  const leg = $("branch-legend");
+  if (leg) {
+    leg.innerHTML = (experiments || []).map((e) =>
+      `<span class="exp-legend-item"><span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}`
+      + (e.goal_metric ? ` <span class="muted">(goal ${esc(e.goal_metric)}${e.goal_target != null ? " → " + e.goal_target : ""})</span>` : "")
+      + ` · ${e.run_count} run(s)</span>`).join("")
+      + `<span class="exp-legend-item muted">★ best · ⦿ branch tip · dashed = failed</span>`;
+  }
+
+  el.innerHTML = svg;
+  el.querySelectorAll(".branch-node").forEach((nd) =>
+    nd.addEventListener("click", () => {
+      state.branchSelected = Number(nd.dataset.id);
+      renderBranchGraph();
+      showBranchDetail(state.branchSelected);
+    }));
+}
+
+// first node per experiment (for lane headers)
+let firstOfExp = {};
+
+function showBranchDetail(id) {
+  const el = $("branch-detail");
+  if (!el) return;
+  const { nodes, edges, experiments } = state.branches || {};
+  const n = (nodes || []).find((x) => x.id === id);
+  if (!n) { el.innerHTML = ""; return; }
+  const exp = (experiments || []).find((e) => e.id === n.experiment_id);
+  const children = (edges || []).filter((e) => e.parent === id).map((e) => e.child);
+  const parent = (edges || []).find((e) => e.child === id);
+  const parentNode = parent ? (nodes || []).find((x) => x.id === parent.parent) : null;
+  const cfg = n.config || {};
+  const metrics = n.metrics || {};
+  const paramKeys = Object.keys(cfg);
+  const strip = (s, len) => {
+    if (!s) return "";
+    const t = String(s).replace(/\s+/g, " ").trim();
+    return t.length > len ? t.slice(0, len) + "…" : t;
+  };
+  let h = `<h4>Run #${n.id}</h4>`;
+  h += bdRow("label", n.label || "—");
+  h += bdRow("kind", n.kind || "agent_run");
+  h += bdRow("status", n.status || "—");
+  if (n.experiment_name) h += bdRow("experiment", n.experiment_name);
+  h += bdRow("when", new Date((n.started_at || 0) * 1000).toLocaleString());
+  if (parentNode) h += bdRow("parent", `#${parentNode.id} ${parentNode.label || ""}`);
+  if (children.length) h += bdRow("branches", children.map((c) => `#${c}`).join(", "));
+  h += bdRow("tools", n.tools + " · artifacts: " + n.artifacts);
+
+  // Objectives: experiment hypothesis / plan / goal + this run's prompt.
+  if (exp && (exp.hypothesis || exp.plan)) {
+    h += `<h4>Objectives</h4>`;
+    if (exp.hypothesis) h += `<div class="bd-note">${esc(strip(exp.hypothesis, 500))}</div>`;
+    if (exp.plan) h += `<div class="bd-note">${esc(strip(exp.plan, 600))}</div>`;
+  }
+  if (exp && exp.goal_metric) {
+    h += bdRow("goal", `${exp.goal_metric} ${exp.higher_better ? "↑" : "↓"}${exp.goal_target != null ? " → " + exp.goal_target : ""}${n.goal_value != null ? " · current " + fmtVal(n.goal_value) : ""}`);
+  }
+  if (n.objective) h += bdRow("run objective", strip(n.objective, 400));
+
+  // Parameters: this run's config.
+  h += `<h4>Experiment parameters</h4>`;
+  h += paramKeys.length
+    ? `<div>${paramKeys.map((k) => `<span class="bd-param">${esc(k)}: ${esc(fmtVal(cfg[k]))}</span>`).join(" ")}</div>`
+    : `<div class="muted">(none recorded)</div>`;
+
+  // Metrics.
+  if (Object.keys(metrics).length) {
+    h += `<h4>Metrics</h4>`;
+    h += Object.entries(metrics).map(([k, v]) => {
+      const isGoal = n.goal_metric && k === n.goal_metric;
+      return `<div class="bd-row"><span class="bd-k">${esc(k)}</span><span class="bd-v ${isGoal ? "branch-metric-goal" : ""}">${esc(fmtVal(v))}${isGoal ? " ★" : ""}</span></div>`;
+    }).join("");
+  }
+
+  // Summary: the run's outcome text.
+  if (n.summary) {
+    h += `<h4>Summary</h4><div class="bd-note">${esc(strip(n.summary, 700))}</div>`;
+  }
+
+  // Findings.
+  if ((n.findings || []).length) {
+    h += `<h4>Findings</h4>`;
+    h += `<ul class="bd-list">${n.findings.map((f) => `<li>${esc(String(f))}</li>`).join("")}</ul>`;
+  } else {
+    h += `<h4>Findings</h4><div class="muted">none flagged</div>`;
+  }
+
+  // Notes: reviewer suggestions applied for this run.
+  if ((n.notes || []).length) {
+    h += `<h4>Notes</h4>`;
+    h += `<ul class="bd-list">${n.notes.map((s) => `<li>${esc(strip(s, 200))}</li>`).join("")}</ul>`;
+  }
+
+  el.innerHTML = h;
+}
+
+function bdRow(k, v) {
+  return `<div class="bd-row"><span class="bd-k">${esc(k)}</span><span class="bd-v">${esc(String(v == null ? "—" : v))}</span></div>`;
+}
+
+function fmtVal(v) {
+  if (v == null) return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Math.round(v * 1e4) / 1e4);
+  return String(v);
+}
+
+$("branch-toggle").addEventListener("click", toggleBranches);
+const quickBranches = $("quick-branches");
+if (quickBranches) quickBranches.addEventListener("click", toggleBranches);
+const expBranches = $("exp-branches");
+if (expBranches) expBranches.addEventListener("click", toggleBranches);
+$("branch-close").addEventListener("click", () => {
+  $("branch-overlay").classList.add("hidden");
+  $("branch-toggle").classList.remove("active");
+});
+$("branch-refresh").addEventListener("click", loadBranches);
+
+// Resizable split: drag the divider to widen the description/summary pane.
+(function initBranchResizer() {
+  const resizer = $("branch-resizer");
+  const detail = $("branch-detail");
+  if (!resizer || !detail) return;
+  const main = resizer.parentElement;
+  try {
+    const saved = parseInt(localStorage.getItem("fox-branch-detail-w"), 10);
+    if (saved >= 220) detail.style.width = saved + "px";
+  } catch (e) { /* ignore */ }
+  let dragging = false;
+  resizer.addEventListener("mousedown", (e) => {
+    dragging = true;
+    resizer.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = main.getBoundingClientRect();
+    const w = Math.max(220, Math.min(rect.right - e.clientX, rect.width * 0.7));
+    detail.style.width = w + "px";
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    try {
+      const w = parseInt(detail.style.width, 10);
+      if (w >= 220) localStorage.setItem("fox-branch-detail-w", String(w));
+    } catch (e) { /* ignore */ }
+  });
+})();
+
 $("mainview-chat").addEventListener("click", () => switchMainView("chat"));
 $("mainview-experiments").addEventListener("click", () => switchMainView("experiments"));
 $("mainview-agent").addEventListener("click", () => switchMainView("agent"));
 $("mainview-editor").addEventListener("click", () => switchMainView("editor"));
 $("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
+$("mainview-audit").addEventListener("click", () => switchMainView("audit"));
 $("editor-refresh").addEventListener("click", loadEditor);
 
 /* ============================ notebooks =================================== */

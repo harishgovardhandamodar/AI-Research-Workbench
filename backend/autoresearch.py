@@ -236,6 +236,18 @@ async def run_autoresearch_loop(rt, coordinator, build_llm_messages,
                 {"tags": ["autoresearch", f"iteration {i}"], "experiment_id": eid})
             coordinator.ctx.message_id = str(mid)
             coordinator.ctx.experiment_id = str(eid)
+            # Branching lineage: each attempt derives from the previous attempt's
+            # run (first iteration from the experiment's last prior run).
+            try:
+                prev_runs = rt.store.experiment_runs(eid)
+                if history:
+                    last_run = rt.store.list_runs()
+                    coordinator.ctx.parent_run_id = (last_run[-1]["id"]
+                                                     if last_run else None)
+                elif prev_runs:
+                    coordinator.ctx.parent_run_id = prev_runs[-1]["id"]
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 result = await coordinator.run_turn(build_llm_messages())
             except Exception as exc:  # noqa: BLE001
