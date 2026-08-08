@@ -49,13 +49,16 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                            emit: _NoopEmit | None = None,
                            iterations: int | None = None,
                            max_iterations: int = LOOP_MAX_ITERATIONS,
-                           workflow=None) -> dict:
+                           workflow=None,
+                           start_at: int = 1) -> dict:
     """Run a bounded improve loop for an experiment.
 
     Returns {"summary", "iterations": [...], "goal_reached": bool, "best": value}.
     Each iteration entry carries {iteration, prompt, run_id, metrics,
-    suggestion, goal_metric_value}. When `workflow` (a WorkflowTracker) is given,
-    per-iteration progress is pushed to the chat's workflow panel.
+    suggestion, goal_metric_value, suggestion_id, delta, improved}. When
+    `workflow` (a WorkflowTracker) is given, per-iteration progress is pushed to
+    the chat's workflow panel. `start_at > 1` resumes a previously failed loop
+    from iteration N (stage ids offset, lineage from the best prior run).
     """
     emit = emit or _noop_emit
     exp = store.get_experiment(experiment_id)
@@ -69,6 +72,7 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                 "stopped_reason": f"experiment {exp.get('status')}"}
 
     iterations = max(1, min(int(iterations or 3), max_iterations))
+    start_at = max(1, min(int(start_at or 1), iterations))
     goal_metric = exp.get("goal_metric") or ""
     goal_target = exp.get("goal_target")
     higher = bool(exp.get("higher_better", True))
@@ -89,16 +93,36 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     if workflow is not None:
         from .workflows import improve_stages
 
+        # A resumed loop only shows the remaining iterations (iterN..iterM).
+        stages = improve_stages(iterations) if start_at <= 1 else [
+            {"id": f"iter{i}", "label": f"Iteration {i}"}
+            for i in range(start_at, iterations + 1)]
         await workflow.start(title=f"Improve {exp['name']}",
-                             stages=improve_stages(iterations))
+                             stages=stages)
+        workflow.set_invoke(kind="improve", experiment_id=experiment_id,
+                            prompt=(prompt or "").strip(),
+                            iterations=iterations)
 
     runs_all = store.experiment_runs(experiment_id)
     best_val, best_id = best_metric(runs_all, goal_metric, higher) if goal_metric else (None, None)
     current_prompt = (prompt or "").strip() or f"Improve the experiment {exp['name']!r}."
+    if start_at > 1:
+        # Resume from the failed iteration's own prompt (recorded as the user
+        # message tagged "iteration N" on the original run).
+        try:
+            for m in reversed(store.list_messages()):
+                tags = (m.get("meta") or {}).get("tags") or []
+                if m["role"] == "user" and f"iteration {start_at}" in tags:
+                    current_prompt = m["content"]
+                    break
+        except Exception:  # noqa: BLE001
+            pass
     last_suggestion = None
+    last_applied_sid = None
     goal_reached = False
     stopped_reason = ""
     history: list[dict] = []
+    regress_streak = 0
 
     # Attach loop-produced runs to the experiment.
     coordinator.ctx.experiment_id = str(experiment_id)
@@ -108,7 +132,7 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     parent_run_id = best_id or (runs_all[-1]["id"] if runs_all else None)
     coordinator.ctx.parent_run_id = parent_run_id
 
-    for i in range(1, iterations + 1):
+    for i in range(start_at, iterations + 1):
         if workflow is not None:
             await workflow.update_stage(f"iter{i}", "running",
                                         message=f"Improve loop — iteration {i}/{iterations}")
@@ -184,6 +208,12 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
             review = {"findings": [], "suggestions": []}
         if run is not None:
             store.update_run_review(run["id"], review)
+            # First-class suggestion records: persist + attach ids so the loop
+            # can de-dup and measure each applied suggestion's outcome.
+            sids = store.add_suggestions(experiment_id, run["id"], review)
+            for s, sid in zip(review.get("suggestions") or [], sids):
+                if isinstance(s, dict):
+                    s["id"] = sid
         await emit("review", review)
 
         iter_metrics = dict(run.get("metrics") or {}) if run else {}
@@ -193,6 +223,21 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                 mval = float(mval)
             except (TypeError, ValueError):
                 mval = None
+        # Regression check for the previous iteration's applied suggestion:
+        # did it actually improve the goal metric vs. the run it derived from?
+        suggestion_delta = suggestion_improved = None
+        if last_applied_sid is not None and run is not None:
+            try:
+                out = store.resolve_suggestion_outcome(last_applied_sid)
+                if out is not None:
+                    suggestion_delta = out.get("delta")
+                    suggestion_improved = out.get("improved")
+                    if suggestion_improved:
+                        regress_streak = 0
+                    elif suggestion_improved is not None:
+                        regress_streak += 1
+            except Exception:  # noqa: BLE001
+                pass
         history.append({
             "iteration": i,
             "prompt": current_prompt,
@@ -200,6 +245,9 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
             "metrics": iter_metrics,
             "suggestion": last_suggestion,
             "goal_metric_value": mval,
+            "suggestion_id": last_applied_sid,
+            "delta": suggestion_delta,
+            "improved": suggestion_improved,
         })
 
         if mval is not None and goal_metric:
@@ -229,14 +277,24 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                 f"in run #{run['id']}")})
             break
 
-        suggestion = (review.get("suggestions") or [None])[0]
-        if not suggestion or not (suggestion.get("prompt") or suggestion.get("action")):
+        # Regression stop: two consecutive applied suggestions that failed to
+        # improve the goal mean the current direction is exhausted.
+        if regress_streak >= 2:
+            stopped_reason = ("no improvement in 2 consecutive applied suggestions")
+            await emit("notice", {"message": (
+                f"Improve loop stopped at iteration {i} — the last two applied "
+                "suggestions did not improve the goal.")})
+            break
+
+        suggestion = _next_pending_suggestion(store, experiment_id, review)
+        if suggestion is None:
             stopped_reason = "no further suggestions"
             await emit("notice", {"message": (
                 f"Improve loop stopped at iteration {i} — the reviewer offered no "
                 "further actionable suggestions.")})
             break
         last_suggestion = suggestion
+        last_applied_sid = suggestion.get("id")
         current_prompt = suggestion.get("prompt") or suggestion.get("action")
     else:
         stopped_reason = f"iteration budget ({iterations}) spent"
@@ -279,14 +337,19 @@ def _loop_summary(exp: dict, history: list[dict], best_val, best_id,
         lines.append(f"- **Best {goal_metric}**: {best_val:.4g}"
                      + (f" (run #{best_id})" if best_id is not None else ""))
     if history:
-        lines += ["", "| it | run | " + (goal_metric or "metric") + " | applied suggestion |",
-                  "|---|---|---|---|"]
+        lines += ["", "| it | run | " + (goal_metric or "metric") + " | applied suggestion | delta |",
+                  "|---|---|---|---|---|"]
         for h in history:
             mval = h.get("goal_metric_value")
             mstr = f"{mval:.4g}" if mval is not None else "—"
             sug = (h.get("suggestion") or {}).get("title") or "initial prompt"
+            delta = h.get("delta")
+            if delta is not None:
+                dstr = (f"{delta:+.4g} {'✓' if h.get('improved') else '✗'}")
+            else:
+                dstr = "—"
             lines.append(f"| {h['iteration']} | #{h.get('run_id') or '—'} | "
-                         f"{mstr} | {sug} |")
+                         f"{mstr} | {sug} | {dstr} |")
     return "\n".join(lines)
 
 
@@ -294,3 +357,20 @@ def _created(store, mid: int) -> float | None:
     """Timestamp for a WS message event emitted from the loop."""
     row = store.get_message(mid)
     return (row or {}).get("created_at")
+
+
+def _next_pending_suggestion(store, experiment_id: int, review: dict) -> dict | None:
+    """Pick the next not-yet-applied suggestion for an experiment.
+
+    Prefers the freshly suggested ones (in order); excludes suggestions already
+    applied in previous loop runs (their status is no longer 'pending'), so the
+    loop never re-tries the same change blindly.
+    """
+    fresh = [s for s in (review or {}).get("suggestions") or []
+             if isinstance(s, dict) and (s.get("prompt") or s.get("action"))]
+    used = {s["id"] for s in store.list_suggestions(experiment_id)
+            if s["status"] != "pending"}
+    for s in fresh:
+        if s.get("id") is None or s["id"] not in used:
+            return s
+    return None

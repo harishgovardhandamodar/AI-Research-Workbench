@@ -104,6 +104,15 @@ class ProjectStore:
                 kind TEXT, command TEXT, decision TEXT, temporary INTEGER,
                 created_at REAL)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id INTEGER, source_run_id INTEGER, run_id INTEGER,
+                title TEXT, action TEXT, prompt TEXT,
+                status TEXT DEFAULT 'pending',
+                baseline_value REAL, outcome_value REAL, delta REAL,
+                improved INTEGER, created_at REAL, applied_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -150,6 +159,12 @@ class ProjectStore:
         # produced the run) used by chat bubbles and the Experiments timeline.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN model TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate the per-experiment pinned model
+        # (which LLM should run this experiment's turns).
+        try:
+            c.execute("ALTER TABLE experiments ADD COLUMN model TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -332,6 +347,98 @@ class ProjectStore:
             (json.dumps(review), rid))
         self._conn.commit()
 
+    # -- suggestions (first-class reviewer suggestion records) ---------------
+    def add_suggestions(self, experiment_id: int | None, source_run_id: int | None,
+                        review: dict) -> list[int]:
+        """Persist the reviewer's suggestions as first-class rows and return
+        their ids (attached to the suggestions so the UI can reference them)."""
+        ids = []
+        for s in (review or {}).get("suggestions") or []:
+            title = str(s.get("title") or "") if isinstance(s, dict) else ""
+            action = str(s.get("action") or "") if isinstance(s, dict) else str(s)
+            prompt = str(s.get("prompt") or "") if isinstance(s, dict) else str(s)
+            if not title and not prompt:
+                continue
+            cur = self._conn.execute(
+                "INSERT INTO suggestions (experiment_id, source_run_id, title,"
+                " action, prompt, status, created_at)"
+                " VALUES (?,?,?,?,?,'pending',?)",
+                (experiment_id, source_run_id, title, action, prompt, time.time()))
+            ids.append(cur.lastrowid)
+        self._conn.commit()
+        return ids
+
+    def get_suggestion(self, sid: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM suggestions WHERE id=?", (sid,)).fetchone()
+        return self._row_suggestion(row) if row else None
+
+    def list_suggestions(self, experiment_id: int | None = None,
+                         status: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM suggestions"
+        conds, vals = [], []
+        if experiment_id is not None:
+            conds.append("experiment_id=?"); vals.append(experiment_id)
+        if status:
+            conds.append("status=?"); vals.append(status)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY id"
+        rows = self._conn.execute(sql, vals).fetchall()
+        return [self._row_suggestion(r) for r in rows]
+
+    def mark_suggestion_applied(self, sid: int, run_id: int | None = None) -> None:
+        self._conn.execute(
+            "UPDATE suggestions SET status='applied', run_id=?, applied_at=?"
+            " WHERE id=?", (run_id, time.time(), sid))
+        self._conn.commit()
+
+    def resolve_suggestion_outcome(self, sid: int) -> dict | None:
+        """Regression check: compare the applied run's goal metric against the
+        source run's. Sets baseline/outcome/delta/improved and the final status
+        (accepted if it improved, rejected otherwise). Returns the suggestion."""
+        sug = self.get_suggestion(sid)
+        if sug is None or sug["status"] != "applied" or sug["run_id"] is None:
+            return sug
+        source = self.get_run(sug["source_run_id"]) if sug["source_run_id"] else None
+        applied = self.get_run(sug["run_id"])
+        exp = self.get_experiment(sug["experiment_id"]) if sug["experiment_id"] else None
+        metric = (exp or {}).get("goal_metric") or ""
+        higher = bool((exp or {}).get("higher_better", True))
+        if not metric or applied is None:
+            return sug
+        m0 = (source or {}).get("metrics") or {}
+        m1 = applied.get("metrics") or {}
+        try:
+            base = float(m0.get(metric))
+        except (TypeError, ValueError):
+            base = None
+        try:
+            out = float(m1.get(metric))
+        except (TypeError, ValueError):
+            out = None
+        improved = None
+        delta = None
+        if base is not None and out is not None:
+            delta = out - base
+            improved = 1 if (out > base if higher else out < base) else 0
+        status = "accepted" if improved else "rejected" if improved is not None else "applied"
+        self._conn.execute(
+            "UPDATE suggestions SET baseline_value=?, outcome_value=?, delta=?,"
+            " improved=?, status=? WHERE id=?",
+            (base, out, delta, improved, status, sid))
+        self._conn.commit()
+        return self.get_suggestion(sid)
+
+    def _row_suggestion(self, r) -> dict:
+        return {"id": r["id"], "experiment_id": r["experiment_id"],
+                "source_run_id": r["source_run_id"], "run_id": r["run_id"],
+                "title": r["title"], "action": r["action"], "prompt": r["prompt"],
+                "status": r["status"], "baseline_value": r["baseline_value"],
+                "outcome_value": r["outcome_value"], "delta": r["delta"],
+                "improved": r["improved"], "created_at": r["created_at"],
+                "applied_at": r["applied_at"]}
+
     def _row_run(self, r) -> dict:
         return {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],
                 "status": r["status"], "started_at": r["started_at"],
@@ -350,14 +457,16 @@ class ProjectStore:
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",
                           goal_metric: str = "", goal_target: float | None = None,
-                          higher_better: bool = True, plan: str = "") -> int:
+                          higher_better: bool = True, plan: str = "",
+                          model: str = "") -> int:
         now = time.time()
         cur = self._conn.execute(
             "INSERT INTO experiments (name, hypothesis, goal_metric, goal_target,"
-            " higher_better, status, created_at, updated_at, plan)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            " higher_better, status, created_at, updated_at, plan, model)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (name, hypothesis, goal_metric, goal_target,
-             1 if higher_better else 0, "active", now, now, plan or None))
+             1 if higher_better else 0, "active", now, now, plan or None,
+             model or None))
         self._conn.commit()
         return cur.lastrowid
 
@@ -393,7 +502,8 @@ class ProjectStore:
                           goal_metric: str | None = None,
                           goal_target: float | str | None = None,
                           higher_better: bool | None = None,
-                          plan: str | None = None) -> None:
+                          plan: str | None = None,
+                          model: str | None = None) -> None:
         """Edit an experiment's objective fields in place (co-design: the user can
         refine a hypothesis/goal without recreating the experiment and orphaning
         its runs). Bumps updated_at. Pass _UNSET to clear an optional field."""
@@ -414,6 +524,8 @@ class ProjectStore:
             sets.append("higher_better=?"); vals.append(1 if higher_better else 0)
         if plan is not None:
             sets.append("plan=?"); vals.append(None if plan is _UNSET else plan)
+        if model is not None:
+            sets.append("model=?"); vals.append(None if model is _UNSET else model)
         if not sets:
             return
         sets.append("updated_at=?")
@@ -427,7 +539,7 @@ class ProjectStore:
                 "goal_metric": r["goal_metric"], "goal_target": r["goal_target"],
                 "higher_better": bool(r["higher_better"]), "status": r["status"],
                 "created_at": r["created_at"], "updated_at": r["updated_at"],
-                "plan": r["plan"] or ""}
+                "plan": r["plan"] or "", "model": r["model"] or ""}
 
     # -- goals (target metric + direction, for improvement tracking) --------
     def add_goal(self, metric: str, target: float, higher_better: bool,

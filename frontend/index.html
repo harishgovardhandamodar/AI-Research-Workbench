@@ -546,6 +546,8 @@
       <label class="check"><input id="exp-edit-hb" type="checkbox" checked> higher is better</label>
       <label>Plan (configs/variables to try, stopping criteria)</label>
       <textarea id="exp-edit-plan" rows="3"></textarea>
+      <label>Pinned model (blank = global default)</label>
+      <input id="exp-edit-model" list="model-list" placeholder="e.g. qwen3.6:latest">
       <div class="modal-actions">
         <span class="muted">Refine the objective without recreating the experiment — runs stay attached.</span>
         <span class="spacer"></span>

@@ -95,6 +95,9 @@ class WorkflowTracker:
         # runs to history (traceability).
         self._persist = persist
         self._record = record
+        # Re-invocation metadata so a failed stage can be retried later: which
+        # operation produced this pipeline and what it needs to re-run.
+        self._invoke: dict | None = None
 
     # ------------------------------------------------------------- restore --
     def restore(self, snap: dict | None) -> None:
@@ -107,6 +110,7 @@ class WorkflowTracker:
         self._pct = snap.get("pct", 0.0) or 0.0
         self._updated = snap.get("updated_at", time.time())
         self._started = snap.get("started_at", 0.0)
+        self._invoke = snap.get("invoke")
 
     # ------------------------------------------------------------- subscribe --
     def subscribe(self, emit: Emit):
@@ -127,7 +131,17 @@ class WorkflowTracker:
             "stages": [dict(s) for s in self._stages],
             "started_at": self._started,
             "updated_at": self._updated,
+            "invoke": dict(self._invoke) if self._invoke else None,
         }
+
+    def set_invoke(self, **data) -> None:
+        """Record how this pipeline was launched, so a failed stage can be
+        retried (e.g. improve loop: experiment id + prompt + iteration budget)."""
+        self._invoke = dict(data)
+
+    @property
+    def invoke(self) -> dict | None:
+        return dict(self._invoke) if self._invoke else None
 
     def stage_for_tool(self, name: str) -> str | None:
         return STAGE_BY_TOOL.get(name)
@@ -167,6 +181,7 @@ class WorkflowTracker:
                  "state": "pending", "detail": "", "pct": 0}
                 for s in (stages or ARXIV_STAGES)
             ]
+            self._invoke = None
             self._recompute()
             self._updated = time.time()
         await self._broadcast()

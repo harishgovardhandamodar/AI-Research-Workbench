@@ -262,6 +262,53 @@ def compare_runs(a: dict, b: dict) -> dict:
     }
 
 
+def run_diff(a: dict, b: dict) -> dict:
+    """What changed between two runs: config, metrics and tool usage.
+
+    Operates on raw run records (store.get_run / add_run output) which retain
+    full `config` / `tool_sequence`. Returns
+        {"a": label_a, "b": label_b,
+         "config": {"added": [...], "removed": [...], "changed": [[key, va, vb]...]},
+         "metrics": compare_runs(...) result,
+         "tools": {"added": [...], "removed": [...], "failed": [...], "used": [...]},
+         "prompt": {"a": prompt_a, "b": prompt_b}}
+    """
+    def cfg(run: dict) -> dict:
+        c = run.get("config")
+        return dict(c) if isinstance(c, dict) else {}
+
+    ca, cb = cfg(a), cfg(b)
+    added = sorted(k for k in cb if k not in ca)
+    removed = sorted(k for k in ca if k not in cb)
+    changed = [[k, ca[k], cb[k]] for k in sorted(set(ca) & set(cb))
+               if ca[k] != cb[k]]
+
+    def tools(run: dict) -> list[dict]:
+        seq = run.get("tool_sequence")
+        return list(seq) if isinstance(seq, list) else []
+
+    ta, tb = {t.get("name") for t in tools(a)}, {t.get("name") for t in tools(b)}
+    tool_added = sorted(tb - ta)
+    tool_removed = sorted(ta - tb)
+    failed = sorted({t.get("name") for t in tools(a) + tools(b) if not t.get("ok")})
+
+    def label(run: dict) -> str:
+        lbl = run.get("label")
+        if lbl:
+            return str(lbl)
+        return f"run {run.get('id')}"
+
+    return {
+        "a": label(a),
+        "b": label(b),
+        "config": {"added": added, "removed": removed, "changed": changed},
+        "metrics": compare_runs(a, b),
+        "tools": {"added": tool_added, "removed": tool_removed,
+                  "failed": failed, "used": sorted(tb)},
+        "prompt": {"a": a.get("prompt") or "", "b": b.get("prompt") or ""},
+    }
+
+
 # ------------------------------------------------------------------- graph ----
 
 def build_graph(records: list[dict], artifact_store=None) -> dict:

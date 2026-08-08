@@ -606,6 +606,21 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
     return message[:60_000] if message else "(workflow produced no output)"
 
 
+def _attach_suggestion_ids(store, source_run_id: int, review: dict) -> None:
+    """Persist a review's suggestions as first-class records and attach their
+    ids to the dict (so the WS review payload / UI can reference and track them)."""
+    ids = store.add_suggestions(
+        _review_experiment_id(store, source_run_id), source_run_id, review)
+    for s, sid in zip((review or {}).get("suggestions") or [], ids):
+        if isinstance(s, dict):
+            s["id"] = sid
+
+
+def _review_experiment_id(store, run_id: int) -> int | None:
+    run = store.get_run(run_id)
+    return (run or {}).get("experiment_id")
+
+
 def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
     """Human-readable goal-progress / new-best notices for a freshly recorded run.
 
@@ -1045,6 +1060,14 @@ async def ws_chat(ws: WebSocket, name: str):
                     # "Apply & rerun" from a reviewer suggestion: send the
                     # suggestion's prompt to the agent as a fresh turn.
                     user_tags = ["rerun suggestion"]
+                elif intent == "rerun_run":
+                    # "Revert to this run": re-issue the run's prompt as a fresh
+                    # turn so work continues from that exact configuration
+                    # (child of the reverted run in the branch graph).
+                    user_tags = ["rerun run"]
+                elif intent == "retry_stage":
+                    # Retry a failed workflow stage (resumable pipelines only).
+                    user_tags = ["retry stage"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1053,6 +1076,16 @@ async def ws_chat(ws: WebSocket, name: str):
                     fresh_mode = fresh_requested(text) or rcc
                     if rcc:
                         user_tags = ["privacy workflow", "fresh rerun", "compare runs"]
+                if intent == "rerun_run":
+                    # Revert-to-this-run: derive from the requested run and
+                    # re-issue its prompt (if no explicit text was provided).
+                    rid = (msg_extra.get("run_id") if msg_extra else None)
+                    if str(rid).isdigit():
+                        target = rt.store.get_run(int(rid))
+                        if target is not None:
+                            coordinator.ctx.parent_run_id = int(rid)
+                            if not (text or "").strip():
+                                text = target.get("prompt") or text
                 if intent == "autoresearch":
                     from .autoresearch import run_autoresearch_loop
 
@@ -1079,6 +1112,29 @@ async def ws_chat(ws: WebSocket, name: str):
                         lambda extra="": Reviewer(rt.llm, rt.store).review(extra),
                         eid, text, emit=emit, workflow=rt.workflow)
                     await emit("status", {"message": ""})
+                    await emit("done", {})
+                    return
+                if intent == "retry_stage":
+                    await emit("status", {"message": "Retrying workflow stage…"})
+                    snap = rt.workflow.snapshot()
+                    inv = snap.get("invoke") or {}
+                    stage = (msg_extra.get("stage") if msg_extra else "") or ""
+                    if inv.get("kind") == "improve" and str(stage).startswith("iter"):
+                        n = str(stage).replace("iter", "")
+                        eid = inv.get("experiment_id")
+                        if str(n).isdigit() and eid is not None:
+                            result = await run_improve_loop(
+                                rt.store, coordinator, rt.build_llm_messages,
+                                lambda extra="": Reviewer(rt.llm, rt.store).review(extra),
+                                int(eid), inv.get("prompt") or text, emit=emit,
+                                workflow=rt.workflow,
+                                iterations=int(inv.get("iterations") or 3),
+                                start_at=int(n))
+                            await emit("status", {"message": ""})
+                            await emit("done", {})
+                            return
+                    await emit("error", {"message":
+                        "Cannot retry this stage — no resumable improve-loop workflow is active."})
                     await emit("done", {})
                     return
                 # A free-form turn with no experiment context inherits the
@@ -1162,11 +1218,26 @@ async def ws_chat(ws: WebSocket, name: str):
                 # ("Apply & rerun") derives from the run it improves; anything
                 # after a "fresh rerun"/autoresearch rerun derives from the last
                 # run of the same kind. Used by the branch-history graph.
+                applied_suggestion_id = None
                 try:
                     if intent == "rerun_suggestion":
-                        last = rt.store.list_runs()
-                        if last:
-                            coordinator.ctx.parent_run_id = last[-1]["id"]
+                        # First-class suggestion apply: parent = the run whose
+                        # review produced the suggestion; mark it applied so its
+                        # outcome is resolved (regression check) after the turn.
+                        sid = (msg_extra.get("suggestion_id") if msg_extra else None)
+                        if str(sid).isdigit():
+                            sug = rt.store.get_suggestion(int(sid))
+                            if sug is not None:
+                                applied_suggestion_id = sug["id"]
+                                rt.store.mark_suggestion_applied(sug["id"])
+                                if sug["source_run_id"]:
+                                    coordinator.ctx.parent_run_id = sug["source_run_id"]
+                                else:
+                                    coordinator.ctx.parent_run_id = None
+                        if coordinator.ctx.parent_run_id is None:
+                            last = rt.store.list_runs()
+                            if last:
+                                coordinator.ctx.parent_run_id = last[-1]["id"]
                     elif intent == "autoresearch" or (text and "autoresearch" in text):
                         pass  # handled by the autoresearch loop itself
                 except Exception:  # noqa: BLE001
@@ -1223,10 +1294,27 @@ async def ws_chat(ws: WebSocket, name: str):
                         review = await Reviewer(rt.llm, rt.store).review(
                             build_review_context(rt.store, runs_now[-1]))
                         if runs_now:
-                            rt.store.update_run_review(runs_now[-1]["id"], review)
+                            rid = runs_now[-1]["id"]
+                            rt.store.update_run_review(rid, review)
+                            _attach_suggestion_ids(rt.store, rid, review)
                         await emit("review", review)
                     except Exception:  # noqa: BLE001
                         await emit("review", {"findings": [], "suggestions": []})
+                # Regression check for an applied suggestion: did the goal metric
+                # actually improve vs. the run it was applied to?
+                if applied_suggestion_id is not None:
+                    try:
+                        outcome = rt.store.resolve_suggestion_outcome(applied_suggestion_id)
+                        if outcome and outcome.get("status") in ("accepted", "rejected"):
+                            label = "✓ improved the goal" if outcome.get("improved") else "✗ did not improve the goal"
+                            delta = outcome.get("delta")
+                            dstr = f"{delta:+.4g}" if delta is not None else "n/a"
+                            await emit("notice", {"message": (
+                                f"Suggestion \"{outcome.get('title') or 'applied'}\" "
+                                f"{label} ({dstr} on {outcome.get('baseline_value')} "
+                                f"→ {outcome.get('outcome_value')}).")})
+                    except Exception:  # noqa: BLE001
+                        pass
                 await emit("status", {"message": ""})
                 # Background deviation scan: flag novel tools, sequences,
                 # data classes and network destinations after the turn.

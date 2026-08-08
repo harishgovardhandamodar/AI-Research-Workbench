@@ -52,6 +52,20 @@ class KernelManager:
             self._env_cache = env
         return self._env_cache
 
+    def pool(self, n: int) -> list:
+        """Spawn up to `n` independent ephemeral Python kernels for parallel
+        parameter sweeps. Each is its own subprocess (true process parallelism).
+        Callers are responsible for stopping them. Local mode only — remote
+        kernel managers return [] so sweep callers fall back to sequential."""
+        return [PythonKernel(cwd=self.workspace_dir) for _ in range(max(0, int(n)))]
+
+    async def stop_pool(self, kernels: list) -> None:
+        for k in kernels:
+            try:
+                await k.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
     async def reset(self):
         self._env_cache = None
         await self.python.reset()

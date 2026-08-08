@@ -75,6 +75,33 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "run_sweep",
+            "description": (
+                "Run a parameter sweep: execute the SAME code once per config "
+                "point, in parallel kernels, and record one run per config. The "
+                "code must read its parameters from a `config` dict and report "
+                "its headline metric(s) via report_metric(name, value). Use for "
+                "grid searches (e.g. sweep eps over [0.5, 1, 2]) — preferred "
+                "over repeating start_run/finish_run for a grid."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string",
+                             "description": "Python code that uses `config` and calls report_metric(...)"},
+                    "configs": {"type": "array",
+                                "items": {"type": "object"},
+                                "description": "List of config dicts, one per sweep point"},
+                    "label_prefix": {"type": "string",
+                                     "description": "Prefix for each run's label (optional)"},
+                },
+                "required": ["code", "configs"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_r",
             "description": "Execute R code. Requires Rscript to be installed.",
             "parameters": {
@@ -420,6 +447,117 @@ async def _run_python(ctx: ToolContext, code: str) -> str:
     if not parts:
         parts.append("(no output)")
     return "\n".join(parts)
+
+
+async def _run_sweep(ctx: ToolContext, code: str, configs: list,
+                     label_prefix: str = "") -> str:
+    """Parallel parameter sweep: run `code` (which reads `config` and calls
+    report_metric) once per config on independent kernels, recording one run per
+    config under the active experiment. Falls back to sequential on the main
+    kernel when the kernel manager has no pool (remote mode)."""
+    import asyncio
+
+    configs = [dict(c) for c in configs or []]
+    if not configs:
+        return "[error] run_sweep needs at least one config"
+    label_prefix = (label_prefix or "").strip()
+    eid = int(ctx.experiment_id) if str(ctx.experiment_id).isdigit() else None
+    parent_id = ctx.parent_run_id
+    if parent_id is None and eid is not None:
+        runs = ctx.store.experiment_runs(eid) if ctx.store else []
+        if runs:
+            exp = ctx.store.get_experiment(eid) if ctx.store else None
+            goal = (exp or {}).get("goal_metric")
+            higher = bool((exp or {}).get("higher_better", True))
+            best, best_id = None, None
+            if goal:
+                for r in runs:
+                    m = (r.get("metrics") or {}).get(goal)
+                    if m is None:
+                        continue
+                    try:
+                        m = float(m)
+                    except (TypeError, ValueError):
+                        continue
+                    if best is None or (m > best if higher else m < best):
+                        best, best_id = m, r.get("id")
+                parent_id = best_id
+            if parent_id is None:
+                parent_id = runs[-1].get("id")
+
+    def _label(i: int, cfg: dict) -> str:
+        if label_prefix:
+            return f"{label_prefix}·{i}"
+        return (cfg.get("label") or f"point {i}")
+
+    kernels = []
+    t0 = time.time()
+    try:
+        pool = getattr(ctx.kernels, "pool", None)
+        kernels = list(pool(len(configs))) if pool else []
+        rows = []
+        if kernels:
+            async def one(k, i, cfg):
+                return await _sweep_point(ctx, k, code, cfg, _label(i, cfg),
+                                          parent_id, eid, i)
+            rows = await asyncio.gather(
+                *[one(k, i, c) for i, (k, c) in enumerate(zip(kernels, configs), 1)])
+        else:
+            for i, cfg in enumerate(configs, 1):
+                rows.append(await _sweep_point(
+                    ctx, ctx.kernels.python, code, cfg, _label(i, cfg),
+                    parent_id, eid, i))
+    finally:
+        if kernels:
+            stop = getattr(ctx.kernels, "stop_pool", None)
+            if stop:
+                await stop(kernels)
+
+    lines = [f"## Parameter sweep — {len(configs)} points "
+             f"({'parallel' if kernels else 'sequential'})",
+             ""]
+    cols = sorted({k for r in rows for k in r.get("metrics", {})})
+    lines.append("| point | label | config | " + " | ".join(cols) + " |")
+    lines.append("|" + "---|" * (3 + len(cols)))
+    for r in rows:
+        mvals = [f"{r.get('metrics', {}).get(c):.4g}" if r.get("metrics", {}).get(c) is not None else "—" for c in cols]
+        lines.append(f"| {r['index']} | {r['label']} | {json.dumps(r['config'], sort_keys=True)} | " + " | ".join(mvals) + " |")
+    lines.append("")
+    for r in rows:
+        if r.get("error"):
+            lines.append(f"- point {r['index']} ({r['label']}) failed: {r['error']}")
+    lines.append(f"- Runs recorded: {len(rows)} under experiment #{eid or '(none)'}; "
+                 f"derived from run #{parent_id or '(none)'}.")
+    return "\n".join(lines)
+
+
+async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
+                       label: str, parent_id, eid, index: int) -> dict:
+    """Run one sweep point on `kernel`: inject `config`, run the code, record a
+    run with the returned metrics. Store writes stay on the event loop."""
+    started = time.time()
+    try:
+        await kernel.run_code("config = " + json.dumps(cfg))
+        resp = await kernel.run_code(code)
+        metrics = resp.get("metrics") or {}
+        error = resp.get("error") or ""
+        if error:
+            metrics = {}
+        rid = None
+        if ctx.store is not None:
+            rid = ctx.store.add_run(
+                prompt=code, reply=resp.get("output", "")[:2000],
+                status="done" if not error else "failed",
+                started_at=started, finished_at=time.time(),
+                tool_sequence=[{"name": "run_sweep", "ok": not error,
+                                "args": {"config": cfg}, "result": error or "ok"}],
+                metrics=metrics, experiment_id=eid, config=cfg, label=label,
+                kind="sweep", parent_run_id=parent_id, model=getattr(ctx, "model", None))
+    except Exception as e:  # noqa: BLE001
+        return {"index": index, "label": label, "config": cfg,
+                "metrics": {}, "error": f"{type(e).__name__}: {e}"}
+    return {"index": index, "label": label, "config": cfg,
+            "metrics": metrics, "error": error or "", "run_id": rid}
 
 
 async def _run_r(ctx: ToolContext, code: str) -> str:
@@ -845,6 +983,8 @@ async def _rkg_scenario_report(ctx: ToolContext, scenario_id: str) -> str:
 def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
     return {
         "run_python": lambda code: _run_python(ctx, code),
+        "run_sweep": lambda code, configs, label_prefix="":
+            _run_sweep(ctx, code, configs, label_prefix),
         "run_r": lambda code: _run_r(ctx, code),
         "run_shell": lambda command, timeout=30: _run_shell(ctx, command, timeout),
         "save_artifact": lambda name, description, content, kind="text":

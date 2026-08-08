@@ -189,6 +189,7 @@ class Coordinator:
         self._run_started = 0.0
         self.agent_name = "Fox"
         self.model_name = getattr(self.llm, "model", "") or ""
+        self._stream_model_support: bool | None = None
         # Which agent loop drives turns: "classic" (hand-rolled, default) or
         # "langgraph" (LangChain orchestration, reliability features).
         self.orchestrator = os.environ.get("FOX_ORCHESTRATOR", "classic").strip().lower() or "classic"
@@ -251,6 +252,35 @@ class Coordinator:
             meta["experiment_id"] = int(eid)
         return meta
 
+    def _stream_supports_model(self) -> bool:
+        if self._stream_model_support is None:
+            try:
+                import inspect
+                self._stream_model_support = "model" in inspect.signature(
+                    self.llm.stream).parameters
+            except Exception:  # noqa: BLE001
+                self._stream_model_support = False
+        return self._stream_model_support
+
+    def _pinned_model(self) -> str:
+        """Per-experiment model pin: the experiment's `model` wins over the
+        global default (falling back to the focused experiment when the turn has
+        no explicit experiment). Returns "" to use the client default."""
+        try:
+            store = getattr(self.ctx, "store", None)
+            if store is None:
+                return ""
+            eid = getattr(self.ctx, "experiment_id", "")
+            if not str(eid).isdigit():
+                fid = store.get_setting("focus_experiment_id", "")
+                eid = fid if str(fid).isdigit() else ""
+            if str(eid).isdigit():
+                exp = store.get_experiment(int(eid))
+                return (exp or {}).get("model") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
     async def run_turn(self, messages: list[dict]) -> dict:
         """Run one agent turn over `messages` (already ending with the user message).
 
@@ -277,13 +307,19 @@ class Coordinator:
         self.ctx.run_id = ""
         status = "done"
         text = ""
+        model_override = self._pinned_model()
+        if model_override:
+            self.model_name = model_override
         audit_meta = self._audit_meta()
         await self._audit_turn_event("turn_start", audit_meta)
         try:
             await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
                 self._raise_if_aborted()
-                full = await self.llm.stream(messages, tools, on_delta=self._on_delta)
+                stream_kwargs = {"on_delta": self._on_delta}
+                if self._stream_supports_model():
+                    stream_kwargs["model"] = model_override or None
+                full = await self.llm.stream(messages, tools, **stream_kwargs)
                 # A Stop arriving mid-stream takes effect as soon as it completes
                 # (the stream itself can't be interrupted safely).
                 self._raise_if_aborted()

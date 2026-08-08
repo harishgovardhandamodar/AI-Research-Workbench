@@ -49,6 +49,7 @@ const state = {
   streaming: false,
   nbTag: "all",
   workflow: null,
+  suggestions: {},   // suggestion id -> {status, delta, improved}
 };
 
 /* ============================== helpers ================================= */
@@ -270,11 +271,12 @@ function handleEvent(type, p) {
       state._lastFindings = p.findings || [];
       state._lastSuggestions = p.suggestions || [];
       renderReview(state._lastFindings, state._lastSuggestions);
+      loadSuggestions();
       break;
     case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p); break;
     case "workflow": renderWorkflow(p); break;
-    case "done": onTurnDone(); attachNextSteps(); loadExperiments(); break;
+    case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); break;
     case "error": onError(p.message); break;
   }
 }
@@ -714,6 +716,13 @@ function renderWorkflow(snap) {
         <div class="wf-detail">${esc(detail)}</div>
         <div class="wf-mini"><div class="wf-mini-fill" style="width:${Number(s.pct) || 0}%"></div></div>
       </div>`;
+    if (s.state === "failed") {
+      const retry = document.createElement("button");
+      retry.className = "btn subtle small wf-retry";
+      retry.textContent = "↻ retry";
+      retry.addEventListener("click", () => sendChat("", "retry_stage", { stage: s.id }));
+      row.appendChild(retry);
+    }
     wrap.appendChild(row);
   }
   scrollBottom();
@@ -971,19 +980,37 @@ function renderReview(findings, suggestions) {
         ? s.prompt : (typeof s === "string" ? s : "");
       const action = (typeof s === "object" && s && s.action)
         ? s.action : "";
+      const st = suggestionStatus(s);
       d.innerHTML = `<span class="sev">→</span><span class="sug-body">${esc(title)}` +
         (action && action !== title ? `<span class="sug-action">${esc(action)}</span>` : "") +
         `</span>`;
-      if (prompt) {
+      if (st.badge) {
+        const b = document.createElement("span");
+        b.className = "sug-badge " + st.cls;
+        b.textContent = st.badge;
+        d.appendChild(b);
+      }
+      if (prompt && !st.done) {
         const btn = document.createElement("button");
         btn.className = "btn subtle small sug-run";
         btn.textContent = "Apply & rerun";
-        btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion"));
+        btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion", { suggestion_id: s.id }));
         d.appendChild(btn);
       }
       c.appendChild(d);
     }
   }
+}
+
+function suggestionStatus(s) {
+  const id = (s && typeof s === "object" && s.id) ? Number(s.id) : null;
+  const rec = id ? (state.suggestions[id] || {}) : {};
+  if (rec.improved === 1) return { done: true, badge: "✓ improved", cls: "ok" };
+  if (rec.improved === 0) return { done: true, badge: "✗ no gain", cls: "warn" };
+  if (rec.status === "applied") return { done: true, badge: "applied", cls: "det" };
+  if (rec.status === "rejected" || rec.status === "accepted") return { done: true, badge: rec.status, cls: "det" };
+  if (id != null) return { done: false, badge: "pending", cls: "muted" };
+  return { done: false, badge: "", cls: "" };
 }
 
 function setReviewStatus(txt) {
@@ -1010,12 +1037,19 @@ function attachNextSteps() {
     if (!title) continue;
     const row = document.createElement("div");
     row.className = "next-step";
+    const st = suggestionStatus(s);
     row.innerHTML = `<span class="ns-title">${esc(title)}</span>`;
-    if (prompt) {
+    if (st.badge) {
+      const b = document.createElement("span");
+      b.className = "sug-badge " + st.cls;
+      b.textContent = st.badge;
+      row.appendChild(b);
+    }
+    if (prompt && !st.done) {
       const btn = document.createElement("button");
       btn.className = "btn subtle small ns-run";
       btn.textContent = "Run";
-      btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion"));
+      btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion", { suggestion_id: s.id }));
       row.appendChild(btn);
     }
     block.appendChild(row);
@@ -1167,7 +1201,7 @@ function setViewParam(kind) {
 async function sendChat(textOverride, intent, extra) {
   const input = $("input");
   const text = textOverride !== undefined ? textOverride : input.value.trim();
-  if (!text || state.busy) return;
+  if ((!text && !intent) || state.busy) return;
   // Local UI switches (rendering mode).
   const t = text.trim();
   if (t === "/flat" || t === "/flat=1") { setViewParam("flat"); return; }
@@ -2692,6 +2726,7 @@ $("kaggle-slug").addEventListener("keydown", (e) => {
 /* ============================ experiments ================================= */
 
 async function loadExperiments() {
+  loadSuggestions();
   try {
     const r = await api(`/api/projects/${state.project}/experiments/history`);
     state.expRuns = r.experiments || [];
@@ -2730,6 +2765,15 @@ async function loadExperiments() {
   refreshExpContext();
 }
 
+async function loadSuggestions() {
+  try {
+    const r = await api(`/api/projects/${state.project}/suggestions`);
+    const map = {};
+    for (const s of r.suggestions || []) map[s.id] = s;
+    state.suggestions = map;
+  } catch (e) { /* silent */ }
+}
+
 async function loadExpRankings() {
   const exps = state.expList || [];
   state.expRanking = state.expRanking || {};
@@ -2759,7 +2803,7 @@ function renderExpRankings() {
       host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body empty">No runs report the metric "${esc(rank.metric)}".</div></details>`;
       return;
     }
-    let html = `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric.replace(/_/g, " "))}</th>${target != null ? `<th>to target</th>` : ""}<th>Δ best</th></tr></thead><tbody>`;
+    let html = `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric.replace(/_/g, " "))}</th>${target != null ? `<th>to target</th>` : ""}<th>Δ best</th><th></th></tr></thead><tbody>`;
     for (const row of rows) {
       const medal = row.rank === 1 ? " 🏆" : "";
       const reached = target != null && ((row.metric >= target && rank.higher_better) || (row.metric <= target && !rank.higher_better));
@@ -2772,10 +2816,14 @@ function renderExpRankings() {
         <td>${_fmtNum(row.metric)}</td>
         ${toTarget}
         <td class="muted">${row.rank === 1 ? "—" : (row.delta_best >= 0 ? "+" : "") + _fmtNum(row.delta_best)}</td>
+        <td><button class="btn subtle small rank-revert" data-rid="${row.run_id}" title="Revert: rerun this run's prompt as a fresh turn">↶ revert</button></td>
       </tr>`;
     }
     html += "</tbody></table>";
     host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body">${html}</div></details>`;
+    host.querySelectorAll(".rank-revert").forEach((b) =>
+      b.addEventListener("click", () =>
+        sendChat("", "rerun_run", { run_id: b.dataset.rid })));
   });
 }
 
@@ -3193,6 +3241,9 @@ function renderExpList() {
     const goal = e.goal_metric
       ? `<span class="muted">goal ${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"} ${e.goal_target != null ? _fmtNum(e.goal_target) : "—"}</span>`
       : "";
+    const modelPin = e.model
+      ? `<span class="muted exp-model-pin" title="Pinned model for this experiment">◈ ${esc(e.model)}</span>`
+      : "";
     let planHtml = "";
     if (e.plan) {
       planHtml = `<details class="exp-plan"><summary>Plan</summary><div class="exp-plan-body">${esc(e.plan)}</div></details>`;
@@ -3217,6 +3268,7 @@ function renderExpList() {
       </div>
       ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
       ${goal}
+      ${modelPin}
       ${planHtml}
       <div class="exp-rank-host"></div>`;
     el.appendChild(card);
@@ -3294,6 +3346,7 @@ function openExpEdit(eid) {
   $("exp-edit-goal-target").value = e.goal_target != null ? String(e.goal_target) : "";
   $("exp-edit-hb").checked = e.higher_better !== false;
   $("exp-edit-plan").value = e.plan || "";
+  $("exp-edit-model").value = e.model || "";
   $("exp-edit-modal").classList.remove("hidden");
 }
 
@@ -3306,6 +3359,7 @@ async function saveExpEdit() {
     goal_target: null,
     higher_better: $("exp-edit-hb").checked,
     plan: $("exp-edit-plan").value.trim(),
+    model: $("exp-edit-model").value.trim(),
   };
   const t = $("exp-edit-goal-target").value.trim();
   if (t !== "") {
@@ -5456,6 +5510,14 @@ function showBranchDetail(id) {
     ? `<div>${paramKeys.map((k) => `<span class="bd-param">${esc(k)}: ${esc(fmtVal(cfg[k]))}</span>`).join(" ")}</div>`
     : `<div class="muted">(none recorded)</div>`;
 
+  // Actions: diff against the parent, or revert (re-run this run's prompt).
+  if (parentNode || true) {
+    h += `<div class="bd-actions">` +
+      (parentNode ? `<button class="btn subtle small bd-diff" data-rid="${n.id}">⇄ diff vs parent</button>` : "") +
+      `<button class="btn subtle small bd-revert" data-rid="${n.id}" title="Revert: rerun this run's prompt as a fresh turn">↶ revert to this run</button>` +
+      `</div><div class="bd-diff-host"></div>`;
+  }
+
   // Metrics.
   if (Object.keys(metrics).length) {
     h += `<h4>Metrics</h4>`;
@@ -5485,6 +5547,54 @@ function showBranchDetail(id) {
   }
 
   el.innerHTML = h;
+  const dbtn = el.querySelector(".bd-diff");
+  if (dbtn) dbtn.addEventListener("click", async () => {
+    const host = el.querySelector(".bd-diff-host");
+    if (host.dataset.loaded) return;
+    host.dataset.loaded = "1";
+    host.innerHTML = '<div class="muted">Loading diff…</div>';
+    await renderRunDiff(host, Number(dbtn.dataset.rid));
+  });
+  const rbtn = el.querySelector(".bd-revert");
+  if (rbtn) rbtn.addEventListener("click", () =>
+    sendChat("", "rerun_run", { run_id: rbtn.dataset.rid }));
+}
+
+async function renderRunDiff(host, runId) {
+  try {
+    const r = await api(`/api/projects/${state.project}/runs/${runId}/diff`);
+    let h = "";
+    if (!r.b) { host.innerHTML = '<div class="muted">No parent run to diff against.</div>'; return; }
+    const chg = r.config.added.length || r.config.removed.length || r.config.changed.length;
+    if (chg) {
+      h += `<div class="bd-diff-sec"><b>Config</b>`;
+      for (const k of r.config.added) h += `<div class="bd-diff-add">+ ${esc(k)}</div>`;
+      for (const k of r.config.removed) h += `<div class="bd-diff-del">− ${esc(k)}</div>`;
+      for (const [k, va, vb] of r.config.changed) h += `<div class="bd-diff-chg">~ ${esc(k)}: ${esc(fmtVal(va))} → ${esc(fmtVal(vb))}</div>`;
+      h += `</div>`;
+    }
+    const t = r.tools || {};
+    if (t.added.length || t.removed.length || t.failed.length) {
+      h += `<div class="bd-diff-sec"><b>Tools</b>`;
+      for (const k of t.added) h += `<div class="bd-diff-add">+ ${esc(k)}</div>`;
+      for (const k of t.removed) h += `<div class="bd-diff-del">− ${esc(k)}</div>`;
+      for (const k of t.failed) h += `<div class="bd-diff-fail">✗ ${esc(k)} failed</div>`;
+      h += `</div>`;
+    }
+    const mrows = ((r.metrics || {}).rows) || [];
+    if (mrows.length) {
+      h += `<div class="bd-diff-sec"><b>Metrics</b><table class="bd-diff-table"><tr><th>metric</th><th>parent</th><th>this</th><th>Δ</th></tr>`;
+      for (const row of mrows) {
+        const cls = row.delta > 0 ? "add" : (row.delta < 0 ? "del" : "");
+        h += `<tr><td>${esc(row.metric)}</td><td>${esc(fmtVal(row.a))}</td><td>${esc(fmtVal(row.b))}</td><td class="bd-diff-${cls}">${row.delta >= 0 ? "+" : ""}${esc(fmtVal(row.delta))}</td></tr>`;
+      }
+      h += `</table></div>`;
+    }
+    if (r.prompt && r.prompt.b) {
+      h += `<div class="bd-diff-sec"><b>Objective changed</b><div class="bd-note">${esc(strip(r.prompt.b, 300))}</div></div>`;
+    }
+    host.innerHTML = h || '<div class="muted">No differences detected.</div>';
+  } catch (e) { host.innerHTML = '<div class="muted">Diff failed: ' + esc(e.message) + "</div>"; }
 }
 
 function bdRow(k, v) {

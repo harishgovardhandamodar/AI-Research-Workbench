@@ -252,6 +252,20 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .wf-stage.done .wf-ico { color: var(--ok); }
 .wf-stage.failed .wf-ico { color: var(--danger); }
 .wf-stage-body { flex: 1 1 auto; min-width: 0; }
+.wf-retry { flex: 0 0 auto; margin-left: auto; align-self: center; }
+.exp-model-pin { margin-left: 8px; }
+.bd-actions { display: flex; gap: 6px; margin: 8px 0; }
+.bd-diff-host { margin: 4px 0 8px; }
+.bd-diff-sec { margin: 6px 0; font-size: 12.5px; }
+.bd-diff-sec b { display: block; margin-bottom: 2px; color: var(--text-dim); }
+.bd-diff-add { color: var(--ok); }
+.bd-diff-del { color: var(--danger); }
+.bd-diff-chg { color: var(--warn); }
+.bd-diff-fail { color: var(--danger); }
+.bd-diff-table { border-collapse: collapse; font-size: 12px; }
+.bd-diff-table td, .bd-diff-table th { padding: 1px 8px 1px 0; }
+.bd-diff-add { color: var(--ok); }
+.bd-diff-del { color: var(--danger); }
 .wf-label { font-size: 12px; font-weight: 600; }
 .wf-detail { font-size: 11px; color: var(--text-dim); min-height: 13px; }
 .wf-mini { height: 4px; border-radius: 3px; background: var(--bg-2); margin-top: 3px; overflow: hidden; }
@@ -570,6 +584,12 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .finding.suggestion .sug-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .finding.suggestion .sug-action { color: var(--text-dim); font-size: 11.5px; }
 .finding.suggestion .sug-run { flex: 0 0 auto; margin-left: auto; }
+.sug-badge { flex: 0 0 auto; margin-left: auto; font-size: 10.5px; font-weight: 600;
+  padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); white-space: nowrap; }
+.sug-badge.ok { color: var(--ok); border-color: var(--ok); }
+.sug-badge.warn { color: #d9a404; border-color: #d9a404; }
+.sug-badge.det { color: var(--accent); border-color: var(--accent); }
+.sug-badge.muted { color: var(--text-dim); }
 
 .empty { color: var(--text-dim); font-size: 12.5px; padding: 14px 4px; font-style: italic; }
 

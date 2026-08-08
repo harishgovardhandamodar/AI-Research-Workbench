@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..artifacts.store import Artifact
-from ..experiments import build_graph, compare_runs, rank_runs, unify_record
+from ..experiments import build_graph, compare_runs, rank_runs, run_diff, unify_record
 from ..llm import LLMError
 from ..state import get_runtime
 
@@ -90,7 +90,8 @@ async def create_project_experiment(name: str, body: dict):
         name_str, body.get("hypothesis") or "",
         body.get("goal_metric") or "", target,
         bool(body.get("higher_better", True)),
-        plan=body.get("plan") or "")
+        plan=body.get("plan") or "",
+        model=body.get("model") or "")
     return {"experiment": store.get_experiment(eid)}
 
 
@@ -180,6 +181,7 @@ async def update_project_experiment(name: str, eid: int, body: dict):
         goal_target=target,
         higher_better=body.get("higher_better"),
         plan=body.get("plan"),
+        model=body.get("model"),
     )
     return {"experiment": store.get_experiment(eid)}
 
@@ -520,6 +522,26 @@ async def project_goals_delete(name: str, metric: str, experiment_id: str = ""):
     return {"goals": rt.store.list_goals()}
 
 
+@router.get("/api/projects/{name}/suggestions")
+async def project_suggestions(name: str, experiment_id: str = "",
+                              status: str = ""):
+    """First-class reviewer suggestions with status/outcome, so the UI can show
+    which have been applied and whether they improved the goal."""
+    rt = get_runtime(name)
+    eid = int(experiment_id) if str(experiment_id).isdigit() else None
+    return {"suggestions": rt.store.list_suggestions(eid, status or None)}
+
+
+@router.post("/api/projects/{name}/suggestions/{sid}/resolve")
+async def project_suggestion_resolve(name: str, sid: int):
+    """Resolve (regression-check) an applied suggestion on demand."""
+    rt = get_runtime(name)
+    sug = rt.store.get_suggestion(sid)
+    if sug is None:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    return {"suggestion": rt.store.resolve_suggestion_outcome(sid)}
+
+
 @router.get("/api/projects/{name}/compare")
 async def project_compare(name: str, run_a: str = "", run_b: str = ""):
     """Metric delta between two runs (any two records from this project)."""
@@ -536,6 +558,26 @@ async def project_compare(name: str, run_a: str = "", run_b: str = ""):
         raise HTTPException(status_code=404,
                             detail=f"could not resolve run ids: {run_a!r}, {run_b!r}")
     return {"comparison": compare_runs(ra, rb)}
+
+
+@router.get("/api/projects/{name}/runs/{rid}/diff")
+async def project_run_diff(name: str, rid: int, run_b: int = 0):
+    """What changed between run rid and another run (default: its parent)."""
+    store = get_runtime(name).store
+    a = store.get_run(rid)
+    if a is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    bid = run_b or a.get("parent_run_id")
+    b = store.get_run(bid) if bid else None
+    if b is None:
+        seq = a.get("tool_sequence") or []
+        return {"a": a.get("label") or f"run {rid}", "b": None,
+                "config": {"added": [], "removed": [], "changed": []},
+                "metrics": {"rows": [], "summary": {}},
+                "tools": {"added": [], "removed": [], "failed": [],
+                          "used": sorted({t.get("name") for t in seq})},
+                "prompt": {"a": a.get("prompt") or "", "b": ""}}
+    return run_diff(b, a)
 
 
 REGEN_PROMPT = """\

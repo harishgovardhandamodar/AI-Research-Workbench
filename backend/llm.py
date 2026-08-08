@@ -101,27 +101,30 @@ class LLMClient:
             }
         return out
 
-    def _params(self, messages, tools, temperature):
-        params = dict(model=self.model, messages=messages, temperature=temperature,
-                      max_tokens=self.max_tokens)
+    def _params(self, messages, tools, temperature, model=None):
+        params = dict(model=model or self.model, messages=messages,
+                      temperature=temperature, max_tokens=self.max_tokens)
         if tools:
             params["tools"] = tools
         return params
 
     async def complete(self, messages: list[dict], tools: Optional[list] = None,
-                       temperature: Optional[float] = None) -> dict:
+                       temperature: Optional[float] = None,
+                       model: Optional[str] = None) -> dict:
         """Non-streaming completion. Returns full assistant message dict (may contain tool_calls)."""
         temp = temperature if temperature is not None else self.temperature
         client = self._pick(tools)
         try:
-            resp = await client.chat.completions.create(**self._params(messages, tools, temp))
+            resp = await client.chat.completions.create(
+                **self._params(messages, tools, temp, model))
         except Exception as e:  # noqa: BLE001
             raise LLMError(f"LLM request failed: {e}") from e
         return self._msg_to_dict(resp.choices[0].message)
 
     async def stream(self, messages: list[dict], tools: Optional[list] = None,
                      temperature: Optional[float] = None,
-                     on_delta=None) -> dict:
+                     on_delta=None,
+                     model: Optional[str] = None) -> dict:
         """Stream a completion, invoking on_delta(str) for each token chunk.
 
         Returns the full assistant message dict (may contain tool_calls for the
@@ -131,7 +134,7 @@ class LLMClient:
         client = self._pick(tools)
         try:
             resp = await client.chat.completions.create(
-                **self._params(messages, tools, temp), stream=True)
+                **self._params(messages, tools, temp, model), stream=True)
         except Exception as e:  # noqa: BLE001
             raise LLMError(f"LLM request failed: {e}") from e
 
