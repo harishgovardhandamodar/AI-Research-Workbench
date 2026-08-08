@@ -39,12 +39,17 @@ class LLMClient:
                  tool_base_url: str = DEFAULT_TOOL_BASE_URL,
                  api_key: str = "ollama",
                  model: str = DEFAULT_MODEL, temperature: float = 0.2,
-                 max_tokens: int = 4096):
+                 max_tokens: int = 4096,
+                 retries: int = 2, retry_backoff: float = 1.0):
         self.base_url = base_url
         self.tool_base_url = tool_base_url
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # Round-12: retry transient LLM failures with backoff so autonomous
+        # turns survive Ollama restarts / timeouts instead of dying.
+        self.retries = max(0, int(retries))
+        self.retry_backoff = max(0.0, float(retry_backoff))
         # A bounded timeout + minimal retries so an unreachable endpoint fails
         # fast with a visible error instead of hanging silently for minutes.
         self._gateway = AsyncOpenAI(base_url=base_url, api_key=api_key,
@@ -54,6 +59,29 @@ class LLMClient:
 
     def _pick(self, tools: Optional[list]) -> AsyncOpenAI:
         return self._tool if tools else self._gateway
+
+    @staticmethod
+    def _transient(exc: Exception) -> bool:
+        """True when the error looks transient (connection/timeout), so the
+        request is worth retrying."""
+        if isinstance(exc, (ConnectionError, TimeoutError)):
+            return True
+        msg = str(exc).lower()
+        return any(k in msg for k in (
+            "connection", "timeout", "timed out", "temporarily unavailable",
+            "connection reset", "refused", "network error", "502", "503"))
+
+    async def _run(self, client: AsyncOpenAI, params: dict):
+        last: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                return await client.chat.completions.create(**params)
+            except Exception as e:  # noqa: BLE001
+                last = e
+                if not self._transient(e) or attempt >= self.retries:
+                    raise LLMError(f"LLM request failed: {e}") from e
+                await asyncio.sleep(self.retry_backoff * (attempt + 1))
+        raise LLMError(f"LLM request failed: {last}") from last
 
     async def list_models(self) -> list[dict]:
         last = None
@@ -114,11 +142,7 @@ class LLMClient:
         """Non-streaming completion. Returns full assistant message dict (may contain tool_calls)."""
         temp = temperature if temperature is not None else self.temperature
         client = self._pick(tools)
-        try:
-            resp = await client.chat.completions.create(
-                **self._params(messages, tools, temp, model))
-        except Exception as e:  # noqa: BLE001
-            raise LLMError(f"LLM request failed: {e}") from e
+        resp = await self._run(client, self._params(messages, tools, temp, model))
         return self._msg_to_dict(resp.choices[0].message)
 
     async def stream(self, messages: list[dict], tools: Optional[list] = None,
@@ -132,11 +156,9 @@ class LLMClient:
         """
         temp = temperature if temperature is not None else self.temperature
         client = self._pick(tools)
-        try:
-            resp = await client.chat.completions.create(
-                **self._params(messages, tools, temp, model), stream=True)
-        except Exception as e:  # noqa: BLE001
-            raise LLMError(f"LLM request failed: {e}") from e
+        params = dict(self._params(messages, tools, temp, model))
+        params["stream"] = True
+        resp = await self._run(client, params)
 
         full = {"role": "assistant", "content": "", "tool_calls": []}
         try:

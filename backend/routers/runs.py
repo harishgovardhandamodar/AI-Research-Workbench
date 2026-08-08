@@ -673,6 +673,29 @@ async def project_report(name: str, summary: bool = True):
     return {"report": report}
 
 
+@router.get("/api/projects/{name}/next")
+async def project_next_research(name: str, framed: bool = True):
+    """Round-12: what to research next — the deterministic agenda (optionally
+    with an LLM-framed next-campaign proposal)."""
+    rt = get_runtime(name)
+    if framed and rt.llm is not None:
+        from ..next_research import suggest_next_research
+        return {"agenda": await suggest_next_research(rt)}
+    from ..next_research import next_research_agenda
+    return {"agenda": next_research_agenda(rt)}
+
+
+@router.post("/api/projects/{name}/next/post")
+async def project_next_post(name: str):
+    """Generate the next-research agenda and post it to chat as an assistant
+    message (no agent turn)."""
+    rt = get_runtime(name)
+    from ..next_research import suggest_next_research
+    agenda = await suggest_next_research(rt)
+    mid = rt.store.add_message("assistant", agenda, {"tags": ["next research"]})
+    return {"message_id": mid, "agenda": agenda}
+
+
 @router.post("/api/projects/{name}/report")
 async def project_report_save(name: str, body: dict | None = None):
     """Generate the report, save it as an artifact and post it to chat."""

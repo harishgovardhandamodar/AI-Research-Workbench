@@ -4575,6 +4575,13 @@ $("campaign-new-create").addEventListener("click", async () => {
   } catch (e) { toast("Failed to start campaign: " + e.message); }
 });
 $("exp-compare-refresh").addEventListener("click", loadCompareExperiments);
+$("exp-next").addEventListener("click", async () => {
+  try {
+    await api(`/api/projects/${state.project}/next/post`, { method: "POST" });
+    await refreshState();
+    toast("Next-research agenda posted to chat.");
+  } catch (e) { toast("Failed to load next-research agenda: " + e.message); }
+});
 $("exp-report").addEventListener("click", async () => {
   try {
     const r = await api(`/api/projects/${state.project}/report`, { method: "POST", body: "{}" });
