@@ -18,6 +18,7 @@ and a test file under `tests/`. The progression:
 | 11 | Literature grounding | RKG RAG in planning/review/report (best-effort) |
 | 12 | Resilient & proactive | LLM retry-with-backoff, next-research agenda |
 | 13–18 | Experiments-tab UX | Section nav + Overview KPIs, compact cards + progress + sort, theme-aware charts + git-style controls, expandable run detail, navigable KPIs, detail drill-down + tooltips, scroll-zoom disabled |
+| 19 | Experiments-tab analytics & ergonomics | Trend sparklines + Δ-vs-best deltas on cards and runs, lazy chunked lists, richer run comparison (goal verdict · config · tool trail), CSV export, shareable deep links, keyboard navigation |
 | + | Tooling | VS Code extension (experiment tracking + documentation) |
 
 ## Design docs

@@ -2742,7 +2742,7 @@ async function loadExperiments() {
   loadLearnings();
   loadCompareExperiments();
   try {
-    const r = await api(`/api/projects/${state.project}/experiments/history`);
+    const r = await api(`/api/projects/${state.project}/experiments/history?limit=2000`);
     state.expRuns = r.experiments || [];
     const g = await api(`/api/projects/${state.project}/experiments/graph`);
     state.expGraph = g;
@@ -2761,7 +2761,7 @@ async function loadExperiments() {
   } catch (e) { /* silent */ }
   await loadExpRankings();
   try {
-    const rr = await api(`/api/projects/${state.project}/runs`);
+    const rr = await api(`/api/projects/${state.project}/runs?limit=2000`);
     state.agentRuns = rr.runs || [];
   } catch (e) { state.agentRuns = state.agentRuns || []; }
   for (const r of state.agentRuns.slice().reverse()) {
@@ -2924,6 +2924,7 @@ function initExpSectionNav() {
     chip.addEventListener("click", () => {
       const target = $("exp-section-" + chip.dataset.target);
       if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      setExpParam("section", chip.dataset.target);
     });
   });
   if (!("IntersectionObserver" in window)) return;
@@ -2936,6 +2937,71 @@ function initExpSectionNav() {
     });
   }, { rootMargin: "-70px 0px -72% 0px" });
   observed.forEach((o) => obs.observe(o.sec));
+}
+
+/* ---------- shareable URLs + keyboard navigation (experiments tab) ---------- */
+
+// Record the active section / run in the URL (?view=experiments&section=&run=)
+// so a refresh — or a pasted link — restores the exact place in the tab.
+function setExpParam(key, value) {
+  try {
+    const url = new URL(window.location.href);
+    if (value) url.searchParams.set(key, String(value));
+    else url.searchParams.delete(key);
+    if (url.searchParams.get("view") !== "experiments")
+      url.searchParams.set("view", "experiments");
+    history.replaceState(null, "", url.toString());
+  } catch (e) { /* ignore */ }
+}
+
+function expandRunById(rid) {
+  const el = $("runs-list");
+  if (!el || rid == null) return;
+  const row = el.querySelector(`.run-row[data-id="${rid}"]`);
+  if (!row) { toast("Run #" + rid + " isn't in the loaded list."); return; }
+  const head = row.querySelector(".run-row-head");
+  if (head && !row.classList.contains("open")) head.click();
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.classList.add("exp-flash");
+  setTimeout(() => row.classList.remove("exp-flash"), 1800);
+}
+
+// After the tab's data is loaded, honor ?view=experiments[&section=&run=].
+function expDeepLink() {
+  let q;
+  try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+  if (q.get("view") !== "experiments") return;
+  switchMainView("experiments");
+  const section = q.get("section");
+  if (section) setTimeout(() => {
+    const s = $("exp-section-" + section);
+    if (s) s.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 250);
+  const run = q.get("run");
+  if (run) setTimeout(() => expandRunById(Number(run)), 400);
+}
+
+// Single-key jump between Experiments-tab sections (ignored while typing).
+const EXP_KEY_SECTIONS = {
+  o: "overview", g: "goals", c: "chart", x: "experiments",
+  m: "campaigns", b: "benchmarks", r: "runs",
+};
+function setupExpKeyboard() {
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    const tag = (t && (t.tagName || "")).toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" ||
+        (t && t.isContentEditable) || e.altKey || e.ctrlKey || e.metaKey) return;
+    const panel = $("exp-panel");
+    if (!panel || panel.classList.contains("hidden")) return;
+    const sec = EXP_KEY_SECTIONS[e.key];
+    if (sec) {
+      e.preventDefault();
+      const s = $("exp-section-" + sec);
+      if (s) s.scrollIntoView({ behavior: "smooth", block: "start" });
+      setExpParam("section", sec);
+    }
+  });
 }
 
 
@@ -3570,8 +3636,11 @@ function renderRuns() {
     el.innerHTML = '<div class="exp-empty">No runs match the current filter.</div>';
     return;
   }
+  const RUNS_CHUNK = 40;
+  const ordered = runs.slice().reverse();
+  const shown = ordered.slice(0, state.runsChunk || RUNS_CHUNK);
   el.innerHTML = "";
-  for (const r of runs.slice().reverse()) {
+  for (const r of shown) {
     const rev = r.review || {};
     const nf = (rev.findings || []).length;
     const ns = (rev.suggestions || []).length;
@@ -3579,20 +3648,29 @@ function renderRuns() {
     if (r.metrics && Object.keys(r.metrics).length) meta.push(Object.keys(r.metrics).length + " metric(s)");
     if (nf) meta.push(nf + " finding(s)");
     if (ns) meta.push(ns + " suggestion(s)");
+    const goalExp = expOf(r.experiment_id);
+    const goalMetric = goalExp && goalExp.goal_metric;
+    const gv = goalMetric && r.metrics && r.metrics[goalMetric];
+    const gvNum = gv != null && !Number.isNaN(Number(gv)) ? Number(gv) : null;
+    const rankRec = goalExp ? (state.expRanking && state.expRanking[goalExp.id]) : null;
+    const bestV = rankRec && rankRec.best != null ? rankRec.best : null;
+    const dBest = (gvNum != null && bestV != null) ? gvNum - bestV : null;
     const d = document.createElement("div");
     d.className = "run-row";
     d.dataset.id = r.id;
     const lbl = r.label ? `<span class="run-label">${esc(r.label)}</span> ` : "";
-    d.innerHTML = `<div class="run-row-head">
+    d.innerHTML = `<div class="run-row-head" role="button" tabindex="0" aria-expanded="false" aria-controls="run-detail-${r.id}" title="Expand / collapse run details">
         <span class="run-caret">▶</span>
         <span class="run-id">#${r.id}</span>
         <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
+        ${gvNum != null && goalMetric ? `<span class="run-goal" title="goal metric ${esc(goalMetric)}">${esc(goalMetric.replace(/_/g, " "))} ${_fmtNum(gvNum)}</span>` : ""}
+        ${deltaBestChip(dBest)}
         <span class="run-meta muted">${esc(meta.join(" · "))}</span>
         ${r.git_commit ? `<span class="run-commit" title="Management-repo snapshot commit">${esc(String(r.git_commit).slice(0, 8))}</span>` : ""}
         ${r.integrity_hash ? `<span class="run-commit" title="Content hash (integrity)">✓ ${esc(String(r.integrity_hash).slice(0, 8))}</span>` : ""}
         <button class="btn subtle small run-report" data-id="${r.id}" title="Generate the lab-notebook report">Report</button>
       </div>
-      <div class="run-row-detail hidden">${runDetailHtml(r)}</div>`;
+      <div class="run-row-detail hidden" id="run-detail-${r.id}">${runDetailHtml(r)}</div>`;
     el.appendChild(d);
   }
   el.querySelectorAll(".run-row-head").forEach((h) =>
@@ -3602,6 +3680,12 @@ function renderRuns() {
       if (!det) return;
       const open = det.classList.toggle("hidden");
       row.classList.toggle("open", !open);
+      h.setAttribute("aria-expanded", open ? "false" : "true");
+      setExpParam("run", open ? "" : String(row.dataset.id));
+    }));
+  el.querySelectorAll(".run-row-head").forEach((h) =>
+    h.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); h.click(); }
     }));
   el.querySelectorAll(".run-report").forEach((b) =>
     b.addEventListener("click", async (ev) => {
@@ -3627,6 +3711,17 @@ function renderRuns() {
       sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
                "improve_loop", { experiment_id: b.dataset.eid });
     }));
+  if (ordered.length > shown.length) {
+    const more = document.createElement("div");
+    more.className = "exp-more";
+    const remaining = ordered.length - shown.length;
+    more.innerHTML = `<button class="btn subtle small exp-more-btn">Show ${remaining} more run(s)…</button>`;
+    more.querySelector("button").addEventListener("click", () => {
+      state.runsChunk = (state.runsChunk || RUNS_CHUNK) + RUNS_CHUNK;
+      renderRuns();
+    });
+    el.appendChild(more);
+  }
 }
 
 function runDetailHtml(r) {
@@ -3770,8 +3865,10 @@ function renderExpList() {
     el.innerHTML = '<div class="exp-empty">No experiments match “' + esc(q) + '”.</div>';
     return;
   }
+  const EXP_CHUNK = 30;
+  const shown = exps.slice(0, state.expChunk || EXP_CHUNK);
   el.innerHTML = "";
-  for (const e of exps) {
+  for (const e of shown) {
     const card = document.createElement("div");
     card.className = "exp-card";
     card.dataset.id = e.id;
@@ -3788,6 +3885,9 @@ function renderExpList() {
         (best != null ? ` · best ${_fmtNum(best)}` : "") +
         (target != null ? ` / ${_fmtNum(target)}` : "")
       : (best != null ? `best ${_fmtNum(best)}` : "");
+    const series = e.goal_metric ? expSeries(e.id, e.goal_metric) : [];
+    const deltaBest = (best != null && series.length)
+      ? series[series.length - 1] - best : null;
     const modelPin = e.model
       ? `<span class="muted exp-model-pin" title="Pinned model for this experiment">◈ ${esc(e.model)}</span>`
       : "";
@@ -3813,9 +3913,11 @@ function renderExpList() {
           <option value="cancelled"${status === "cancelled" ? " selected" : ""}>cancelled</option>
         </select>
         <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}"${active ? "" : " disabled title=\"reopen the experiment first\""}>Improve</button>
+        <button class="btn subtle small exp-export" data-id="${e.id}" title="Export this experiment's runs as CSV">⬇</button>
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
       ${goalLine ? `<div class="exp-card-sum muted">${goalLine}</div>` : ""}
+      ${(series.length >= 2 || deltaBest != null) ? `<div class="exp-card-row">${sparklineSvg(series, 110, 26, expColor(e.id))}${deltaBestChip(deltaBest)}</div>` : ""}
       ${(best != null && target) ? `<div class="exp-goal-bar"><div class="exp-goal-fill ${reached ? "reached" : ""}" style="width:${pct}%"></div></div>` : ""}
       <div class="exp-card-detail hidden">
         ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
@@ -3869,6 +3971,23 @@ function renderExpList() {
     }));
   el.querySelectorAll(".exp-card-name").forEach((b) =>
     b.addEventListener("click", () => openExpDetail(Number(b.dataset.id))));
+  el.querySelectorAll(".exp-export").forEach((b) =>
+    b.addEventListener("click", () => {
+      const eid = Number(b.dataset.id);
+      const runs = (state.agentRuns || []).filter((r) => String(r.experiment_id) === String(eid));
+      exportRunsCsv(runs, `experiment-${eid}-runs.csv`);
+    }));
+  if (exps.length > shown.length) {
+    const more = document.createElement("div");
+    more.className = "exp-more";
+    const remaining = exps.length - shown.length;
+    more.innerHTML = `<button class="btn subtle small exp-more-btn">Show ${remaining} more experiment(s)…</button>`;
+    more.querySelector("button").addEventListener("click", () => {
+      state.expChunk = (state.expChunk || EXP_CHUNK) + EXP_CHUNK;
+      renderExpList();
+    });
+    el.appendChild(more);
+  }
 }
 
 function sortedExps(list) {
@@ -4036,6 +4155,92 @@ function expBestRun(runs, metric, higher) {
   return best;
 }
 
+/* ---- trend sparklines + deltas (experiments tab) ---- */
+
+// Chronological series of a metric's values for one experiment, from the runs
+// already loaded in state.agentRuns (id-ordered → time-ordered).
+function expSeries(eid, metric) {
+  if (eid == null || !metric) return [];
+  const out = [];
+  for (const r of state.agentRuns || []) {
+    if (String(r.experiment_id) !== String(eid)) continue;
+    const v = r.metrics && r.metrics[metric];
+    if (v == null || Number.isNaN(Number(v))) continue;
+    out.push(Number(v));
+  }
+  return out;
+}
+
+// Tiny inline SVG sparkline (monotonic x, value y), colored per experiment.
+function sparklineSvg(values, w = 96, h = 24, color = "#a974ff") {
+  if (!values || values.length < 2) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = (max - min) || 1;
+  const pad = 2;
+  let pts = "", lastY = h / 2;
+  for (let i = 0; i < values.length; i++) {
+    const x = (i * (w - 2 * pad) / (values.length - 1) + pad).toFixed(1);
+    const y = (pad + (1 - (values[i] - min) / span) * (h - 2 * pad)).toFixed(1);
+    pts += `${x},${y} `;
+    if (i === values.length - 1) lastY = Number(y);
+  }
+  const lx = (w - pad).toFixed(1);
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="metric trend">` +
+    `<polyline points="${pts.trim()}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<circle cx="${lx}" cy="${lastY}" r="2.6" fill="${color}"/></svg>`;
+}
+
+// Sign-colored "Δ best +0.31 / −0.02" chip; empty when the delta is zero.
+function deltaBestChip(delta) {
+  if (delta == null || !isFinite(Number(delta)) || Math.abs(Number(delta)) < 1e-12) return "";
+  const up = Number(delta) > 0;
+  return `<span class="exp-delta ${up ? "up" : "down"}" title="vs the experiment's best">Δ best ${up ? "+" : ""}${_fmtNum(delta)}</span>`;
+}
+
+/* ---- CSV export (runs) ---- */
+
+function csvEscape(v) {
+  const s = String(v == null ? "" : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadText(filename, text, mime = "text/csv") {
+  const blob = new Blob([text], { type: mime + ";charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 300);
+}
+
+// Flat CSV of runs: identity columns + union of all numeric/string metric keys.
+function runsCsv(runs) {
+  const rows = runs || [];
+  const metricKeys = [];
+  const seen = new Set();
+  for (const r of rows) for (const k of Object.keys(r.metrics || {})) {
+    if (!seen.has(k)) { seen.add(k); metricKeys.push(k); }
+  }
+  const head = ["id", "experiment", "kind", "status", "created_at", "label",
+    "prompt", "git_commit", "integrity_hash"].concat(metricKeys);
+  const lines = [head.map(csvEscape).join(",")];
+  for (const r of rows) {
+    const row = [
+      r.id, expName(r.experiment_id), r.kind, r.status, r.created_at, r.label,
+      r.prompt, r.git_commit, r.integrity_hash,
+    ].concat(metricKeys.map((k) => (r.metrics || {})[k]));
+    lines.push(row.map(csvEscape).join(","));
+  }
+  return lines.join("\n");
+}
+
+function exportRunsCsv(runs, filename) {
+  if (!(runs || []).length) { toast("Nothing to export — no runs match."); return; }
+  downloadText(filename || "runs.csv", runsCsv(runs));
+}
+
 // The "Fox - <Model> - <MCP> - <Action>" label for a run node in the
 // Experiments charts and detail panel.
 function runFoxLabel(n) {
@@ -4181,6 +4386,54 @@ async function renderExpCompare() {
     }
     h += `<table class="cmp-table"><tbody>${rows}</tbody></table>
       <div class="cmp-summary muted">${sum.shared} shared metric(s) · ${sum.increased} up · ${sum.decreased} down · ${sum.unchanged} unchanged</div>`;
+
+    // Verdict on the owning experiment's goal metric.
+    const exp = expOf(ra && ra.experiment_id) || expOf(rb && rb.experiment_id);
+    if (exp && exp.goal_metric) {
+      const va = ra && ra.metrics ? ra.metrics[exp.goal_metric] : null;
+      const vb = rb && rb.metrics ? rb.metrics[exp.goal_metric] : null;
+      if (va != null && vb != null) {
+        const na = Number(va), nb = Number(vb);
+        const higher = exp.higher_better !== false;
+        const verdict = Math.abs(nb - na) < 1e-12
+          ? "tie"
+          : ((nb > na) === higher ? "b" : "a");
+        const who = verdict === "a" ? esc(c.a) : verdict === "b" ? esc(c.b) : "both";
+        const word = verdict === "tie" ? "tied on" : `wins on ${esc(exp.goal_metric.replace(/_/g, " "))} (${_fmtNum(nb)} vs ${_fmtNum(na)})`;
+        h += `<div class="cmp-verdict"><b>${who}</b> ${word}</div>`;
+      }
+    }
+
+    // Side-by-side config (union of keys, differences highlighted).
+    const fullA = (state.agentRuns || []).find((r) => String(r.id) === String(a));
+    const fullB = (state.agentRuns || []).find((r) => String(r.id) === String(b));
+    const cfgA = (fullA && fullA.config) || (ra && ra.config) || {};
+    const cfgB = (fullB && fullB.config) || (rb && rb.config) || {};
+    const cfgKeys = [...new Set([...Object.keys(cfgA), ...Object.keys(cfgB)])];
+    if (cfgKeys.length) {
+      let ch = `<tr><th>config</th><th>${esc(c.a)}</th><th>${esc(c.b)}</th></tr>`;
+      for (const k of cfgKeys) {
+        const va = cfgA[k], vb = cfgB[k];
+        const sa = String(va == null ? "—" : va), sb = String(vb == null ? "—" : vb);
+        const cls = sa !== sb ? "cmp-changed" : "";
+        ch += `<tr><td>${esc(k)}</td><td class="${cls}">${esc(sa)}</td><td class="${cls}">${esc(sb)}</td></tr>`;
+      }
+      h += `<div class="cmp-sec">Configuration</div><table class="cmp-table"><tbody>${ch}</tbody></table>`;
+    }
+
+    // Tool trails side by side.
+    const toolSeqA = (fullA && fullA.tool_sequence) || (ra && ra.tool_sequence) || [];
+    const toolSeqB = (fullB && fullB.tool_sequence) || (rb && rb.tool_sequence) || [];
+    const toolsA = toolSeqA.map((t) => (typeof t === "object" && t ? t.name : t)).filter(Boolean);
+    const toolsB = toolSeqB.map((t) => (typeof t === "object" && t ? t.name : t)).filter(Boolean);
+    if (toolsA.length || toolsB.length) {
+      const chips = (list) => list.length
+        ? list.map((n) => `<span class="run-tool-chip">${esc(n)}</span>`).join("")
+        : '<span class="muted">none</span>';
+      h += `<div class="cmp-sec">Tool trail</div>
+        <div class="cmp-tools"><div class="cmp-col">${chips(toolsA)}</div><div class="cmp-vs">vs</div><div class="cmp-col">${chips(toolsB)}</div></div>`;
+    }
+
     el.innerHTML = h;
   } catch (e) {
     el.innerHTML = `<div class="empty">Comparison failed: ${esc(e.message || e)}</div>`;
@@ -4974,12 +5227,22 @@ $("goal-add").addEventListener("click", addGoal);
 $("goal-target").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") addGoal(); });
 $("runs-refresh").addEventListener("click", loadExperiments);
+$("runs-export").addEventListener("click", () => {
+  const eid = state.runsExpFilter || "";
+  const q = (state.runsSearch || "").toLowerCase().trim();
+  const runs = (state.agentRuns || []).filter((r) => {
+    if (eid && String(r.experiment_id) !== String(eid)) return false;
+    if (q && !((r.prompt || "") + " " + (r.label || "") + " " + (r.kind || "")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  exportRunsCsv(runs, `runs-${state.project || "project"}.csv`);
+});
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
-$("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; renderExpList(); });
-$("exp-sort").addEventListener("change", (e) => { state.expSort = e.target.value; renderExpList(); });
-$("runs-search").addEventListener("input", (e) => { state.runsSearch = e.target.value; renderRuns(); });
-$("runs-exp-filter").addEventListener("change", (e) => { state.runsExpFilter = e.target.value; renderRuns(); });
+$("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; state.expChunk = 0; renderExpList(); });
+$("exp-sort").addEventListener("change", (e) => { state.expSort = e.target.value; state.expChunk = 0; renderExpList(); });
+$("runs-search").addEventListener("input", (e) => { state.runsSearch = e.target.value; state.runsChunk = 0; renderRuns(); });
+$("runs-exp-filter").addEventListener("change", (e) => { state.runsExpFilter = e.target.value; state.runsChunk = 0; renderRuns(); });
 $("exp-chart-toggle").addEventListener("click", () => {
   const body = $("exp-chart-body");
   if (!body) return;
@@ -6881,4 +7144,6 @@ $("notebook-modal").addEventListener("click", (e) => {
   loadCampaigns();
   loadEvals();
   connect();
+  setupExpKeyboard();
+  setTimeout(expDeepLink, 350);
 })();

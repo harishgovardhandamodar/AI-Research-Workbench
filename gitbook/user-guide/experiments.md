@@ -35,9 +35,12 @@ The **Timeline** (run evolution) and **Graph** (similarity edges) SVG views:
 ## Experiments
 
 Each card shows: name (click → **detail modal**), status badge, ✓ reached, run
-count, goal + best, and a progress bar. Actions: ★ focus, ✎ edit, status select,
-**🔁 Improve**, and **Details** (hypothesis, model pin, plan, learnings,
-leaderboard). Search + sort (recently active / best / name / runs).
+count, goal + best, a **trend sparkline** of the goal metric across runs with a
+**Δ best** chip, and a progress bar. Actions: ★ focus, ✎ edit, status select,
+**🔁 Improve**, **⬇ export** (this experiment's runs as CSV), and **Details**
+(hypothesis, model pin, plan, learnings, leaderboard). Search + sort (recently
+active / best / name / runs). Large lists render in chunks with a **Show more**
+control.
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)
 
@@ -50,11 +53,21 @@ status badges, and progress bars (see their dedicated pages).
 
 Every recorded turn, filterable by experiment and text. Click a run to expand:
 metrics (goal ★ highlighted), config, tool trail, full prompt, and actions
-(**Report**, **↶ revert**, **🔁 improve**).
+(**Report**, **↶ revert**, **🔁 improve**). Each row shows its goal-metric value
+with a **Δ best** chip, and **⬇ CSV** exports the filtered list.
 
 ![Run detail](../assets/screenshots/run-detail.png)
 
 ## Run comparison
 
-Pick two runs (⇄ Compare) to see metric deltas (A → B) and a summary of
-improved/worsened/unchanged metrics.
+Pick two runs (⇄ Compare) to see metric deltas (A → B), a **verdict** on the
+owning experiment's goal metric, side-by-side **config** (changes highlighted),
+**tool trails**, and a summary of improved/worsened/unchanged metrics.
+
+## Shortcuts & deep links
+
+- **Keyboard**: `O` overview · `G` goals · `C` chart · `X` experiments · `M`
+  campaigns · `B` benchmarks · `R` runs (ignored while typing).
+- **Shareable URLs**: the active section and expanded run are recorded in the
+  URL (`?view=experiments&section=runs&run=123`), so a refresh or a pasted link
+  lands on the exact place in the tab.

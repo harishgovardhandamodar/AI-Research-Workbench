@@ -236,6 +236,7 @@
             </select>
             <input id="runs-search" placeholder="filter runs…" class="exp-search" />
             <span class="spacer"></span>
+            <button id="runs-export" class="btn subtle small" title="Export the filtered runs as CSV">⬇ CSV</button>
             <button id="runs-refresh" class="btn subtle small">Refresh</button>
           </div>
           <div id="runs-list"></div>
@@ -852,7 +853,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v99";
+  window.FOX_VER = "v100";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
