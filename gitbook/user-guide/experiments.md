@@ -10,6 +10,10 @@ Benchmarks · Runs).
 
 - **KPI cards** — experiments, runs, campaigns, benchmarks, learnings, open
   goals. Click a card to jump to its section.
+- **Running now** — while the agent is working, a strip at the top lists the
+  experiments currently running (the live turn's experiment, the current step of
+  a background campaign, or a running benchmark's `[Eval]` experiments); the
+  matching cards show a pulsing **running** badge and a **◔ Running** KPI.
 - **Leaderboard** — cross-experiment comparison (best goal value, Δ vs best,
   % of target, status). Click a row to expand + scroll to that experiment.
 

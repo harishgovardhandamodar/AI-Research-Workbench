@@ -1166,6 +1166,7 @@ function setTurnControls(busy) {
     tick();
     state.turnTimer = setInterval(tick, 1000);
   }
+  updateRunningIndicators();
 }
 
 function onTurnDone() {
@@ -2896,23 +2897,96 @@ function renderExpKpis() {
   if (!el) return;
   const learnings = Object.values(state.learnings || {}).reduce((n, a) => n + (a ? a.length : 0), 0);
   const openGoals = (state.goals || []).filter((g) => !goalReachedLocal(g)).length;
-  const kpis = [
+  const runningCount = runningExpIds().size;
+  const kpis = [];
+  if (runningCount) kpis.push(["◔ Running", runningCount, "running"]);
+  kpis.push(
     ["Experiments", (state.expList || []).length, "experiments"],
     ["Runs", (state.agentRuns || []).length, "runs"],
     ["Campaigns", (state.campaigns || []).length, "campaigns"],
     ["Benchmarks", (state.evals || []).length, "benchmarks"],
     ["Learnings", learnings, "experiments"],
     ["Open goals", openGoals, "goals"],
-  ];
+  );
   el.innerHTML = kpis.map(([l, n, target]) =>
-    `<div class="exp-kpi" data-target="${target}" title="Jump to ${target}"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
+    `<div class="exp-kpi${target === "running" ? " running" : ""}" data-target="${target}" title="Jump to ${target}"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
   el.querySelectorAll(".exp-kpi").forEach((k) =>
     k.addEventListener("click", () => {
+      if (k.dataset.target === "running") {
+        const first = [...runningExpIds()][0];
+        if (first != null) revealExpCard(Number(first));
+        return;
+      }
       const sec = $("exp-section-" + k.dataset.target);
       if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
       k.classList.add("exp-flash");
       setTimeout(() => k.classList.remove("exp-flash"), 1200);
     }));
+}
+
+/* ---------- running-experiments indicator ---------- */
+
+// Which experiments the agent is actively working on right now: the live turn's
+// experiment (busy + active/focus), plus running background campaigns' current
+// step experiments and running benchmarks' [Eval] experiments.
+function runningExpIds() {
+  const ids = new Set();
+  if (state.busy || state.streaming) {
+    if (state.activeExperiment != null) ids.add(String(state.activeExperiment));
+    if (state.focusExperiment != null) ids.add(String(state.focusExperiment));
+  }
+  for (const c of state.campaigns || []) {
+    if (c.status !== "running") continue;
+    for (const s of (state._campaignSteps || {})[c.id] || []) {
+      if (s.experiment_id != null && (s.status === "running" || s.status === "pending"))
+        ids.add(String(s.experiment_id));
+    }
+  }
+  for (const ev of state.evals || []) {
+    if (ev.status !== "running" || !ev.name) continue;
+    for (const e of state.expList || []) {
+      if ((e.name || "").indexOf("[Eval]") === 0 && (e.name || "").indexOf(ev.name) >= 0)
+        ids.add(String(e.id));
+    }
+  }
+  return ids;
+}
+
+// Live "Running now" strip + per-card pulse badge + the Running KPI.
+function updateRunningIndicators() {
+  const ids = runningExpIds();
+  const strip = $("exp-running");
+  if (strip) {
+    const list = (state.expList || []).filter((e) => ids.has(String(e.id)));
+    if (list.length) {
+      strip.classList.remove("hidden");
+      strip.innerHTML = `<span class="exp-running-ico" aria-hidden="true"></span><span class="exp-running-label">Running now:</span>`
+        + list.map((e) => `<button class="exp-running-chip" data-id="${e.id}" title="Jump to this experiment">${esc(e.name)}${e.goal_metric ? ` · ${esc(e.goal_metric.replace(/_/g, " "))}` : ""}</button>`).join("");
+      strip.querySelectorAll(".exp-running-chip").forEach((b) =>
+        b.addEventListener("click", () => revealExpCard(Number(b.dataset.id))));
+    } else {
+      strip.classList.add("hidden");
+      strip.innerHTML = "";
+    }
+  }
+  document.querySelectorAll(".exp-card").forEach((card) => {
+    const id = card.dataset.id;
+    let badge = card.querySelector(".exp-running-badge");
+    if (ids.has(String(id))) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "exp-running-badge";
+        badge.title = "Running — the agent is working on this experiment";
+        const anchor = card.querySelector(".exp-card-runs");
+        if (anchor) anchor.insertAdjacentElement("beforebegin", badge);
+        else card.querySelector(".exp-card-head").appendChild(badge);
+      }
+      badge.innerHTML = `<span class="exp-running-dot" aria-hidden="true"></span>running`;
+    } else if (badge) {
+      badge.remove();
+    }
+  });
+  renderExpKpis();
 }
 
 function initExpSectionNav() {
@@ -3025,6 +3099,7 @@ async function loadEvals() {
     detectCompletions("eval", state.evals, state._evalStatus);
     renderEvals();
     renderExpKpis();
+    updateRunningIndicators();
   } catch (e) { /* silent */ }
 }
 
@@ -3124,9 +3199,20 @@ async function loadCampaigns() {
     const r = await api(`/api/projects/${state.project}/campaigns`);
     state.campaigns = r.campaigns || [];
     state.campaignRunning = !!r.running;
+    // Fetch step detail for any running campaign so the running-experiments
+    // indicator can surface the experiment its current step is working on.
+    for (const c of state.campaigns) {
+      if (c.status !== "running" || (state._campaignSteps || {})[c.id]) continue;
+      try {
+        const det = await api(`/api/projects/${state.project}/campaigns/${c.id}`);
+        state._campaignSteps = state._campaignSteps || {};
+        state._campaignSteps[c.id] = ((det.campaign || {}).steps) || [];
+      } catch (e) { /* ignore */ }
+    }
     detectCompletions("campaign", state.campaigns, state._campaignStatus);
     renderCampaigns();
     renderExpKpis();
+    updateRunningIndicators();
   } catch (e) { /* silent */ }
 }
 
@@ -4054,6 +4140,7 @@ function renderExpList() {
     });
     el.appendChild(more);
   }
+  updateRunningIndicators();
 }
 
 function sortedExps(list) {

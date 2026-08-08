@@ -119,6 +119,7 @@
           <button id="exp-compare-refresh" class="btn subtle small" title="Refresh leaderboard">↻</button>
         </div>
         <div id="exp-kpis" class="exp-kpis"></div>
+        <div id="exp-running" class="exp-running hidden"></div>
         <div id="exp-compare-leaderboard"></div>
       </section>
 
@@ -864,7 +865,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v101";
+  window.FOX_VER = "v102";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

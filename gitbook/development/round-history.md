@@ -20,6 +20,7 @@ and a test file under `tests/`. The progression:
 | 13–18 | Experiments-tab UX | Section nav + Overview KPIs, compact cards + progress + sort, theme-aware charts + git-style controls, expandable run detail, navigable KPIs, detail drill-down + tooltips, scroll-zoom disabled |
 | 19 | Experiments-tab analytics & ergonomics | Trend sparklines + Δ-vs-best deltas on cards and runs, lazy chunked lists, richer run comparison (goal verdict · config · tool trail), CSV export, shareable deep links, keyboard navigation |
 | 20 | Experiments-tab insight & lifecycle | N-way run comparison (best-per-metric), trend stats (μ/σ/slope), goal-reached + campaign/benchmark completion alerts, clickable chart legend + best-fit trend line, time-range filter, run restore + bulk compare/export |
+| 21 | Running-experiments indicator | "Running now" strip + pulsing card badge + Running KPI for experiments the agent is actively working on (live turn, running campaign steps, running benchmarks) |
 | + | Tooling | VS Code extension (experiment tracking + documentation) |
 
 ## Design docs
