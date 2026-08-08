@@ -36,7 +36,8 @@ html, body {
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
-.brand { display: flex; align-items: baseline; gap: 8px; font-weight: 700; letter-spacing: .3px; }
+.brand { display: flex; align-items: baseline; gap: 8px; font-weight: 700; letter-spacing: .3px; cursor: pointer; }
+.brand:hover { color: var(--accent); }
 .brand-sub { color: var(--text-dim); font-weight: 400; font-size: 12px; }
 .topbar-center { display: flex; gap: 8px; align-items: center; margin: 0 auto; }
 .topbar-right { display: flex; gap: 10px; align-items: center; }

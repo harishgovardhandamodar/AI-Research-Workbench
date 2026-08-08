@@ -2583,6 +2583,9 @@ $("model-select").addEventListener("change", async (e) => {
 });
 $("settings-btn").addEventListener("click", openSettings);
 $("theme-toggle").addEventListener("click", toggleTheme);
+$("brand").addEventListener("click", () => {
+  window.location.href = (window.FOX_BASE || "") + "/features.html";
+});
 $("side-toggle").addEventListener("click", () => {
   const collapsed = document.getElementById("app").classList.toggle("side-collapsed");
   try { localStorage.setItem("fox.sidePanel", collapsed ? "0" : "1"); } catch (e) {}

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fox Workbench — All Features &amp; Workflows</title>
+<style>
+  :root {
+    --teal:#35c4b6; --indigo:#4f8cff; --violet:#a974ff; --gold:#f0b429;
+    --pink:#ff7ac2; --red:#ff6b6b; --green:#7ee787; --bg:#07090f; --card:#10131d;
+    --text:#e6ecf7; --muted:#93a0b8;
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--text); background:var(--bg); line-height:1.55; }
+  a { color:var(--teal); text-decoration:none; }
+  .wrap { max-width:1100px; margin:0 auto; padding:0 24px; }
+
+  /* ---------- hero ---------- */
+  .hero { position:relative; text-align:center; padding:84px 24px 60px; overflow:hidden; }
+  .hero::before { content:""; position:absolute; inset:-20% -10%; z-index:-1;
+    background:
+      radial-gradient(40% 60% at 20% 20%, rgba(53,196,182,.28), transparent 60%),
+      radial-gradient(45% 60% at 80% 15%, rgba(79,140,255,.30), transparent 60%),
+      radial-gradient(50% 70% at 50% 90%, rgba(169,116,255,.26), transparent 60%);
+    filter: blur(8px); }
+  .hero .logo { font-size:54px; }
+  .hero h1 { font-size:clamp(30px,5vw,52px); margin:10px 0 6px; font-weight:800;
+    background:linear-gradient(90deg,var(--teal),var(--indigo),var(--violet),var(--pink));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .hero .sub { color:var(--muted); font-size:18px; max-width:720px; margin:0 auto; }
+  .hero .pill { display:inline-block; margin-top:18px; padding:6px 16px; border-radius:20px;
+    border:1px solid var(--teal); color:var(--teal); font-size:13px; }
+  .hero .back { position:absolute; left:24px; top:22px; font-size:13px; color:var(--muted); }
+  .hero .back:hover { color:var(--text); }
+
+  /* ---------- sections ---------- */
+  section { padding:54px 0 10px; }
+  .sec-tag { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--teal); font-weight:700; }
+  h2 { font-size:26px; margin:6px 0 18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid #232b3d; border-radius:14px; padding:16px 18px;
+    transition:transform .18s ease, box-shadow .18s ease, border-color .18s; }
+  .card:hover { transform:translateY(-3px); box-shadow:0 10px 26px rgba(0,0,0,.35); border-color:var(--teal); }
+  .card .ico { font-size:26px; }
+  .card h3 { margin:8px 0 4px; font-size:16px; }
+  .card p { margin:0; font-size:13.5px; color:var(--muted); }
+  .tag { font-size:10.5px; padding:1px 8px; border-radius:10px; margin-left:6px; vertical-align:2px; font-weight:600; }
+  .t-1{color:var(--teal);border:1px solid var(--teal);} .t-2{color:var(--indigo);border:1px solid var(--indigo);}
+  .t-3{color:var(--violet);border:1px solid var(--violet);} .t-4{color:var(--gold);border:1px solid var(--gold);}
+  .t-5{color:var(--pink);border:1px solid var(--pink);} .t-6{color:var(--green);border:1px solid var(--green);}
+
+  /* ---------- workflows ---------- */
+  .wf { display:flex; flex-wrap:wrap; gap:10px; align-items:stretch; }
+  .wf .step { flex:1 1 150px; background:var(--card); border:1px solid #232b3d; border-radius:12px; padding:12px 14px; }
+  .wf .step .n { font-size:11px; font-weight:800; color:var(--violet); letter-spacing:.1em; }
+  .wf .step h4 { margin:4px 0 2px; font-size:14px; }
+  .wf .step p { margin:0; font-size:12.5px; color:var(--muted); }
+  .wf .arrow { align-self:center; color:var(--teal); font-size:20px; font-weight:800; padding:0 2px; }
+  .flow-wrap { margin-bottom:26px; }
+  .flow-wrap h3 { font-size:17px; margin:0 0 10px; color:var(--text); }
+
+  /* ---------- stack / footer ---------- */
+  .stack { display:flex; flex-wrap:wrap; gap:10px; }
+  .chip { padding:6px 14px; border-radius:18px; border:1px solid #2a3350; font-size:13px; color:var(--muted); background:#0d1120; }
+  footer { text-align:center; padding:44px 20px 60px; color:var(--muted); }
+  footer .big { font-size:20px; margin-bottom:8px; }
+  footer a.btn { display:inline-block; margin-top:10px; padding:10px 26px; border-radius:24px;
+    background:linear-gradient(90deg,var(--teal),var(--indigo)); color:#041016; font-weight:700; font-size:15px; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <a class="back" href=".">← Back to the workbench</a>
+  <div class="logo">🦊</div>
+  <h1>Local · Open · Agentic</h1>
+  <p class="sub">Experimentation Workbench — every feature and workflow in one colorful tour.</p>
+  <div class="pill">fully local · your data stays home · local LLMs (Ollama)</div>
+</div>
+
+<section class="wrap">
+  <div class="sec-tag">The stack</div>
+  <h2>One workbench, three layers</h2>
+  <div class="stack">
+    <span class="chip">💬 Chat + agent loop</span>
+    <span class="chip">🐍 Persistent Python/R kernels</span>
+    <span class="chip">🧪 Experiment tracking</span>
+    <span class="chip">📓 Jupyter notebooks</span>
+    <span class="chip">🧭 Background campaigns</span>
+    <span class="chip">⚖ Model benchmarks</span>
+    <span class="chip">🧠 Knowledge memory</span>
+    <span class="chip">🔒 Verifiable history &amp; audit</span>
+    <span class="chip">🕸 Research knowledge graphs</span>
+    <span class="chip">🛡 Tamper-evident audit trail</span>
+    <span class="chip">🖊 In-browser VS Code</span>
+    <span class="chip">🧩 VS Code extension</span>
+    <span class="chip">📦 Report &amp; export</span>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="sec-tag">Features</div>
+  <h2>Everything you can do</h2>
+  <div class="grid">
+    <div class="card"><div class="ico">💬</div><h3>Chat with Fox <span class="tag t-1">UI</span></h3><p>Streaming agent turns with provenance labels (model · MCP · action), message edit/retry/copy/delete, file attach, and inline schema cards.</p></div>
+    <div class="card"><div class="ico">🧪</div><h3>Experiment tracking <span class="tag t-1">Core</span></h3><p>Experiments with goal metric + target; every run records config, metrics, full code, environment, model, and integrity.</p></div>
+    <div class="card"><div class="ico">🎯</div><h3>Goal-first steering <span class="tag t-2">Objectives</span></h3><p>Edit objectives in place, set a focused experiment, and see distance-to-target + ✓ reached everywhere.</p></div>
+    <div class="card"><div class="ico">🔁</div><h3>Improve loop <span class="tag t-3">Autonomy</span></h3><p>Run → review → apply best suggestion → rerun, bounded, with regression checks and learned outcomes.</p></div>
+    <div class="card"><div class="ico">⚡</div><h3>Parameter sweeps <span class="tag t-3">Parallel</span></h3><p><code>run_sweep</code> runs one code path across configs on parallel kernels — one run per config, real process-level parallelism.</p></div>
+    <div class="card"><div class="ico">🧭</div><h3>Research campaigns <span class="tag t-3">Autonomy</span></h3><p>Plan a multi-step study, execute each step as an experiment in the background, and get a synthesis report.</p></div>
+    <div class="card"><div class="ico">⚖</div><h3>Model benchmarks <span class="tag t-3">Evaluate</span></h3><p>Run the same task under many LLMs (per-experiment model pinning) and get a ranked leaderboard.</p></div>
+    <div class="card"><div class="ico">🧠</div><h3>Learnings <span class="tag t-4">Memory</span></h3><p>Every measured outcome becomes a learning that feeds back into context, review, and planning — the workbench gets smarter.</p></div>
+    <div class="card"><div class="ico">🏆</div><h3>Compare &amp; leaderboards <span class="tag t-4">Measure</span></h3><p>Cross-experiment and campaign leaderboards, N-run side-by-side tables, and run diffs (config, tools, code).</p></div>
+    <div class="card"><div class="ico">🔒</div><h3>Verifiable history <span class="tag t-5">Trust</span></h3><p>Git-backed run lineage, restore-to-run, integrity hashes, and per-run audit — tamper-evident by design.</p></div>
+    <div class="card"><div class="ico">📖</div><h3>Literature grounding <span class="tag t-5">Grounding</span></h3><p>Planning, review, and reports consult the knowledge-graph RAG — related work with arXiv citations.</p></div>
+    <div class="card"><div class="ico">🛡</div><h3>Audit trail <span class="tag t-5">Governance</span></h3><p>Redacted, hash-chained log of every tool call, permission decision, network access, and deviation.</p></div>
+    <div class="card"><div class="ico">📄</div><h3>Reports &amp; export <span class="tag t-6">Docs</span></h3><p>One-click project report, next-research agenda, summary of findings, and a portable zip export.</p></div>
+    <div class="card"><div class="ico">📓</div><h3>Notebooks <span class="tag t-6">Notebooks</span></h3><p>Jupyter notebooks on the persistent kernel; figures become artifacts; runs tracked like any other.</p></div>
+    <div class="card"><div class="ico">🧩</div><h3>VS Code extension <span class="tag t-6">Tooling</span></h3><p>Track experiments, campaigns, benchmarks, and learnings — and generate documentation — right in VS Code.</p></div>
+    <div class="card"><div class="ico">▶</div><h3>Next research <span class="tag t-4">Proactive</span></h3><p>An agenda of open threads (below-target experiments, no-gain learnings, open goals) plus a proposed next campaign.</p></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="sec-tag">Workflows</div>
+  <h2>How it flows</h2>
+
+  <div class="flow-wrap">
+    <h3>💬 The agent turn</h3>
+    <div class="wf">
+      <div class="step"><div class="n">1</div><h4>User prompt</h4><p>chat, attach files, @schema</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><h4>Model streams</h4><p>tools + final reply, per-experiment model pinning</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><h4>Tools run</h4><p>Python/R kernel, sweeps, notebooks, MCP, approvals</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><h4>Run recorded</h4><p>metrics, code, env, integrity, git commit</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">5</div><h4>Reviewer</h4><p>findings + suggestions with regression check</p></div>
+    </div>
+  </div>
+
+  <div class="flow-wrap">
+    <h3>🔁 The improve loop</h3>
+    <div class="wf">
+      <div class="step"><div class="n">1</div><h4>Create experiment</h4><p>hypothesis, goal metric + target, plan</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><h4>Run a variant</h4><p>start_run / finish_run, report_metric</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><h4>Review</h4><p>agent suggests up to 3 next changes</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><h4>Apply + rerun</h4><p>suggestion recorded, tracked, de-duped</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">5</div><h4>Regression check</h4><p>✓ improved / ✗ no gain → a learning</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">6</div><h4>Stop</h4><p>target reached · no gain streak · budget</p></div>
+    </div>
+  </div>
+
+  <div class="flow-wrap">
+    <h3>🧭 Background campaign</h3>
+    <div class="wf">
+      <div class="step"><div class="n">1</div><h4>Plan</h4><p>LLM plans steps, grounded in literature + learnings</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><h4>Step = experiment</h4><p>runs in the background, streams live progress</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><h4>Review + learn</h4><p>best run recorded, lineage chained</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><h4>Resume / stop</h4><p>durable resume point survives restart</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">5</div><h4>Synthesis report</h4><p>posted to chat + saved as an artifact</p></div>
+    </div>
+  </div>
+
+  <div class="flow-wrap">
+    <h3>⚖ Model benchmark</h3>
+    <div class="wf">
+      <div class="step"><div class="n">1</div><h4>Task + models</h4><p>prompt, model list, goal metric</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><h4>Per-model experiment</h4><p>pinned to that model</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><h4>Run the task</h4><p>agent reports the goal metric</p></div><div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><h4>Leaderboard</h4><p>ranked by goal metric, best highlighted</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="sec-tag">Trust</div>
+  <h2>Reproducible &amp; verifiable by default</h2>
+  <div class="wf">
+    <div class="step"><div class="n">GIT</div><h4>Run → commit</h4><p>every experiment run snapshotted to a management repo, commit hash stored on the run</p></div>
+    <div class="step"><div class="n">SHA-256</div><h4>Integrity hashes</h4><p>canonical run record hashed; verify detects tampering</p></div>
+    <div class="step"><div class="n">ENV</div><h4>Environment snapshots</h4><p>python + package versions captured at run time</p></div>
+    <div class="step"><div class="n">CHAIN</div><h4>Hash-chained audit</h4><p>redacted event log, tamper-evident</p></div>
+    <div class="step"><div class="n">FULL</div><h4>Full code capture</h4><p>every tool call's source retained for diffs</p></div>
+  </div>
+</section>
+
+<footer>
+  <div class="big">🦊 Ready to experiment?</div>
+  <div>Everything runs locally with your own models.</div>
+  <a class="btn" href=".">Back to the workbench</a>
+</footer>
+
+</body>
+</html>
