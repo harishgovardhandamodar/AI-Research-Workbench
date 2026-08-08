@@ -12,7 +12,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..artifacts.store import Artifact
-from ..experiments import build_graph, compare_runs, rank_runs, run_diff, unify_record
+from ..experiments import (build_graph, compare_campaigns, compare_experiments,
+                           compare_runs, compare_runs_many, rank_runs, run_diff,
+                           unify_record)
 from ..llm import LLMError
 from ..state import get_runtime
 
@@ -623,21 +625,86 @@ async def project_suggestion_resolve(name: str, sid: int):
 
 
 @router.get("/api/projects/{name}/compare")
-async def project_compare(name: str, run_a: str = "", run_b: str = ""):
-    """Metric delta between two runs (any two records from this project)."""
-    if not run_a or not run_b:
-        raise HTTPException(status_code=400, detail="run_a and run_b are required")
+async def project_compare(name: str, run_a: str = "", run_b: str = "",
+                          runs: str = ""):
+    """Compare runs. Two ids (run_a/run_b) → the classic pairwise comparison;
+    a comma-separated `runs` list → a side-by-side table across N runs."""
     rt = get_runtime(name)
 
     def resolve(ref: str):
-        # Run ids from this project's runs table are integers.
         return rt.store.get_run(int(ref)) if str(ref).isdigit() else None
 
+    if runs:
+        ids = [r for r in runs.split(",") if r.strip().isdigit()]
+        rs = [resolve(i) for i in ids]
+        rs = [r for r in rs if r is not None]
+        if len(rs) < 2:
+            raise HTTPException(status_code=400, detail="need at least two runs")
+        return {"many": compare_runs_many(rs)}
+    if not run_a or not run_b:
+        raise HTTPException(status_code=400, detail="run_a and run_b are required")
     ra, rb = resolve(run_a), resolve(run_b)
     if ra is None or rb is None:
         raise HTTPException(status_code=404,
                             detail=f"could not resolve run ids: {run_a!r}, {run_b!r}")
     return {"comparison": compare_runs(ra, rb)}
+
+
+@router.get("/api/projects/{name}/experiments/compare")
+async def project_experiments_compare(name: str):
+    """Leaderboard of experiments by their goal metric's best run."""
+    rt = get_runtime(name)
+    return compare_experiments(rt.store, rt.store.list_experiments())
+
+
+@router.get("/api/projects/{name}/campaigns/compare")
+async def project_campaigns_compare(name: str):
+    """Leaderboard of campaigns by the best goal value across their steps."""
+    rt = get_runtime(name)
+    return compare_campaigns(rt.store, rt.store.list_campaigns())
+
+
+@router.get("/api/projects/{name}/evals")
+async def project_evals(name: str):
+    """Model benchmarks for the project."""
+    rt = get_runtime(name)
+    return {"evals": rt.store.list_evals(), "running": rt.eval_running()}
+
+
+@router.post("/api/projects/{name}/evals")
+async def project_evals_create(name: str, body: dict):
+    """Create a model benchmark (does not run it)."""
+    rt = get_runtime(name)
+    name_str = str(body.get("name") or "Eval").strip() or "Eval"
+    models = [m for m in (body.get("models") or []) if str(m).strip()]
+    if not models:
+        raise HTTPException(status_code=400, detail="at least one model required")
+    eid = rt.store.create_eval(
+        name_str, str(body.get("prompt") or ""), models,
+        str(body.get("goal_metric") or ""),
+        bool(body.get("higher_better", True)))
+    return {"eval": rt.store.get_eval(eid)}
+
+
+@router.post("/api/projects/{name}/evals/{eid}/run")
+async def project_eval_run(name: str, eid: int):
+    """Run a model benchmark in the background."""
+    rt = get_runtime(name)
+    if rt.store.get_eval(eid) is None:
+        raise HTTPException(status_code=404, detail="eval not found")
+    ok, msg = rt.start_eval(eid)
+    if not ok:
+        raise HTTPException(status_code=409, detail=msg)
+    return {"eval": rt.store.get_eval(eid), "running": True}
+
+
+@router.post("/api/projects/{name}/evals/{eid}/stop")
+async def project_eval_stop(name: str, eid: int):
+    rt = get_runtime(name)
+    if rt.store.get_eval(eid) is None:
+        raise HTTPException(status_code=404, detail="eval not found")
+    stopped = rt.stop_eval()
+    return {"stopped": stopped, "running": rt.eval_running()}
 
 
 @router.get("/api/projects/{name}/runs/{rid}/diff")

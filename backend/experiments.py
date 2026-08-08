@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .paths import WORKBENCH_DIR
+from .experiment_loop import best_metric
 
 RUNS_FILE = WORKBENCH_DIR / "privacy_runs.json"
 
@@ -261,6 +262,107 @@ def compare_runs(a: dict, b: dict) -> dict:
             "unchanged": unchanged,
         },
     }
+
+
+def compare_runs_many(runs: list[dict]) -> dict:
+    """Side-by-side metric table across any number of runs.
+
+    Returns {"columns": [labels...], "rows": [{metric, values: {label: value},
+    best: label}]} — best per metric (direction agnostic: just the max) plus a
+    shared-numeric count."""
+    if not runs:
+        return {"columns": [], "rows": [], "shared": 0}
+    cols = []
+    metrics_by_label = {}
+    for r in runs:
+        label = r.get("label") or f"run {r.get('id')}"
+        m = metrics_from_run(_norm(r))
+        cols.append(label)
+        metrics_by_label[label] = m
+    keys = sorted({k for m in metrics_by_label.values() for k in m})
+    rows = []
+    for k in keys:
+        vals = {}
+        for label, m in metrics_by_label.items():
+            v = m.get(k)
+            if v is not None:
+                vals[label] = v
+        best_label = max(vals, key=lambda l: vals[l]) if vals else None
+        rows.append({"metric": k, "values": vals, "best": best_label})
+    return {"columns": cols, "rows": rows, "shared": len(keys)}
+
+
+def compare_experiments(store, exps: list[dict]) -> dict:
+    """Leaderboard of experiments by their goal metric's best run.
+
+    Returns {"metric", "higher_better", "rows": [{id, name, status, metric,
+    best, best_run_id, runs, target, to_target, delta_best, pct_best}]} ranked
+    best-first."""
+    rows = []
+    overall_best = None
+    for e in exps:
+        metric = e.get("goal_metric") or ""
+        if not metric:
+            continue
+        higher = bool(e.get("higher_better", True))
+        runs = store.experiment_runs(e.get("id"))
+        best, best_id = best_metric(runs, metric, higher)
+        target = e.get("goal_target")
+        to_target = None
+        if best is not None and target is not None:
+            to_target = round(target - best, 4) if higher else round(best - target, 4)
+        rows.append({"id": e.get("id"), "name": e.get("name"),
+                     "status": e.get("status", "active"), "metric": metric,
+                     "higher_better": higher, "best": best,
+                     "best_run_id": best_id, "runs": len(runs),
+                     "target": target, "to_target": to_target})
+        if best is not None:
+            if overall_best is None or (best > overall_best[1] if higher else best < overall_best[1]):
+                overall_best = (e.get("id"), best)
+    for r in rows:
+        r["delta_best"] = None
+        r["pct_best"] = None
+        if r["best"] is not None and overall_best is not None:
+            ob = overall_best[1]
+            r["delta_best"] = round(r["best"] - ob, 4)
+            r["pct_best"] = round((r["best"] / ob * 100) if ob else 0.0, 1)
+    metric = (exps[0].get("goal_metric") or "") if exps else ""
+    higher = bool((exps[0].get("higher_better", True))) if exps else True
+    rows.sort(key=lambda r: (r["best"] is not None, r["best"]), reverse=higher)
+    return {"metric": metric, "higher_better": higher, "rows": rows}
+
+
+def compare_campaigns(store, campaigns: list[dict]) -> dict:
+    """Leaderboard of campaigns by the best goal value across their steps'
+    experiments."""
+    rows = []
+    for c in campaigns:
+        metric = c.get("goal_metric") or ""
+        higher = bool(c.get("higher_better", True))
+        best = best_id = None
+        for step in store.list_campaign_steps(c.get("id")):
+            eid = step.get("experiment_id")
+            if not eid:
+                continue
+            exp = store.get_experiment(eid)
+            m = (exp or {}).get("goal_metric") or metric
+            if not m:
+                continue
+            for r in store.experiment_runs(eid):
+                v = (r.get("metrics") or {}).get(m)
+                if v is None:
+                    continue
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if best is None or (v > best if higher else v < best):
+                    best, best_id = v, r.get("id")
+        rows.append({"id": c.get("id"), "name": c.get("name"),
+                     "status": c.get("status", "planned"), "metric": metric,
+                     "higher_better": higher, "best": best, "best_run_id": best_id})
+    rows.sort(key=lambda r: (r["best"] is not None, r["best"]), reverse=True)
+    return {"rows": rows}
 
 
 def run_diff(a: dict, b: dict) -> dict:

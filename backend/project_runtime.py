@@ -59,6 +59,7 @@ class ProjectRuntime:
         # Background-campaign control.
         self.campaign_stop = False
         self._campaign_task: "asyncio.Task | None" = None
+        self._eval_task: "asyncio.Task | None" = None
         # Forward kernel lifecycle/execution events into the audit trail.
         try:
             self.kernels.python.subscribe(self._on_kernel_event)
@@ -66,6 +67,8 @@ class ProjectRuntime:
             pass
         # Round-6: campaigns left running by a previous process are resumable.
         self.recover_campaigns()
+        # Round-9: same for model benchmarks.
+        self.recover_evals()
 
     # ---------------------------------------------------- event bus (round 6)
     def subscribe_events(self, fn) -> None:
@@ -181,6 +184,96 @@ class ProjectRuntime:
                         c["id"], status="failed",
                         report=(c.get("report") or "") + "\n\n> Interrupted by "
                                 "a server restart — use Resume to continue.")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------ background evals --
+    def eval_running(self) -> bool:
+        return (self._eval_task is not None and not self._eval_task.done())
+
+    def stop_eval(self) -> bool:
+        if not self.eval_running():
+            return False
+        self.campaign_stop = True
+        return True
+
+    def start_eval(self, eid: int) -> tuple[bool, str]:
+        """Launch a background model benchmark for this project."""
+        if self.eval_running():
+            return False, "an eval is already running for this project"
+        if self.store.get_eval(eid) is None:
+            return False, f"eval #{eid} not found"
+        self.campaign_stop = False
+        self._eval_task = asyncio.create_task(self._run_eval_task(eid))
+        return True, "started"
+
+    async def _run_eval_task(self, eid: int):
+        from .agents.approval import ApprovalBroker
+        from .agents.coordinator import Coordinator
+        from .eval import run_eval
+        from .experiment_repo import maybe_autocommit
+
+        async def bus_emit(event: str, payload: dict):
+            await self.broadcast(event, payload)
+
+        broker = ApprovalBroker(bus_emit, store=self.store, audit=self.audit_emitter,
+                                session_id=self.name, agent_id="Fox")
+
+        def _record_run(r: dict) -> int:
+            rid = self.store.add_run(
+                prompt=r.get("prompt", ""), reply=r.get("reply", ""),
+                status=r.get("status", "done"),
+                started_at=r.get("started_at", 0.0),
+                finished_at=r.get("finished_at", time.time()),
+                tool_sequence=r.get("tool_sequence"),
+                artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
+                review=r.get("review"),
+                experiment_id=r.get("experiment_id") or None,
+                config=r.get("config"), label=r.get("label"),
+                parent_run_id=r.get("parent_run_id") or None,
+                model=r.get("model") or None, code=r.get("code"), env=r.get("env"),
+                message_id=r.get("message_id") or None)
+            try:
+                r["id"] = rid
+                if r.get("experiment_id"):
+                    asyncio.get_running_loop().create_task(
+                        maybe_autocommit(self, r))
+            except Exception:  # noqa: BLE001
+                pass
+            return rid
+
+        coord = Coordinator(
+            self.llm, self.ctx(bus_emit, broker), emit=bus_emit,
+            persist=lambda role, content, meta=None: self.store.add_message(
+                role, content, meta),
+            record=_record_run, max_iters=self.max_iters, mcp=None,
+            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop)
+        try:
+            async with self.lock:
+                await run_eval(self, coord, self.build_llm_messages, eid,
+                               emit=bus_emit, workflow=self.workflow)
+        except Exception as e:  # noqa: BLE001
+            try:
+                self.store.update_eval(
+                    eid, status="failed",
+                    report=f"Eval failed: {type(e).__name__}: {e}")
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self.broadcast("error", {"message": f"Eval failed: {e}"})
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            self.campaign_stop = False
+
+    def recover_evals(self) -> None:
+        try:
+            for e in self.store.list_evals():
+                if e["status"] == "running":
+                    self.store.update_eval(
+                        e["id"], status="failed",
+                        report=(e.get("report") or "") + "\n\n> Interrupted by "
+                                "a server restart — use Run to continue.")
         except Exception:  # noqa: BLE001
             pass
 

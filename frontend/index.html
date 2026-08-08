@@ -131,6 +131,36 @@
         <div id="campaign-list"></div>
       </div>
 
+      <div class="exp-list">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Compare experiments</span>
+          <span class="spacer"></span>
+          <button id="exp-compare-refresh" class="btn subtle small">↻</button>
+        </div>
+        <div id="exp-compare-leaderboard"></div>
+      </div>
+
+      <div class="exp-list">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Model benchmarks <span class="muted">(eval)</span></span>
+          <span class="spacer"></span>
+          <button id="eval-new" class="btn subtle small">+ New eval</button>
+        </div>
+        <div id="eval-new-form" class="exp-new-form hidden">
+          <div class="exp-new-row"><input id="eval-new-name" placeholder="eval name" /></div>
+          <div class="exp-new-row">
+            <input id="eval-new-metric" placeholder="goal metric (e.g. accuracy)" />
+            <input id="eval-new-models" placeholder="models, comma-separated (e.g. qwen3.6,llama3.1)" />
+          </div>
+          <textarea id="eval-new-prompt" rows="3" placeholder="Task prompt — the agent runs this under each model and reports the goal metric via report_metric"></textarea>
+          <div class="exp-new-row">
+            <span class="spacer"></span>
+            <button id="eval-new-create" class="btn subtle small">Start</button>
+          </div>
+        </div>
+        <div id="eval-list"></div>
+      </div>
+
       <div class="exp-runs">
         <div class="exp-runs-head">
           <span class="exp-runs-title">Recent runs</span>

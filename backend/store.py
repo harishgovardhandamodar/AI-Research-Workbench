@@ -139,6 +139,13 @@ class ProjectStore:
                 improved INTEGER, summary TEXT, source TEXT,
                 created_at REAL)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS evals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT, prompt TEXT, models TEXT, goal_metric TEXT,
+                higher_better INTEGER, status TEXT DEFAULT 'planned',
+                report TEXT, created_at REAL, updated_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -680,6 +687,54 @@ class ProjectStore:
                 "improved": r["improved"], "summary": r["summary"] or "",
                 "source": r["source"] or "suggestion",
                 "created_at": r["created_at"]}
+
+    # -- model evals (round-9: benchmark the workbench's LLMs) ---------------
+    def create_eval(self, name: str, prompt: str, models: list[str],
+                    goal_metric: str = "", higher_better: bool = True) -> int:
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO evals (name, prompt, models, goal_metric, higher_better,"
+            " status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?, 'planned', ?, ?)",
+            (name, prompt, json.dumps(models or []), goal_metric,
+             1 if higher_better else 0, now, now))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_eval(self, eid: int) -> dict | None:
+        row = self._conn.execute("SELECT * FROM evals WHERE id=?", (eid,)).fetchone()
+        return self._row_eval(row) if row else None
+
+    def list_evals(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM evals ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [self._row_eval(r) for r in reversed(rows)]
+
+    def update_eval(self, eid: int, *, status: str | None = None,
+                    report: str | None = None) -> None:
+        sets, vals = [], []
+        if status is not None:
+            sets.append("status=?"); vals.append(status)
+        if report is not None:
+            sets.append("report=?"); vals.append(report)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        self._conn.execute(
+            f"UPDATE evals SET {', '.join(sets)} WHERE id=?", (*vals, eid))
+        self._conn.commit()
+
+    def _row_eval(self, r) -> dict:
+        try:
+            models = json.loads(r["models"] or "[]")
+        except json.JSONDecodeError:
+            models = []
+        return {"id": r["id"], "name": r["name"], "prompt": r["prompt"] or "",
+                "models": models, "goal_metric": r["goal_metric"] or "",
+                "higher_better": bool(r["higher_better"]),
+                "status": r["status"] or "planned", "report": r["report"] or "",
+                "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
     def record_suggestion_learning(self, sug: dict) -> int | None:
         """Persist a concise learning from a resolved suggestion outcome

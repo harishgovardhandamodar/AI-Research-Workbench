@@ -2728,6 +2728,7 @@ $("kaggle-slug").addEventListener("keydown", (e) => {
 async function loadExperiments() {
   loadSuggestions();
   loadLearnings();
+  loadCompareExperiments();
   try {
     const r = await api(`/api/projects/${state.project}/experiments/history`);
     state.expRuns = r.experiments || [];
@@ -2784,6 +2785,92 @@ async function loadLearnings() {
       return m;
     }, {});
   } catch (e) { state.learnings = state.learnings || {}; }
+}
+
+async function loadCompareExperiments() {
+  const el = $("exp-compare-leaderboard");
+  if (!el) return;
+  try {
+    const r = await api(`/api/projects/${state.project}/experiments/compare`);
+    const rows = r.rows || [];
+    if (!rows.length) { el.innerHTML = '<div class="empty">Set a goal metric on experiments to compare them.</div>'; return; }
+    const metric = r.metric || "metric";
+    let h = `<table class="exp-rank-table"><thead><tr><th>#</th><th>experiment</th><th>${esc(metric)}</th><th>Δ best</th><th>% target</th><th>status</th></tr></thead><tbody>`;
+    rows.forEach((row, i) => {
+      const rank = i + 1;
+      const best = row.best != null ? _fmtNum(row.best) : "—";
+      const db = row.delta_best != null ? ((row.delta_best >= 0 ? "+" : "") + _fmtNum(row.delta_best)) : "—";
+      const pt = (row.to_target != null && row.best != null)
+        ? (row.target != null ? Math.round((row.best / row.target) * 100) + "%" : "—")
+        : "—";
+      h += `<tr${rank === 1 ? ' class="rank-top"' : ""}><td class="rank-pos">${rank}${rank === 1 ? " 🏆" : ""}</td>` +
+        `<td>${esc(row.name)}</td><td>${best}</td><td class="muted">${db}</td><td class="muted">${pt}</td>` +
+        `<td><span class="exp-badge ${row.status === "active" ? "det" : row.status === "completed" ? "ok" : "warn"}">${esc(row.status)}</span></td></tr>`;
+    });
+    h += "</tbody></table>";
+    el.innerHTML = h;
+  } catch (e) { el.innerHTML = '<div class="muted">Compare failed: ' + esc(e.message) + "</div>"; }
+}
+
+/* ============================ evals (round 9) ============================= */
+
+let evalPollTimer = null;
+
+function startEvalPoll() {
+  if (evalPollTimer) return;
+  evalPollTimer = setInterval(async () => {
+    await loadEvals();
+    if (!state.evalRunning) { clearInterval(evalPollTimer); evalPollTimer = null; }
+  }, 3000);
+}
+
+async function loadEvals() {
+  try {
+    const r = await api(`/api/projects/${state.project}/evals`);
+    state.evals = r.evals || [];
+    state.evalRunning = !!r.running;
+    renderEvals();
+  } catch (e) { /* silent */ }
+}
+
+function renderEvals() {
+  const el = $("eval-list");
+  if (!el) return;
+  const es = state.evals || [];
+  if (!es.length) { el.innerHTML = '<div class="empty">No benchmarks yet — compare models on a task.</div>'; return; }
+  el.innerHTML = "";
+  for (const ev of es) {
+    const running = ev.status === "running";
+    const done = ev.status === "done";
+    const report = (ev.report || "").replace(/\s+/g, " ").slice(0, 600);
+    const card = document.createElement("div");
+    card.className = "exp-card";
+    card.innerHTML = `<div class="exp-card-head">
+        <b class="exp-card-name">${esc(ev.name)}</b>
+        ${campaignStatusBadge(ev.status)}
+        <span class="muted exp-card-runs">${ev.models.length} model(s)</span>
+        <span class="spacer"></span>
+        ${running ? `<button class="btn subtle small eval-stop" data-id="${ev.id}">⏹ Stop</button>`
+          : `<button class="btn subtle small eval-run" data-id="${ev.id}">▶ ${done ? "Rerun" : "Run"}</button>`}
+      </div>
+      ${ev.prompt ? `<div class="exp-card-hyp muted">${esc(ev.prompt)}</div>` : ""}
+      ${ev.report ? `<details class="exp-plan"><summary>Leaderboard</summary><div class="exp-plan-body">${esc(report)}</div></details>` : ""}`;
+    el.appendChild(card);
+  }
+  el.querySelectorAll(".eval-run").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/projects/${state.project}/evals/${b.dataset.id}/run`, { method: "POST" });
+      toast("Model benchmark started in the background.");
+      await loadEvals();
+      startEvalPoll();
+    } catch (e) { toast("Failed to start eval: " + e.message); }
+  }));
+  el.querySelectorAll(".eval-stop").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/projects/${state.project}/evals/${b.dataset.id}/stop`, { method: "POST" });
+      toast("Stop requested.");
+    } catch (e) { toast("Failed to stop eval: " + e.message); }
+  }));
 }
 
 function learningsHtml(eid) {
@@ -4486,6 +4573,27 @@ $("campaign-new-create").addEventListener("click", async () => {
     startCampaignPoll();
     toast("Campaign started in the background.");
   } catch (e) { toast("Failed to start campaign: " + e.message); }
+});
+$("exp-compare-refresh").addEventListener("click", loadCompareExperiments);
+$("eval-new").addEventListener("click", () => $("eval-new-form").classList.toggle("hidden"));
+$("eval-new-create").addEventListener("click", async () => {
+  const name = ($("eval-new-name").value || "Eval").trim();
+  const metric = $("eval-new-metric").value.trim();
+  const models = ($("eval-new-models").value || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const prompt = $("eval-new-prompt").value.trim();
+  if (!models.length) { toast("Enter at least one model."); return; }
+  try {
+    const r = await api(`/api/projects/${state.project}/evals`, {
+      method: "POST",
+      body: JSON.stringify({ name, prompt, models, goal_metric: metric, higher_better: true }),
+    });
+    await api(`/api/projects/${state.project}/evals/${r.eval.id}/run`, { method: "POST" });
+    $("eval-new-form").classList.add("hidden");
+    $("eval-new-name").value = $("eval-new-metric").value = $("eval-new-models").value = $("eval-new-prompt").value = "";
+    await loadEvals();
+    startEvalPoll();
+    toast("Model benchmark started in the background.");
+  } catch (e) { toast("Failed to start eval: " + e.message); }
 });
 $("exp-edit-close").addEventListener("click", () => $("exp-edit-modal").classList.add("hidden"));
 $("exp-edit-save").addEventListener("click", saveExpEdit);
@@ -6304,5 +6412,6 @@ $("notebook-modal").addEventListener("click", (e) => {
   await refreshState();
   loadExperiments();
   loadCampaigns();
+  loadEvals();
   connect();
 })();

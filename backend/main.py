@@ -1079,6 +1079,9 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "campaign":
                     # Round-5: plan + run a multi-step research campaign.
                     user_tags = ["campaign"]
+                elif intent == "eval":
+                    # Round-9: benchmark the workbench's LLMs on a task.
+                    user_tags = ["eval"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1125,9 +1128,31 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("status", {"message": ""})
                     await emit("done", {})
                     return
+                if intent == "eval":
+                    # Launch a background model benchmark (round-9).
+                    cfg = dict(msg_extra.get("eval") or {})
+                    models = [m for m in (cfg.get("models") or []) if str(m).strip()]
+                    if not models:
+                        await emit("error", {"message":
+                            "No models specified for the eval."})
+                        await emit("done", {})
+                        return
+                    name = (cfg.get("name") or "Eval").strip() or "Eval"
+                    prompt = cfg.get("prompt") or text or "Run the experiment and report the goal metric."
+                    goal_metric = (cfg.get("goal_metric") or "").strip()
+                    higher = bool(cfg.get("higher_better", True))
+                    eid = rt.store.create_eval(name, prompt, models, goal_metric, higher)
+                    ok, msg = rt.start_eval(eid)
+                    if ok:
+                        await emit("status", {"message": "Model benchmark started in the background…"})
+                        await emit("notice", {"message":
+                            f"Model benchmark '{name}' running in the background "
+                            f"across {len(models)} model(s)."})
+                    else:
+                        await emit("error", {"message": msg})
+                    await emit("done", {})
+                    return
                 if intent == "campaign":
-                    # Round-6: launch the campaign in the background — it streams
-                    # live progress to every open window and survives disconnect.
                     cfg = dict(msg_extra.get("campaign") or {})
                     name = (cfg.get("name") or "campaign").strip() or "Campaign"
                     question = text or cfg.get("question") or ""
