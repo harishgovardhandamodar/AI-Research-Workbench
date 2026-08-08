@@ -228,6 +228,9 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
         suggestion_delta = suggestion_improved = None
         if last_applied_sid is not None and run is not None:
             try:
+                # Bind the applied suggestion to the run it produced before
+                # resolving, so the regression check + learning are recorded.
+                store.mark_suggestion_applied(last_applied_sid, run["id"])
                 out = store.resolve_suggestion_outcome(last_applied_sid)
                 if out is not None:
                     suggestion_delta = out.get("delta")
@@ -236,6 +239,11 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                         regress_streak = 0
                     elif suggestion_improved is not None:
                         regress_streak += 1
+                    # Round-7: remember the measured outcome (knowledge memory).
+                    try:
+                        store.record_suggestion_learning(out)
+                    except Exception:  # noqa: BLE001
+                        pass
             except Exception:  # noqa: BLE001
                 pass
         history.append({

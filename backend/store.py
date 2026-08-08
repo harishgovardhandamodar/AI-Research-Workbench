@@ -130,6 +130,14 @@ class ProjectStore:
                 status TEXT DEFAULT 'planned',
                 note TEXT, created_at REAL, updated_at REAL)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS learnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id INTEGER, run_id INTEGER,
+                metric TEXT, baseline_value REAL, outcome_value REAL, delta REAL,
+                improved INTEGER, summary TEXT, source TEXT,
+                created_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -586,6 +594,72 @@ class ProjectStore:
                 "best_run_id": r["best_run_id"], "status": r["status"] or "planned",
                 "note": r["note"] or "", "created_at": r["created_at"],
                 "updated_at": r["updated_at"]}
+
+    # -- learnings (compounding knowledge: measured outcomes worth remembering) --
+    def add_learning(self, experiment_id: int | None, run_id: int | None,
+                     metric: str, baseline_value, outcome_value, delta,
+                     improved, summary: str, source: str = "suggestion") -> int:
+        cur = self._conn.execute(
+            "INSERT INTO learnings (experiment_id, run_id, metric, baseline_value,"
+            " outcome_value, delta, improved, summary, source, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (experiment_id, run_id, metric, baseline_value, outcome_value,
+             delta, improved, summary, source, time.time()))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_learnings(self, experiment_id: int | None = None,
+                       metric: str = "", limit: int = 50) -> list[dict]:
+        sql = "SELECT * FROM learnings"
+        conds, vals = [], []
+        if experiment_id is not None:
+            conds.append("experiment_id=?"); vals.append(experiment_id)
+        if metric:
+            conds.append("metric=?"); vals.append(metric)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY id DESC LIMIT ?"
+        vals.append(int(limit))
+        rows = self._conn.execute(sql, vals).fetchall()
+        return [self._row_learning(r) for r in rows]
+
+    def delete_learning(self, lid: int) -> bool:
+        cur = self._conn.execute("DELETE FROM learnings WHERE id=?", (lid,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def _row_learning(self, r) -> dict:
+        return {"id": r["id"], "experiment_id": r["experiment_id"],
+                "run_id": r["run_id"], "metric": r["metric"] or "",
+                "baseline_value": r["baseline_value"],
+                "outcome_value": r["outcome_value"], "delta": r["delta"],
+                "improved": r["improved"], "summary": r["summary"] or "",
+                "source": r["source"] or "suggestion",
+                "created_at": r["created_at"]}
+
+    def record_suggestion_learning(self, sug: dict) -> int | None:
+        """Persist a concise learning from a resolved suggestion outcome
+        (the round-3 regression check). Returns the learning id or None."""
+        if not sug or sug.get("status") not in ("accepted", "rejected"):
+            return None
+        exp = (self.get_experiment(sug["experiment_id"])
+               if sug.get("experiment_id") else None)
+        metric = (exp or {}).get("goal_metric") or "metric"
+        baseline = sug.get("baseline_value")
+        outcome = sug.get("outcome_value")
+        delta = sug.get("delta")
+        improved = sug.get("improved")
+        title = str(sug.get("title") or "suggestion").strip() or "suggestion"
+        if baseline is not None and outcome is not None:
+            dstr = f"{delta:+.3g}" if delta is not None else ""
+            verb = "improved" if improved else "no gain"
+            summary = (f"Tried '{title}': {metric} {baseline:.4g}→{outcome:.4g}"
+                       f" ({dstr}) — {verb}.")
+        else:
+            summary = f"Tried '{title}' — outcome not measurable."
+        return self.add_learning(sug.get("experiment_id"), sug.get("run_id"),
+                                 metric, baseline, outcome, delta, improved,
+                                 summary, "suggestion")
 
     def _row_run(self, r, include_code: bool = False) -> dict:
         d = {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],

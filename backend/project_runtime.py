@@ -329,6 +329,15 @@ class ProjectRuntime:
         data = self._project_data_context()
         if data:
             lines.append(data)
+        # Round-7 knowledge memory: what prior experiments already learned about
+        # this goal metric, so the agent builds on it instead of re-trying.
+        try:
+            prior = self.store.list_learnings(metric=goal, limit=5) if goal else []
+            if prior:
+                lines.append("- Prior learnings: " + "; ".join(
+                    f"\"{l['summary']}\"" for l in prior))
+        except Exception:  # noqa: BLE001
+            pass
         return "\n".join(lines)
 
     def _project_data_context(self) -> str:

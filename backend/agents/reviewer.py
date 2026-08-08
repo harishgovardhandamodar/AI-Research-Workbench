@@ -78,6 +78,18 @@ def build_review_context(store, run: dict) -> str:
         if metrics:
             bits = ", ".join(f"{k}={v}" for k, v in list(metrics.items())[:12])
             lines.append(f"- This run's metrics: {bits}")
+        # Round-7: what was already tried on this experiment / metric, so
+        # suggestions don't repeat known no-gain changes.
+        try:
+            prior = store.list_learnings(experiment_id=eid, limit=5)
+            if not prior and eid is not None:
+                exp_g = (store.get_experiment(eid) or {}).get("goal_metric") or ""
+                prior = store.list_learnings(metric=exp_g, limit=5) if exp_g else []
+            if prior:
+                lines.append("- Prior learnings: " + "; ".join(
+                    f"\"{l['summary']}\"" for l in prior))
+        except Exception:  # noqa: BLE001
+            pass
         if len(lines) == 1:
             return ""
         return "\n".join(lines)

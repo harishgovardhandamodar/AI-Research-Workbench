@@ -1345,6 +1345,11 @@ async def ws_chat(ws: WebSocket, name: str):
                 # actually improve vs. the run it was applied to?
                 if applied_suggestion_id is not None:
                     try:
+                        # Bind the applied suggestion to the run it produced
+                        # before resolving (regression check + learning).
+                        if runs_now:
+                            rt.store.mark_suggestion_applied(
+                                applied_suggestion_id, runs_now[-1]["id"])
                         outcome = rt.store.resolve_suggestion_outcome(applied_suggestion_id)
                         if outcome and outcome.get("status") in ("accepted", "rejected"):
                             label = "✓ improved the goal" if outcome.get("improved") else "✗ did not improve the goal"
@@ -1354,6 +1359,11 @@ async def ws_chat(ws: WebSocket, name: str):
                                 f"Suggestion \"{outcome.get('title') or 'applied'}\" "
                                 f"{label} ({dstr} on {outcome.get('baseline_value')} "
                                 f"→ {outcome.get('outcome_value')}).")})
+                            # Round-7: remember this measured outcome.
+                            try:
+                                rt.store.record_suggestion_learning(outcome)
+                            except Exception:  # noqa: BLE001
+                                pass
                     except Exception:  # noqa: BLE001
                         pass
                 await emit("status", {"message": ""})

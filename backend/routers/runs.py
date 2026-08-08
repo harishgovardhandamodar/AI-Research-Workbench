@@ -543,6 +543,22 @@ async def project_suggestions(name: str, experiment_id: str = "",
     return {"suggestions": rt.store.list_suggestions(eid, status or None)}
 
 
+@router.get("/api/projects/{name}/learnings")
+async def project_learnings(name: str, experiment_id: str = "", metric: str = ""):
+    """Round-7 knowledge memory: measured outcomes worth remembering."""
+    rt = get_runtime(name)
+    eid = int(experiment_id) if str(experiment_id).isdigit() else None
+    return {"learnings": rt.store.list_learnings(eid, metric or "")}
+
+
+@router.delete("/api/projects/{name}/learnings/{lid}")
+async def project_learning_delete(name: str, lid: int):
+    rt = get_runtime(name)
+    if not rt.store.delete_learning(lid):
+        raise HTTPException(status_code=404, detail="learning not found")
+    return {"ok": True}
+
+
 @router.get("/api/projects/{name}/campaigns")
 async def project_campaigns(name: str):
     """Research campaigns for the project (id/name/question/status/steps)."""

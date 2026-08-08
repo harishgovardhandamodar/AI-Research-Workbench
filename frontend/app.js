@@ -2727,6 +2727,7 @@ $("kaggle-slug").addEventListener("keydown", (e) => {
 
 async function loadExperiments() {
   loadSuggestions();
+  loadLearnings();
   try {
     const r = await api(`/api/projects/${state.project}/experiments/history`);
     state.expRuns = r.experiments || [];
@@ -2772,6 +2773,28 @@ async function loadSuggestions() {
     for (const s of r.suggestions || []) map[s.id] = s;
     state.suggestions = map;
   } catch (e) { /* silent */ }
+}
+
+async function loadLearnings() {
+  try {
+    const r = await api(`/api/projects/${state.project}/learnings`);
+    state.learnings = (r.learnings || []).reduce((m, l) => {
+      const k = l.experiment_id != null ? String(l.experiment_id) : "_";
+      (m[k] = m[k] || []).push(l);
+      return m;
+    }, {});
+  } catch (e) { state.learnings = state.learnings || {}; }
+}
+
+function learningsHtml(eid) {
+  const ls = (state.learnings || {})[eid != null ? String(eid) : "_"] || [];
+  if (!ls.length) return "";
+  const items = ls.map((l) => {
+    const cls = l.improved === 1 ? "ok" : (l.improved === 0 ? "warn" : "det");
+    const badge = l.improved === 1 ? "✓ improved" : (l.improved === 0 ? "✗ no gain" : "");
+    return `<div class="learning-row"><span class="sug-badge ${cls}">${badge}</span><span>${esc(l.summary)}</span></div>`;
+  }).join("");
+  return `<details class="exp-plan"><summary>Learnings (${ls.length})</summary><div class="exp-plan-body">${items}</div></details>`;
 }
 
 /* ============================ campaigns (round 6) ========================= */
@@ -3353,6 +3376,7 @@ function renderExpList() {
       ${goal}
       ${modelPin}
       ${planHtml}
+      ${learningsHtml(e.id)}
       <div class="exp-rank-host"></div>`;
     el.appendChild(card);
   }

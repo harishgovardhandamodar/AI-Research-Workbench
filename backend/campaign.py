@@ -77,6 +77,15 @@ async def _plan_campaign(rt, c: dict, emit, plan_steps: list[dict] | None = None
     steps = list(plan_steps or [])
     if not steps:
         try:
+            prior = ""
+            try:
+                learnings = rt.store.list_learnings(
+                    metric=c.get("goal_metric") or "", limit=5)
+                if learnings:
+                    prior = "\nPrior learnings: " + "; ".join(
+                        f"\"{l['summary']}\"" for l in learnings)
+            except Exception:  # noqa: BLE001
+                pass
             prompt = (
                 "You are planning a research campaign for an autonomous "
                 "experimentation workbench.\n"
@@ -84,10 +93,12 @@ async def _plan_campaign(rt, c: dict, emit, plan_steps: list[dict] | None = None
                 f"Research question: {c['research_question'] or '(none)'}\n"
                 f"Goal metric: {c['goal_metric'] or '(none)'} "
                 f"({'higher' if c.get('higher_better', True) else 'lower'} is better).\n"
+                f"{prior}\n"
                 "Design 3-5 concrete research steps, each an experiment the agent "
                 "can run with the workbench tools (run_python, run_sweep, "
                 "start_run/finish_run, report_metric). Steps should build on each "
-                "other (baseline → ablations → best variant). "
+                "other (baseline → ablations → best variant) and on any prior "
+                "learnings above. "
                 'Reply with JSON only, an array of objects: [{"title", "kind": '
                 '"experiment|sweep|comparison", "hypothesis", "plan"}]')
             resp = await rt.llm.complete([{"role": "user", "content": prompt}],
