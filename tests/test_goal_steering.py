@@ -96,10 +96,55 @@ class PatchExperimentValidationTests(unittest.TestCase):
         r = self._patch({"goal_metric": "acc", "goal_target": None})
         self.assertIsNone(r["experiment"]["goal_target"])
 
+    def test_target_only_keeps_existing_metric(self):
+        self.store.update_experiment(self.eid, goal_metric="acc", goal_target=0.8)
+        r = self._patch({"goal_target": 0.99})
+        e = r["experiment"]
+        self.assertEqual(e["goal_metric"], "acc")
+        self.assertEqual(e["goal_target"], 0.99)
+
 
 class _FakeRt:
     def __init__(self, store):
         self.store = store
+
+
+class FocusRouteOrderTests(unittest.TestCase):
+    """The /experiments/focus routes must be declared before /experiments/{eid},
+    or the {eid} int parser swallows 'focus' (FastAPI matches in order)."""
+
+    def test_focus_routes_not_shadowed_by_eid(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from backend.project_runtime import ProjectRuntime
+        from backend.routers import runs
+
+        holder = {}
+
+        def make_rt():
+            rt = object.__new__(ProjectRuntime)
+            rt.store = ProjectStore(Path(tempfile.mkdtemp()))
+            rt.dir = Path(tempfile.mkdtemp())
+            rt.llm = None
+            return rt
+
+        runs.get_runtime = lambda name: holder.setdefault("rt", make_rt())
+        app = FastAPI()
+        app.include_router(runs.router)
+        c = TestClient(app)
+        self.assertEqual(c.get("/api/projects/p/experiments/focus").status_code, 200)
+        self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], None)
+        eid = c.post("/api/projects/p/experiments",
+                     json={"name": "e1", "goal_metric": "acc",
+                           "goal_target": 0.9}).json()["experiment"]["id"]
+        self.assertEqual(
+            c.post("/api/projects/p/experiments/focus", json={"id": eid}).json()["focus_id"], eid)
+        self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], eid)
+        self.assertEqual(c.get(f"/api/projects/p/experiments/{eid}").status_code, 200)
+        self.assertEqual(
+            c.patch(f"/api/projects/p/experiments/{eid}",
+                    json={"goal_target": 0.99}).status_code, 200)
 
 
 class RankRunsTargetTests(unittest.TestCase):

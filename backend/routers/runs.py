@@ -94,6 +94,31 @@ async def create_project_experiment(name: str, body: dict):
     return {"experiment": store.get_experiment(eid)}
 
 
+@router.get("/api/projects/{name}/experiments/focus")
+async def project_experiment_focus(name: str):
+    """The currently focused experiment (drives context steering + run tagging)."""
+    store = get_runtime(name).store
+    fid = store.get_setting("focus_experiment_id", "")
+    if str(fid).isdigit() and store.get_experiment(int(fid)) is not None:
+        return {"focus_id": int(fid)}
+    return {"focus_id": None}
+
+
+@router.post("/api/projects/{name}/experiments/focus")
+async def set_project_experiment_focus(name: str, body: dict):
+    """Set (id) or clear (null) the focused experiment."""
+    store = get_runtime(name).store
+    fid = body.get("id")
+    if fid is not None:
+        fid = int(fid)
+        if store.get_experiment(fid) is None:
+            raise HTTPException(status_code=404, detail="experiment not found")
+        store.set_setting("focus_experiment_id", str(fid))
+        return {"focus_id": fid}
+    store.set_setting("focus_experiment_id", "")
+    return {"focus_id": None}
+
+
 @router.get("/api/projects/{name}/experiments/{eid}")
 async def project_experiment(name: str, eid: int):
     """One experiment with its runs (config + metrics per run)."""
@@ -142,7 +167,9 @@ async def update_project_experiment(name: str, eid: int, body: dict):
         goal_metric = (goal_metric or "").strip()
         if goal_metric and target is None and "goal_target" not in body:
             target = exp["goal_target"]  # keep existing target on metric edit
-    if target is not _UNSET and target is not None and not goal_metric:
+    # Editing only the target must keep the experiment's current metric.
+    effective_metric = goal_metric if "goal_metric" in body else exp["goal_metric"]
+    if target is not _UNSET and target is not None and not (effective_metric or "").strip():
         raise HTTPException(status_code=400,
                             detail="goal_target requires a goal_metric")
     store.update_experiment(
@@ -155,31 +182,6 @@ async def update_project_experiment(name: str, eid: int, body: dict):
         plan=body.get("plan"),
     )
     return {"experiment": store.get_experiment(eid)}
-
-
-@router.get("/api/projects/{name}/experiments/focus")
-async def project_experiment_focus(name: str):
-    """The currently focused experiment (drives context steering + run tagging)."""
-    store = get_runtime(name).store
-    fid = store.get_setting("focus_experiment_id", "")
-    if str(fid).isdigit() and store.get_experiment(int(fid)) is not None:
-        return {"focus_id": int(fid)}
-    return {"focus_id": None}
-
-
-@router.post("/api/projects/{name}/experiments/focus")
-async def set_project_experiment_focus(name: str, body: dict):
-    """Set (id) or clear (null) the focused experiment."""
-    store = get_runtime(name).store
-    fid = body.get("id")
-    if fid is not None:
-        fid = int(fid)
-        if store.get_experiment(fid) is None:
-            raise HTTPException(status_code=404, detail="experiment not found")
-        store.set_setting("focus_experiment_id", str(fid))
-        return {"focus_id": fid}
-    store.set_setting("focus_experiment_id", "")
-    return {"focus_id": None}
 
 
 @router.post("/api/projects/{name}/experiments/run-obfuscation")
