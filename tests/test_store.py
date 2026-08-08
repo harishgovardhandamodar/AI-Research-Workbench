@@ -48,6 +48,24 @@ class TestStore(unittest.TestCase):
         store2 = ProjectStore(self.tmp)
         self.assertEqual(store2.get_run(rid)["metrics"], {"acc": 0.9})
 
+    def test_run_dataset_tag(self):
+        rid = self.store.add_run("p", "r", "done", 1.0, 2.0,
+                                 metrics={"acc": 0.9}, dataset="synthetic")
+        self.assertEqual(self.store.get_run(rid)["dataset"], "synthetic")
+        # set_run_dataset updates the tag
+        self.assertTrue(self.store.set_run_dataset(rid, "real"))
+        self.assertEqual(self.store.get_run(rid)["dataset"], "real")
+        self.assertFalse(self.store.set_run_dataset(999999, "x"))
+        # untagged runs default to ""
+        rid2 = self.store.add_run("p2", "r2", "done", 1.0, 2.0)
+        self.assertEqual(self.store.get_run(rid2)["dataset"], "")
+        # config.dataset is picked up as a fallback when no dataset is given
+        rid3 = self.store.add_run("p3", "r3", "done", 1.0, 2.0,
+                                  config={"dataset": "both"})
+        self.assertEqual(self.store.get_run(rid3)["dataset"], "both")
+        # persists across a reopen
+        self.assertEqual(ProjectStore(self.tmp).get_run(rid)["dataset"], "real")
+
     def test_goals_roundtrip(self):
         self.store.add_goal("accuracy", 0.9, True, "90%")
         goals = self.store.list_goals()

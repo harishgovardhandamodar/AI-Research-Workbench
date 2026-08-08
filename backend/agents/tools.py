@@ -40,6 +40,7 @@ class ToolContext:
     experiment_id: str = ""
     experiment_config: dict | None = None
     last_metrics: dict | None = None
+    last_dataset: str | None = None
     # God mode: when set, shell/agent work is confined to this quarantined
     # folder (full-access turns).
     quarantine_dir: str = ""
@@ -417,6 +418,7 @@ async def _run_python(ctx: ToolContext, code: str) -> str:
     env = await ctx.kernels.get_env()
     resp = await ctx.kernels.python.run_code(code)
     ctx.last_metrics = resp.get("metrics") or {}
+    ctx.last_dataset = resp.get("dataset") or None
     parts = []
     if resp.get("output"):
         parts.append(resp["output"].rstrip())

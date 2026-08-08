@@ -230,6 +230,12 @@ class ProjectStore:
             c.execute("ALTER TABLE runs ADD COLUMN integrity_hash TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: dataset tag on runs, so an experiment's runs can be grouped
+        # and compared across datasets (e.g. real vs synthetic).
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN dataset TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -356,7 +362,8 @@ class ProjectStore:
                 git_commit: str | None = None,
                 code: dict | list | None = None,
                 env: dict | None = None,
-                message_id: int | None = None) -> int:
+                message_id: int | None = None,
+                dataset: str | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
@@ -369,6 +376,8 @@ class ProjectStore:
         `env` is the kernel environment snapshot at run time.
         `message_id` is the turn's user-message id (= the audit trace_id) and
         `integrity_hash` is a sha256 over the canonical record (round-8).
+        `dataset` tags which dataset the run used (e.g. real / synthetic), so an
+        experiment's runs can be grouped and compared across datasets.
         """
         cfg = config or {}
         met = metrics or {}
@@ -376,26 +385,27 @@ class ProjectStore:
         art = artifact_ids or []
         cod = code or []
         envd = env or {}
+        ds = dataset or (str(cfg.get("dataset") or "").strip() or None)
         integrity = hashlib.sha256(_canonical_run({
             "prompt": prompt, "reply": reply, "status": status, "kind": kind or "agent_run",
             "label": label, "experiment_id": experiment_id,
             "parent_run_id": parent_run_id, "model": model or "",
             "git_commit": git_commit or "", "config": cfg, "metrics": met,
-            "tool_sequence": seq, "code": cod, "env": envd,
+            "tool_sequence": seq, "code": cod, "env": envd, "dataset": ds,
         }).encode()).hexdigest()
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
             " label, kind, parent_run_id, model, git_commit, code, env, message_id,"
-            " integrity_hash)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " integrity_hash, dataset)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(seq), json.dumps(art),
              json.dumps(met), json.dumps(review or {}),
              experiment_id, json.dumps(cfg), label or None,
              kind or "agent_run", parent_run_id, model or None,
              git_commit or None, json.dumps(cod), json.dumps(envd),
-             message_id, integrity))
+             message_id, integrity, ds))
         if experiment_id is not None:
             # A fresh run means the experiment is active now: bump updated_at so
             # "most recently active" experiment selection reflects real activity.
@@ -453,6 +463,14 @@ class ProjectStore:
             "UPDATE runs SET review=? WHERE id=?",
             (json.dumps(review), rid))
         self._conn.commit()
+
+    def set_run_dataset(self, rid: int, dataset: str) -> bool:
+        """Tag which dataset a run used (grouping for dataset-comparison)."""
+        cur = self._conn.execute(
+            "UPDATE runs SET dataset=? WHERE id=?",
+            (dataset or None, rid))
+        self._conn.commit()
+        return cur.rowcount > 0
 
     # -- suggestions (first-class reviewer suggestion records) ---------------
     def add_suggestions(self, experiment_id: int | None, source_run_id: int | None,
@@ -778,6 +796,10 @@ class ProjectStore:
              "env": _jload(r["env"], {}),
              "message_id": r["message_id"],
              "integrity_hash": r["integrity_hash"] or ""}
+        try:
+            d["dataset"] = r["dataset"] or (d.get("config") or {}).get("dataset") or ""
+        except (KeyError, TypeError):
+            d["dataset"] = ""
         # Full executed code is large; only the single-run / diff paths request it.
         if include_code:
             d["code"] = _jload(r["code"], [])

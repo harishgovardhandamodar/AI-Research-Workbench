@@ -109,6 +109,7 @@
         <button class="exp-nav-chip" data-target="experiments">Experiments</button>
         <button class="exp-nav-chip" data-target="campaigns">Campaigns</button>
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
+        <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
       </nav>
 
@@ -235,6 +236,23 @@
           </div>
           <div id="eval-list"></div>
         </div>
+      </section>
+
+      <section id="exp-section-datasets" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Dataset comparison</span>
+          <span class="muted exp-hint">compare an experiment's runs across datasets (tag runs with <code>report_dataset("name")</code> or edit a run's dataset)</span>
+          <span class="spacer"></span>
+          <select id="ds-experiment" class="exp-search" title="scope to an experiment">
+            <option value="">all experiments</option>
+          </select>
+          <select id="ds-metric" class="exp-search" title="metric"></select>
+          <button id="ds-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div id="ds-summary" class="ds-summary muted"></div>
+        <div id="ds-cards" class="ds-cards"></div>
+        <div id="ds-compare" class="ds-compare"></div>
+        <div id="ds-runs" class="ds-runs"></div>
       </section>
 
       <section id="exp-section-runs" class="exp-section">
@@ -865,7 +883,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v102";
+  window.FOX_VER = "v103";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

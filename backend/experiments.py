@@ -173,6 +173,7 @@ def unify_record(run: dict, artifact_store=None) -> dict:
         "prompt": run.get("prompt") or "",
         "experiment_id": run.get("experiment_id"),
         "model": run.get("model") or "",
+        "dataset": (run.get("dataset") or "").strip() or (cfg.get("dataset") or "").strip() or "",
         "mcp": mcp,
         "action": action,
         "tools": tools,

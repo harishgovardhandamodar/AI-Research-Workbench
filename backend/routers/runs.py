@@ -35,6 +35,19 @@ async def project_run(name: str, rid: int):
     return {"run": run}
 
 
+@router.post("/api/projects/{name}/runs/{rid}/dataset")
+async def project_run_set_dataset(name: str, rid: int, body: dict):
+    """Tag which dataset a run used, so the Experiments tab can group and compare
+    runs across datasets within the same experiment."""
+    rt = get_runtime(name)
+    if rt.store.get_run(rid) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    ds = str(body.get("dataset") or "").strip()
+    rt.store.set_run_dataset(rid, ds)
+    run = rt.store.get_run(rid)
+    return {"ok": True, "dataset": run["dataset"]}
+
+
 @router.delete("/api/projects/{name}/messages/{mid}")
 async def project_message_delete(name: str, mid: int):
     """Delete a single chat message so the user can curate the conversation."""

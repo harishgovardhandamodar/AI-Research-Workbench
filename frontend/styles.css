@@ -896,6 +896,21 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .exp-kpi.running .kpi-n { color: var(--accent, #a974ff); }
 .exp-kpi.running .kpi-n::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px;
   border-radius: 50%; background: var(--accent, #a974ff); animation: exp-pulse 1.2s ease-in-out infinite; }
+.run-ds-chip { font-size: 10.5px; font-weight: 700; color: #4f8cff; background: rgba(79, 140, 255, .12);
+  padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.run-ds-row { display: flex; align-items: center; gap: 6px; }
+.run-ds-input { flex: 0 1 220px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+.ds-summary { font-size: 12px; margin: 6px 0; }
+.ds-cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.ds-card { flex: 1 1 220px; max-width: 340px; border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; }
+.ds-card-head { display: flex; align-items: center; gap: 8px; }
+.ds-dot { width: 9px; height: 9px; border-radius: 50%; background: #4f8cff; }
+.ds-best { font-weight: 700; color: var(--accent, #a974ff); }
+.ds-matrix td.cmp-many-best { color: var(--ok, #4cd08d); font-weight: 700; }
+.ds-runs-group summary { cursor: pointer; color: var(--accent, #a974ff); font-size: 12px; }
+.ds-runs-body { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
 .cmp-verdict { font-size: 12px; margin-top: 6px; padding: 5px 8px; border-radius: 4px;
   background: rgba(169, 116, 255, .1); border: 1px solid rgba(169, 116, 255, .3); }
 .cmp-sec { font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; margin: 10px 0 2px; }

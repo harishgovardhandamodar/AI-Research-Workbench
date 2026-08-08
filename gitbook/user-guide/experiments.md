@@ -56,6 +56,19 @@ Large lists render in chunks with a **Show more** control.
 Background research campaigns and model benchmarks with create/run/resume/stop,
 status badges, and progress bars (see their dedicated pages).
 
+## Datasets
+
+Analyze an experiment's runs **across datasets** (e.g. the fox audit-trail / DP
+vs synthetic workflows, which run the same experiment on a real and a synthetic
+copy of the data):
+
+- Tag runs with a dataset via `report_dataset("name")` inside `run_python` code
+  (right after loading the data), from `config.dataset`, or by editing a run's
+  **Dataset** field in its detail row (run rows show a 🧬 chip).
+- The **Datasets** section (scope to an experiment + pick a metric) shows
+  per-dataset cards (run count, best, mean, trend), a **between-dataset matrix**
+  with the best dataset per metric highlighted ★, and per-dataset run lists.
+
 ## Runs
 
 Every recorded turn, filterable by experiment, text, and **time** (the toolbar

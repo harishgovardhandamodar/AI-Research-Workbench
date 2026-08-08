@@ -39,6 +39,20 @@ class TestUnifyRecord(unittest.TestCase):
         # started_at is converted to an ISO timestamp
         self.assertTrue(u["timestamp"].startswith("2026") or "1970" in u["timestamp"])
 
+    def test_dataset_in_normalization(self):
+        u = experiments.unify_record(
+            {"id": 1, "kind": "agent_run", "metrics": {"acc": 0.8},
+             "dataset": "synthetic"})
+        self.assertEqual(u["dataset"], "synthetic")
+        # falls back to config.dataset for untagged runs
+        u2 = experiments.unify_record(
+            {"id": 2, "kind": "agent_run", "metrics": {"acc": 0.8},
+             "config": {"dataset": "real"}})
+        self.assertEqual(u2["dataset"], "real")
+        u3 = experiments.unify_record(
+            {"id": 3, "kind": "agent_run", "metrics": {"acc": 0.8}})
+        self.assertEqual(u3["dataset"], "")
+
     def test_legacy_privacy_workflow_flattening(self):
         u = experiments.unify_record(_legacy_privacy("a"))
         self.assertEqual(u["kind"], "privacy_workflow")

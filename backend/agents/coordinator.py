@@ -38,8 +38,12 @@ Working style:
   an explicit PLAN: the hypothesis, the goal metric and target, the exact configs /
   variable values you intend to try (a short list), and the stopping criteria for
   the experiment. Then run variants. Inside run_python code, call
-  report_metric("name", value) for each headline number so every run records
-  structured, comparable metrics.
+   report_metric("name", value) for each headline number so every run records
+   structured, comparable metrics.
+- When a run uses a specific dataset (e.g. a real vs a synthetic/obfuscated
+  copy), tag it from inside the run_python code with report_dataset("<name>")
+  (e.g. "real" / "synthetic") right after loading the data, so the Experiments
+  tab can group and compare the experiment's runs across datasets.
 - For each config point you evaluate, delimit it explicitly: call start_run
   (variant label + config) before running that variant's code and finish_run
   (optional notes) after, so every variant is recorded with its own label, config
@@ -186,6 +190,7 @@ class Coordinator:
         self._run_seq: list[dict] = []
         self._run_artifacts: list[str] = []
         self._run_metrics: dict = {}
+        self._run_dataset: str | None = None
         self._run_code: list[dict] = []
         self._run_env: dict = {}
         self._run_started = 0.0
@@ -305,6 +310,7 @@ class Coordinator:
         self._run_seq = []
         self._run_artifacts = []
         self._run_metrics = {}
+        self._run_dataset = None
         self._run_code = []
         self._run_env = {}
         self._run_started = time.time()
@@ -497,6 +503,12 @@ class Coordinator:
             if self.ctx.variant:
                 self.ctx.variant.setdefault("metrics", {}).update(structured)
             self.ctx.last_metrics = None
+        # Dataset tag: the last report_dataset() call in this turn wins.
+        if getattr(self.ctx, "last_dataset", None):
+            self._run_dataset = self.ctx.last_dataset
+            if self.ctx.variant:
+                self.ctx.variant["dataset"] = self.ctx.last_dataset
+            self.ctx.last_dataset = None
         if name not in ("start_run", "finish_run", "create_experiment"):
             # Only compute tools feed the regex metric fallback, so bookkeeping
             # output (e.g. a config dump) isn't misread.
@@ -552,6 +564,7 @@ class Coordinator:
             "model": self.model_name,
             "code": self._run_code,
             "env": self._run_env,
+            "dataset": self._run_dataset,
             "message_id": (int(self.ctx.message_id)
                            if str(getattr(self.ctx, "message_id", "")).isdigit() else None),
         })

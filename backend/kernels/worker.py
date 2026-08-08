@@ -153,6 +153,25 @@ except ImportError:
 # ----------------------------------------------------------------- kernel -----
 
 _METRICS: dict = {}
+_REPORTED_DATASET: str | None = None
+
+
+def _report_dataset(name):
+    """Tag the current run's dataset so the Experiments tab can compare runs
+    across datasets (e.g. real vs synthetic). Call ``report_dataset("real")``
+    (or "synthetic") from kernel code after loading the data."""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("report_dataset name must be a non-empty string")
+    global _REPORTED_DATASET
+    _REPORTED_DATASET = name.strip()
+    return None
+
+
+def _take_dataset():
+    global _REPORTED_DATASET
+    out = _REPORTED_DATASET
+    _REPORTED_DATASET = None
+    return out
 
 
 def _report_metric(name, value, *, step=None):
@@ -194,7 +213,8 @@ def _save_artifact_hint(**kwargs):
 def _base_ns() -> dict:
     return {"__name__": "__main__", "__builtins__": __builtins__,
             "save_artifact": _save_artifact_hint,
-            "report_metric": _report_metric}
+            "report_metric": _report_metric,
+            "report_dataset": _report_dataset}
 
 
 def _compile(code: str):
@@ -282,7 +302,7 @@ def run_code(ns: dict, code: str, timeout: float, on_chunk=None) -> dict:
         output = output[-50_000:] + "\n...[truncated]"
     return {"ok": ok, "output": output, "error": error,
             "figures": _flush_figures(), "variables": _list_variables(ns),
-            "metrics": _take_metrics()}
+            "metrics": _take_metrics(), "dataset": _take_dataset()}
 
 
 def main() -> None:
@@ -308,6 +328,7 @@ def main() -> None:
                 ns.clear()
                 ns.update(_base_ns())
                 _METRICS.clear()
+                _REPORTED_DATASET = None
                 if plt is not None:
                     plt.close("all")
                 resp = {"ok": True, "variables": {}}

@@ -2776,6 +2776,7 @@ async function loadExperiments() {
   }
   populateExpCompare();
   renderRuns();
+  renderDatasetAnalysis();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -2987,6 +2988,159 @@ function updateRunningIndicators() {
     }
   });
   renderExpKpis();
+}
+
+/* ---------- dataset comparison analysis ---------- */
+
+function dsScopeRuns() {
+  const scope = (state.dsExperiment || "").toString();
+  return (state.agentRuns || []).filter((r) => {
+    if (scope && String(r.experiment_id) !== scope) return false;
+    if (!inTimeRange(r)) return false;
+    return true;
+  });
+}
+
+function dsMetricOptions() {
+  const opts = new Set();
+  for (const r of dsScopeRuns()) {
+    for (const k of Object.keys(r.metrics || {})) {
+      if (expNodeValue(r, k) != null) opts.add(k);
+    }
+  }
+  return [...opts].sort();
+}
+
+// Group runs by dataset (untagged → "default"), with best/mean/trend per group.
+function dsGroups(runs, metric, higher) {
+  const groups = new Map();
+  for (const r of runs) {
+    const key = (r.dataset || "").trim() || "default";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const out = [...groups.keys()].map((name) => {
+    const rs = groups.get(name);
+    const vals = metric
+      ? rs.map((r) => expNodeValue(r, metric)).filter((v) => v != null) : [];
+    const best = vals.length ? (higher ? Math.max(...vals) : Math.min(...vals)) : null;
+    const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    const trend = seriesTrend(vals);
+    return { name, runs: rs, vals, best, mean, trend };
+  });
+  return out;
+}
+
+function renderDatasetAnalysis() {
+  const el = $("exp-section-datasets");
+  if (!el) return;
+  // Keep the experiment / metric selects in sync.
+  const expSel = $("ds-experiment");
+  if (expSel) {
+    const cur = state.dsExperiment || "";
+    expSel.innerHTML = '<option value="">all experiments</option>' +
+      (state.expList || []).map((e) =>
+        `<option value="${e.id}"${String(e.id) === String(cur) ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  }
+  const metricOpts = dsMetricOptions();
+  const mSel = $("ds-metric");
+  if (mSel) {
+    const cur = state.dsMetric || "";
+    mSel.innerHTML = '<option value="">— metric —</option>' +
+      metricOpts.map((k) => `<option value="${esc(k)}"${k === cur ? " selected" : ""}>${esc(k.replace(/_/g, " "))}</option>`).join("");
+  }
+  const metric = state.dsMetric || "";
+  const runs = dsScopeRuns();
+  const summaryEl = $("ds-summary"), cardsEl = $("ds-cards"),
+        cmpEl = $("ds-compare"), runsEl = $("ds-runs");
+  if (!runs.length) {
+    summaryEl.innerHTML = "No runs match the current scope.";
+    cardsEl.innerHTML = cmpEl.innerHTML = runsEl.innerHTML = "";
+    return;
+  }
+  const datasets = dsGroups(runs, metric, true);
+  const labeled = datasets.filter((d) => d.name !== "default");
+  if (!labeled.length) {
+    summaryEl.innerHTML = `No runs are tagged with a dataset yet — tag runs (🧬 chip in run detail, or \`report_dataset("real")\` inside \`run_python\`) to compare them across datasets.`;
+    cardsEl.innerHTML = cmpEl.innerHTML = runsEl.innerHTML = "";
+    return;
+  }
+  const total = runs.length;
+  summaryEl.innerHTML = `${total} run(s) · ${datasets.length} dataset group(s)` +
+    (metric ? ` · comparing <b>${esc(metric.replace(/_/g, " "))}</b>` : "") +
+    ` · <button class="btn subtle small ds-scope-all" title="Clear experiment scope">show all experiments</button>`;
+
+  // Per-dataset cards.
+  cardsEl.innerHTML = "";
+  for (const d of datasets) {
+    const card = document.createElement("div");
+    card.className = "ds-card";
+    const bestTxt = d.best != null ? `best ${_fmtNum(d.best)}` : "no value";
+    const meanTxt = d.mean != null ? `mean ${_fmtNum(d.mean)}` : "";
+    card.innerHTML = `<div class="ds-card-head"><span class="ds-dot"></span><b>${esc(d.name)}</b>`
+      + `<span class="muted">${d.runs.length} run(s)</span>`
+      + `<span class="spacer"></span><span class="ds-best">${bestTxt}${meanTxt ? " · " + meanTxt : ""}</span></div>`
+      + (d.vals.length >= 2 ? sparklineSvg(d.vals, 120, 26, "#4f8cff") : "")
+      + (d.trend ? trendChipHtml(d.trend) : "");
+    cardsEl.appendChild(card);
+  }
+
+  // Between-dataset comparison matrix (best value per metric, best dataset ★).
+  const metricSet = new Set();
+  for (const r of runs) for (const k of Object.keys(r.metrics || {})) {
+    if (expNodeValue(r, k) != null) metricSet.add(k);
+  }
+  const mkeys = [...metricSet].sort();
+  if (mkeys.length) {
+    const rows = mkeys.map((m) => {
+      const values = {};
+      for (const d of datasets) {
+        const vs = d.runs.map((r) => expNodeValue(r, m)).filter((v) => v != null);
+        values[d.name] = vs.length ? Math.max(...vs) : null;
+      }
+      const present = datasets.map((d) => d.name).filter((n) => values[n] != null);
+      const best = present.length ? present.reduce((a, b) => (values[b] > values[a] ? b : a), present[0]) : null;
+      return { metric: m, values, best };
+    });
+    let h = `<table class="cmp-table ds-matrix"><thead><tr><th>metric</th>`;
+    for (const d of datasets) h += `<th>${esc(d.name)}</th>`;
+    h += `</tr></thead><tbody>`;
+    for (const row of rows) {
+      h += `<tr><td>${esc(row.metric)}</td>`;
+      for (const d of datasets) {
+        const v = row.values[d.name];
+        const isBest = d.name === row.best;
+        h += `<td${isBest ? ' class="cmp-many-best" title="best"' : ""}>${v != null ? _fmtNum(v) : "—"}${isBest ? " ★" : ""}</td>`;
+      }
+      h += `</tr>`;
+    }
+    h += `</tbody></table>`;
+    const wins = {};
+    for (const row of rows) if (row.best) wins[row.best] = (wins[row.best] || 0) + 1;
+    const order = Object.keys(wins).sort((a, b) => wins[b] - wins[a]);
+    cmpEl.innerHTML = `<div class="cmp-sec">Best value per metric</div>${h}` +
+      (order.length ? `<div class="cmp-summary muted">${order.map((n) => `${esc(n)} wins ${wins[n]} metric(s)`).join(" · ")}</div>` : "");
+  } else {
+    cmpEl.innerHTML = "";
+  }
+
+  // Per-dataset run chips.
+  runsEl.innerHTML = "";
+  for (const d of datasets) {
+    const wrap = document.createElement("details");
+    wrap.className = "exp-plan ds-runs-group";
+    wrap.innerHTML = `<summary>${esc(d.name)} — ${d.runs.length} run(s)</summary><div class="ds-runs-body">`
+      + d.runs.slice().reverse().map((r) =>
+        `<span class="run-tool-chip">#${r.id}${r.label ? " " + esc(r.label) : ""}${metric && r.metrics && r.metrics[metric] != null ? " · " + _fmtNum(r.metrics[metric]) : ""}</span>`).join(" ")
+      + `</div>`;
+    runsEl.appendChild(wrap);
+  }
+
+  const scopeAll = summaryEl.querySelector(".ds-scope-all");
+  if (scopeAll) scopeAll.addEventListener("click", () => {
+    state.dsExperiment = "";
+    renderDatasetAnalysis();
+  });
 }
 
 function initExpSectionNav() {
@@ -3770,6 +3924,7 @@ function renderRuns() {
         <span class="run-id">#${r.id}</span>
         <input type="checkbox" class="run-sel" data-id="${r.id}" title="Select for compare / export"${state.selectedRuns && state.selectedRuns.has(String(r.id)) ? " checked" : ""}>
         <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
+        ${r.dataset ? `<span class="run-ds-chip" title="dataset">🧬 ${esc(r.dataset)}</span>` : ""}
         ${gvNum != null && goalMetric ? `<span class="run-goal" title="goal metric ${esc(goalMetric)}">${esc(goalMetric.replace(/_/g, " "))} ${_fmtNum(gvNum)}</span>` : ""}
         ${deltaBestChip(dBest)}
         <span class="run-meta muted">${esc(meta.join(" · "))}</span>
@@ -3836,6 +3991,20 @@ function renderRuns() {
         b.textContent = "↶ restore";
       }
     }));
+  el.querySelectorAll(".run-ds-save").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const input = b.closest(".run-ds-row").querySelector(".run-ds-input");
+      const ds = (input && input.value || "").trim();
+      try {
+        await api(`/api/projects/${state.project}/runs/${b.dataset.rid}/dataset`, {
+          method: "POST",
+          body: JSON.stringify({ dataset: ds }),
+        });
+        toast(ds ? `Run #${b.dataset.rid} tagged as “${ds}”.` : `Dataset tag cleared for run #${b.dataset.rid}.`);
+        await loadExperiments();
+      } catch (e) { toast("Failed to set dataset: " + e.message); }
+    }));
   el.querySelectorAll(".run-improve-exp").forEach((b) =>
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -3888,6 +4057,9 @@ function runDetailHtml(r) {
   if (r.prompt) {
     h += `<div class="run-detail-sec">Prompt</div><div class="run-prompt-full">${esc(r.prompt)}</div>`;
   }
+  h += `<div class="run-detail-sec">Dataset</div><div class="run-ds-row">`
+    + `<input class="run-ds-input" data-rid="${r.id}" value="${esc(r.dataset || "")}" placeholder="e.g. real / synthetic" title="Tag which dataset this run used (for dataset comparison)">`
+    + `<button class="btn subtle small run-ds-save" data-rid="${r.id}" title="Save dataset tag">Set</button></div>`;
   const acts = [];
   if (r.kind !== "restore") acts.push(
     `<button class="btn subtle small run-revert" data-rid="${r.id}" title="Re-run this run's prompt as a fresh turn">↶ revert</button>`);
@@ -5644,6 +5816,9 @@ $("exp-kind-filter").addEventListener("change", (e) => {
   state.expKindFilter = e.target.value;
   renderExperiments();
 });
+$("ds-experiment").addEventListener("change", (e) => { state.dsExperiment = e.target.value; renderDatasetAnalysis(); });
+$("ds-metric").addEventListener("change", (e) => { state.dsMetric = e.target.value; renderDatasetAnalysis(); });
+$("ds-refresh").addEventListener("click", renderDatasetAnalysis);
 $("exp-time-filter").addEventListener("change", (e) => {
   state.timeRange = e.target.value;
   state.expChunk = 0;
