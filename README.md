@@ -16,16 +16,45 @@ The assistant persona is **Fox** (🦊).
 
 ## Screenshots
 
-| | | |
-|---|---|---|
-| ![Chat](frontend/media/screenshots/chat.png) | ![Experiments](frontend/media/screenshots/experiments.png) | ![Experiment detail](frontend/media/screenshots/experiment-detail.png) |
-| *Chat with Fox* | *Experiments overview* | *Experiment detail (leaderboard + learnings + runs)* |
-| ![Goals](frontend/media/screenshots/goals.png) | ![Campaigns](frontend/media/screenshots/campaigns.png) | ![Benchmarks](frontend/media/screenshots/benchmarks.png) |
-| *Goals with progress* | *Background campaigns* | *Model benchmarks* |
-| ![Run detail](frontend/media/screenshots/run-detail.png) | ![Branches](frontend/media/screenshots/branches.png) | ![Report](frontend/media/screenshots/report.png) |
-| *Expandable run detail* | *Improve-loop lineage (branch graph)* | *Generated report in chat* |
-| ![Audit](frontend/media/screenshots/audit.png) | | |
-| *Audit trail* | | |
+**Chat with Fox** — streaming agent turns with provenance labels.
+
+![Chat with Fox](frontend/media/screenshots/chat.png)
+
+**Experiments overview** — KPIs, the cross-experiment leaderboard, and compact experiment cards.
+
+![Experiments overview](frontend/media/screenshots/experiments.png)
+
+**Experiment detail** — leaderboard, learnings, and runs in one view.
+
+![Experiment detail](frontend/media/screenshots/experiment-detail.png)
+
+**Goals** — target metrics with progress bars and reached states.
+
+![Goals](frontend/media/screenshots/goals.png)
+
+**Campaigns** — background research investigations.
+
+![Campaigns](frontend/media/screenshots/campaigns.png)
+
+**Model benchmarks** — compare the workbench's LLMs on a task.
+
+![Model benchmarks](frontend/media/screenshots/benchmarks.png)
+
+**Run detail** — expandable metrics, config, tool trail, and actions.
+
+![Run detail](frontend/media/screenshots/run-detail.png)
+
+**Improve-loop lineage** — the git-flow branch graph.
+
+![Branch graph](frontend/media/screenshots/branches.png)
+
+**Generated report** — the project write-up rendered in chat.
+
+![Project report](frontend/media/screenshots/report.png)
+
+**Audit trail** — tamper-evident, hash-chained event timeline.
+
+![Audit trail](frontend/media/screenshots/audit.png)
 
 > Screenshots are illustrative (a seeded "Demo" project); the audit view shows
 > real recorded events.
