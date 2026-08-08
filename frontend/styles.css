@@ -846,6 +846,12 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .exp-card-name { font-size: 12.5px; }
 .exp-card-runs { font-size: 11px; margin-left: auto; }
 .exp-card-hyp { font-size: 11.5px; }
+.exp-card-sum { font-size: 11px; color: var(--text-dim); }
+.exp-card-detail { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding-top: 4px;
+  border-top: 1px dashed var(--border); }
+.exp-goal-bar { height: 4px; border-radius: 2px; background: rgba(127,127,127,.2); overflow: hidden; margin: 2px 0; }
+.exp-goal-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .4s ease; }
+.exp-goal-fill.reached { background: var(--ok, #7ee787); }
 .exp-plan summary { cursor: pointer; color: var(--accent); font-size: 11.5px; }
 .exp-plan-body { margin-top: 4px; font-size: 11.5px; white-space: pre-wrap; color: var(--text-dim); }
 .exp-rank { margin-top: 2px; }

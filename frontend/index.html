@@ -139,6 +139,12 @@
           <div class="exp-runs-head">
             <span class="exp-runs-title">Experiments <span id="exp-count" class="muted"></span></span>
             <input id="exp-search" placeholder="filter experiments…" class="exp-search" />
+            <select id="exp-sort" class="exp-search" title="sort experiments">
+              <option value="recent">Recently active</option>
+              <option value="best">Best metric</option>
+              <option value="name">Name</option>
+              <option value="runs">Most runs</option>
+            </select>
             <span class="spacer"></span>
             <button id="exp-new-toggle" class="btn subtle small">+ New experiment</button>
           </div>

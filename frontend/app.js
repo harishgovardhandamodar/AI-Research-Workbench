@@ -3037,6 +3037,8 @@ async function loadExpRankings() {
       state.expRanking[e.id] = r.ranking || null;
     } catch (err) { state.expRanking[e.id] = null; }
   }));
+  // Re-render so card head summaries (best / progress) reflect the ranking.
+  renderExpList();
   renderExpRankings();
 }
 
@@ -3508,12 +3510,13 @@ function renderExpList() {
   if (!el) return;
   const all = state.expList || [];
   const q = (state.expSearch || "").toLowerCase().trim();
-  const exps = q
+  let exps = q
     ? all.filter((e) =>
         (e.name || "").toLowerCase().includes(q) ||
         (e.hypothesis || "").toLowerCase().includes(q) ||
         (e.goal_metric || "").toLowerCase().includes(q))
-    : all;
+    : all.slice();
+  exps = sortedExps(exps);
   if ($("exp-count")) $("exp-count").textContent = q
     ? `${exps.length} / ${all.length}`
     : `(${all.length})`;
@@ -3530,9 +3533,19 @@ function renderExpList() {
     const card = document.createElement("div");
     card.className = "exp-card";
     card.dataset.id = e.id;
-    const goal = e.goal_metric
-      ? `<span class="muted">goal ${esc(e.goal_metric)} ${e.higher_better ? "↑" : "↓"} ${e.goal_target != null ? _fmtNum(e.goal_target) : "—"}</span>`
-      : "";
+    const rank = (state.expRanking && state.expRanking[e.id]) || null;
+    const best = rank && rank.best != null ? rank.best : null;
+    const target = e.goal_target != null ? e.goal_target : null;
+    const higher = e.higher_better !== false;
+    const pct = (best != null && target)
+      ? Math.max(0, Math.min(100, (best / target) * 100)) : 0;
+    const reached = best != null && target != null &&
+      (higher ? best >= target : best <= target);
+    const goalLine = e.goal_metric
+      ? `goal ${esc(e.goal_metric)} ${higher ? "↑" : "↓"}` +
+        (best != null ? ` · best ${_fmtNum(best)}` : "") +
+        (target != null ? ` / ${_fmtNum(target)}` : "")
+      : (best != null ? `best ${_fmtNum(best)}` : "");
     const modelPin = e.model
       ? `<span class="muted exp-model-pin" title="Pinned model for this experiment">◈ ${esc(e.model)}</span>`
       : "";
@@ -3547,6 +3560,7 @@ function renderExpList() {
     card.innerHTML = `<div class="exp-card-head">
         <b class="exp-card-name">${esc(e.name)}</b>
         <span class="exp-badge ${badgeCls}">${esc(status)}</span>
+        ${reached ? `<span class="rank-reached" title="Goal reached">✓</span>` : ""}
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
         <span class="spacer"></span>
         <button class="btn subtle small exp-focus${focused ? " focus-on" : ""}" data-id="${e.id}" title="${focused ? "Unfocus this experiment" : "Focus — steer the agent toward this objective"}">${focused ? "★" : "☆"}</button>
@@ -3557,13 +3571,17 @@ function renderExpList() {
           <option value="cancelled"${status === "cancelled" ? " selected" : ""}>cancelled</option>
         </select>
         <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}"${active ? "" : " disabled title=\"reopen the experiment first\""}>Improve</button>
+        <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
-      ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
-      ${goal}
-      ${modelPin}
-      ${planHtml}
-      ${learningsHtml(e.id)}
-      <div class="exp-rank-host"></div>`;
+      ${goalLine ? `<div class="exp-card-sum muted">${goalLine}</div>` : ""}
+      ${(best != null && target) ? `<div class="exp-goal-bar"><div class="exp-goal-fill ${reached ? "reached" : ""}" style="width:${pct}%"></div></div>` : ""}
+      <div class="exp-card-detail hidden">
+        ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
+        ${modelPin}
+        ${planHtml}
+        ${learningsHtml(e.id)}
+        <div class="exp-rank-host"></div>
+      </div>`;
     el.appendChild(card);
   }
   el.querySelectorAll(".exp-improve").forEach((b) =>
@@ -3597,6 +3615,32 @@ function renderExpList() {
         await loadExperiments();
       } catch (e) { toast("Failed to update experiment: " + e.message); }
     }));
+  el.querySelectorAll(".exp-details").forEach((b) =>
+    b.addEventListener("click", () => {
+      const card = el.querySelector(`.exp-card[data-id="${b.dataset.id}"]`);
+      if (!card) return;
+      const detail = card.querySelector(".exp-card-detail");
+      if (!detail) return;
+      const open = !detail.classList.contains("hidden");
+      detail.classList.toggle("hidden", open);
+      b.textContent = open ? "Details ▸" : "Details ▾";
+    }));
+}
+
+function sortedExps(list) {
+  const s = state.expSort || "recent";
+  const arr = (list || []).slice();
+  if (s === "name") arr.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  else if (s === "runs") arr.sort((a, b) => (b.runs || 0) - (a.runs || 0));
+  else if (s === "best") arr.sort((a, b) => {
+    const ra = state.expRanking && state.expRanking[a.id];
+    const rb = state.expRanking && state.expRanking[b.id];
+    const ba = ra && ra.best != null ? ra.best : -Infinity;
+    const bb = rb && rb.best != null ? rb.best : -Infinity;
+    return bb - ba;
+  });
+  else arr.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  return arr;
 }
 
 async function createExp() {
@@ -4654,6 +4698,7 @@ $("runs-refresh").addEventListener("click", loadExperiments);
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
 $("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; renderExpList(); });
+$("exp-sort").addEventListener("change", (e) => { state.expSort = e.target.value; renderExpList(); });
 $("runs-search").addEventListener("input", (e) => { state.runsSearch = e.target.value; renderRuns(); });
 $("runs-exp-filter").addEventListener("change", (e) => { state.runsExpFilter = e.target.value; renderRuns(); });
 $("exp-chart-toggle").addEventListener("click", () => {
