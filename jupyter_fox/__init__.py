@@ -1,4 +1,4 @@
-"""Fox - Experiment workbench as a Jupyter server extension.
+"""Local - Open - Agentic Experimentation Workbench as a Jupyter server extension.
 
 Loading this extension inside a running `jupyter server` makes the workbench
 available at ``/fox`` — chat + agent, persistent kernel, artifacts, reviewer and

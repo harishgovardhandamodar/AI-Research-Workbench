@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="Fox - Experiment workbench"
+LABEL org.opencontainers.image.title="Local - Open - Agentic Experimentation Workbench"
 LABEL org.opencontainers.image.description="Local experiment workbench (chat + agent + persistent kernels + notebooks)"
 
 ENV PYTHONUNBUFFERED=1 \

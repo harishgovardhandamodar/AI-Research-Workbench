@@ -1,4 +1,4 @@
-"""Fox - Experiment workbench: FastAPI backend.
+"""Local - Open - Agentic Experimentation Workbench: FastAPI backend.
 
 Serves the web UI + WebSocket chat. The REST API lives in backend/routers/; this
 module owns the app assembly (CORS, lifespan, router mounting), the chat
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
         await rt.stop()
 
 
-app = FastAPI(title="Fox - Experiment workbench", lifespan=lifespan)
+app = FastAPI(title="Local - Open - Agentic Experimentation Workbench", lifespan=lifespan)
 if allowed_origins():
     # Cross-origin REST access is opt-in (same-origin needs no CORS headers).
     app.add_middleware(

@@ -1,4 +1,4 @@
-/* Fox - Experiment workbench frontend */
+/* Local - Open - Agentic Experimentation Workbench frontend */
 
 const $ = (id) => document.getElementById(id);
 const FOX_BASE = window.FOX_BASE || "";
@@ -2206,7 +2206,7 @@ try {
 } catch (e) {}
 $("print-btn").addEventListener("click", () => {
   const h = $("print-header");
-  h.innerHTML = `<h1>Fox - Experiment workbench · chat transcript</h1>`
+  h.innerHTML = `<h1>Local - Open - Agentic Experimentation Workbench · chat transcript</h1>`
     + `<div>Project: <strong>${esc(state.project || "—")}</strong> · Model: `
     + `<strong>${esc(state.config?.llm?.model || "—")}</strong> · Exported `
     + new Date().toLocaleString() + "</div>";

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fox - Experiment workbench</title>
+<title>Local - Open - Agentic Experimentation Workbench</title>
 <script>
   // FOX_BASE lets the app run behind a path prefix (e.g. /fox inside a Jupyter
   // server). Detected from the URL path or an explicit ?base= override.
@@ -21,7 +21,7 @@
 
   <!-- Top bar -->
   <header id="topbar">
-    <div class="brand">🦊 <span>Fox</span><span class="brand-sub">Experiment workbench</span></div>
+    <div class="brand">🦊 <span>Local · Open · Agentic</span><span class="brand-sub">Experimentation Workbench</span></div>
     <div class="topbar-center">
       <div class="mainview-tabs">
         <button id="mainview-chat" class="mainview-btn active" data-mainview="chat" title="Chat">💬 Chat</button>
@@ -696,7 +696,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v98";
+  window.FOX_VER = "v99";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

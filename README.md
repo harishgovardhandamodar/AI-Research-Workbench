@@ -1,8 +1,9 @@
-# Fox - Experiment workbench
+# Local - Open - Agentic Experimentation Workbench
 
 A fully local, open-source experiment workbench: the local-models equivalent of
 "Claude Science". It runs entirely on your machine with local LLMs (via Ollama),
 so your data never leaves home unless you explicitly approve a network command.
+The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
