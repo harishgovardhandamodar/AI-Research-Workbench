@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from ..artifacts.store import Artifact
 from ..experiments import (build_graph, compare_campaigns, compare_experiments,
@@ -662,6 +662,41 @@ async def project_campaigns_compare(name: str):
     """Leaderboard of campaigns by the best goal value across their steps."""
     rt = get_runtime(name)
     return compare_campaigns(rt.store, rt.store.list_campaigns())
+
+
+@router.get("/api/projects/{name}/report")
+async def project_report(name: str, summary: bool = True):
+    """Comprehensive markdown research report for the project."""
+    rt = get_runtime(name)
+    from ..report import build_project_report
+    report = await asyncio.to_thread(build_project_report, rt, bool(summary))
+    return {"report": report}
+
+
+@router.post("/api/projects/{name}/report")
+async def project_report_save(name: str, body: dict | None = None):
+    """Generate the report, save it as an artifact and post it to chat."""
+    rt = get_runtime(name)
+    from ..report import build_project_report
+    report = await asyncio.to_thread(build_project_report, rt,
+                                     bool((body or {}).get("summary", True)))
+    mid = rt.store.add_message("assistant", report, {"tags": ["report"]})
+    art = Artifact(kind="text", name=f"{name}-report",
+                   description=f"Comprehensive research report for project {name}",
+                   code="# auto-generated project report", env={},
+                   message_id=str(mid))
+    rt.artifacts.add_artifact(art, data=report.encode(), data_type="text")
+    return {"report": report, "artifact_id": art.id, "message_id": mid}
+
+
+@router.post("/api/projects/{name}/export")
+async def project_export(name: str):
+    """Portable zip bundle of the project's research record."""
+    rt = get_runtime(name)
+    from ..export import export_project
+    path = await asyncio.to_thread(export_project, rt)
+    return FileResponse(path, media_type="application/zip",
+                        filename=f"{name}-export.zip")
 
 
 @router.get("/api/projects/{name}/evals")

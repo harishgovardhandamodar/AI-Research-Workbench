@@ -4575,6 +4575,28 @@ $("campaign-new-create").addEventListener("click", async () => {
   } catch (e) { toast("Failed to start campaign: " + e.message); }
 });
 $("exp-compare-refresh").addEventListener("click", loadCompareExperiments);
+$("exp-report").addEventListener("click", async () => {
+  try {
+    const r = await api(`/api/projects/${state.project}/report`, { method: "POST", body: "{}" });
+    await refreshState();
+    toast(`Project report generated (artifact ${r.artifact_id.slice(0, 8)}).`);
+  } catch (e) { toast("Failed to generate report: " + e.message); }
+});
+$("exp-export").addEventListener("click", async () => {
+  try {
+    const res = await fetch(B(`/api/projects/${state.project}/export`), { method: "POST" });
+    if (!res.ok) { toast("Export failed: HTTP " + res.status); return; }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${state.project}-export.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("Project exported as a zip bundle.");
+  } catch (e) { toast("Export failed: " + e.message); }
+});
 $("eval-new").addEventListener("click", () => $("eval-new-form").classList.toggle("hidden"));
 $("eval-new-create").addEventListener("click", async () => {
   const name = ($("eval-new-name").value || "Eval").trim();
