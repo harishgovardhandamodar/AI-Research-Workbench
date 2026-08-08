@@ -3978,8 +3978,8 @@ function buildTimelineSvg(metric, W, opts) {
 
   let out = `<svg viewBox="0 0 ${W} ${H}">`
     + `<defs><linearGradient id="tlfill" x1="0" y1="0" x2="0" y2="1">`
-    + `<stop offset="0%" stop-color="#a974ff" stop-opacity="0.35"/>`
-    + `<stop offset="100%" stop-color="#a974ff" stop-opacity="0"/></linearGradient></defs>`;
+    + `<stop offset="0%" stop-color="${cssVar("--chart-line", "#a974ff")}" stop-opacity="0.35"/>`
+    + `<stop offset="100%" stop-color="${cssVar("--chart-line", "#a974ff")}" stop-opacity="0"/></linearGradient></defs>`;
 
   for (let k = 0; k <= 4; k++) {
     const v = min + span * k / 4, yy = y(v);
@@ -4001,7 +4001,7 @@ function buildTimelineSvg(metric, W, opts) {
     const lastX = parseFloat(pts[pts.length - 1].split(",")[0]);
     const area = `${firstX},${y(min)} ${linePts} ${lastX},${y(min)}`;
     out += `<polygon points="${area}" fill="url(#tlfill)"></polygon>`;
-    out += `<polyline points="${linePts}" fill="none" stroke="#a974ff" stroke-width="2" filter="drop-shadow(0 0 6px rgba(169,116,255,.5))"></polyline>`;
+    out += `<polyline points="${linePts}" fill="none" stroke="${cssVar("--chart-line", "#a974ff")}" stroke-width="2" filter="drop-shadow(0 0 6px ${cssVar("--chart-line-soft", "rgba(169,116,255,.5)")})"></polyline>`;
   }
 
   nodes.forEach((n, i) => {
@@ -4170,7 +4170,7 @@ function buildGraphSvg(metric, W, opts) {
       const sx = pos[n.index].x + Math.cos(a) * R;
       const sy = pos[n.index].y + Math.sin(a) * R;
       out += `<line x1="${pos[n.index].x}" y1="${pos[n.index].y}" x2="${sx}" y2="${sy}" `
-        + `stroke="#463a66" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></line>`;
+        + `stroke="${cssVar("--chart-spoke", "#463a66")}" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></line>`;
     });
   }
 
@@ -4190,7 +4190,7 @@ function buildGraphSvg(metric, W, opts) {
       + (n.g.experiment_id != null
         ? `<circle r="21" fill="none" stroke="${ec}" stroke-width="2" opacity="0.75"></circle>` : "")
       + (isBest ? `<circle r="25" fill="none" stroke="${cssVar("--chart-title", "#f3f0fa")}" stroke-width="1.4" stroke-dasharray="4 3" opacity="0.85"></circle>` : "")
-      + `<circle r="16" fill="${color}" stroke="#19132b" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
+      + `<circle r="16" fill="${color}" stroke="${cssVar("--chart-node-stroke", "#19132b")}" stroke-width="2.5" filter="drop-shadow(0 0 10px ${color}99)"></circle>`
       + (v != null ? `<text y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#0a0a0d">${_fmtNum(v)}</text>` : "")
       + (isBest ? `<text y="-34" text-anchor="middle" font-size="11">★</text>` : "")
       + (sug ? `<text y="-46" text-anchor="middle" font-size="11">💡</text>` : "")
@@ -4205,7 +4205,7 @@ function buildGraphSvg(metric, W, opts) {
       const sy = pos[i].y + Math.sin(a) * R;
       out += `<g class="exp-subnode" data-id="${esc(n.id)}" transform="translate(${sx},${sy})">`
         + `<title>${esc(`${n.seed}: ${s.kind} — ${s.label}`)}</title>`
-        + `<circle r="6.5" fill="${s.color}" stroke="#19132b" stroke-width="1.2" filter="drop-shadow(0 0 5px ${s.color}aa)"></circle></g>`;
+        + `<circle r="6.5" fill="${s.color}" stroke="${cssVar("--chart-node-stroke", "#19132b")}" stroke-width="1.2" filter="drop-shadow(0 0 5px ${s.color}aa)"></circle></g>`;
       // tiny visible label on the sub-node
       const lx = sx + Math.cos(a) * 14, ly = sy + Math.sin(a) * 14 + 3;
       out += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="8" fill="${s.color}" opacity="0.95" paint-order="stroke" stroke="${cssVar("--chart-halo", "#0a0a0d")}" stroke-width="2">${esc(s.label)}</text>`;
@@ -4233,17 +4233,25 @@ function buildGraphSvg(metric, W, opts) {
 
 function renderExperiments() {
   const runs = state.expRuns || [];
-  const empty = '<div class="empty">No runs yet in this project. Ask Fox to run an analysis or experiment in chat and each turn will appear here.</div>';
+  const empty = '<div class="exp-empty">No runs yet in this project. Ask Fox to run an analysis or experiment in chat and each turn will appear here.</div>';
   const metric = expMetric();
+  // Git-style run-kind filter: only chart runs whose kind matches.
+  const kind = state.expKindFilter || "";
+  let visibleIds = null;
+  if (kind) {
+    visibleIds = new Set((state.expGraph && state.expGraph.nodes || [])
+      .filter((n) => (n.kind || "") === kind).map((n) => n.id));
+  }
+  const opts = visibleIds ? { visibleIds } : undefined;
   const charts = [
     ["expmain-timeline", "timeline", 1240, 330],
     ["expmain-graph", "graph", 1240, 580],
   ];
-  for (const [id, kind, w, h] of charts) {
+  for (const [id, kind_, w, h] of charts) {
     const el = $(id);
     if (!el) continue;
     el.innerHTML = runs.length
-      ? (kind === "timeline" ? buildTimelineSvg(metric, w) : buildGraphSvg(metric, w))
+      ? (kind_ === "timeline" ? buildTimelineSvg(metric, w, opts) : buildGraphSvg(metric, w, opts))
       : empty;
     graphViewRestore(el.querySelector("svg"), id, w, h);
     attachGraphControls(el, id, () => el.querySelector("svg"), w, h);
@@ -4788,6 +4796,11 @@ function setExpMetric(v) {
 }
 if ($("exp-metric")) $("exp-metric").addEventListener("change", (e) => setExpMetric(e.target.value));
 $("exp-metric-main").addEventListener("change", (e) => setExpMetric(e.target.value));
+$("exp-branches").addEventListener("click", toggleBranches);
+$("exp-kind-filter").addEventListener("change", (e) => {
+  state.expKindFilter = e.target.value;
+  renderExperiments();
+});
 
 function bindExpView(scope) {
   const root = scope === "main" ? "#exp-panel" : "#side-panel";

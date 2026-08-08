@@ -70,8 +70,19 @@
         <div class="exp-views">
           <button class="expview-btn active" data-expview="timeline">Timeline</button>
           <button class="expview-btn" data-expview="graph">Graph</button>
+          <button id="exp-branches" class="btn subtle small" title="Git-flow branch history (overlay)">Branches</button>
         </div>
         <select id="exp-metric-main" title="Metric"></select>
+        <select id="exp-kind-filter" class="exp-search" title="filter chart by run kind">
+          <option value="">all kinds</option>
+          <option value="agent_run">agent</option>
+          <option value="sweep">sweep</option>
+          <option value="campaign">campaign</option>
+          <option value="notebook">notebook</option>
+          <option value="eval">eval</option>
+          <option value="restore">restore</option>
+          <option value="autoresearch">autoresearch</option>
+        </select>
         <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
         <span class="spacer"></span>
         <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
