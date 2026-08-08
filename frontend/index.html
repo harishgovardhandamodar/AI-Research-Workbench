@@ -109,6 +109,28 @@
         <div id="exp-list"></div>
       </div>
 
+      <div class="exp-list campaigns-list">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Campaigns <span class="muted">(background)</span></span>
+          <span class="spacer"></span>
+          <button id="campaign-new" class="btn subtle small" title="Plan and run a multi-step research campaign">🧭 New campaign</button>
+        </div>
+        <div id="campaign-new-form" class="exp-new-form hidden">
+          <div class="exp-new-row">
+            <input id="campaign-new-name" placeholder="campaign name" />
+          </div>
+          <div class="exp-new-row">
+            <input id="campaign-new-question" placeholder="research question" />
+            <input id="campaign-new-metric" placeholder="goal metric (e.g. accuracy)" />
+          </div>
+          <div class="exp-new-row">
+            <span class="spacer"></span>
+            <button id="campaign-new-create" class="btn subtle small">Start</button>
+          </div>
+        </div>
+        <div id="campaign-list"></div>
+      </div>
+
       <div class="exp-runs">
         <div class="exp-runs-head">
           <span class="exp-runs-title">Recent runs</span>

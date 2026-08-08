@@ -248,6 +248,11 @@ async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
                 message=f"Best {goal or 'metric'}: {best_val:.4g}" if best_val is not None else "done")
         prev_best_run_id = best_id
 
+        # Persist the durable resume point (survives restart for background runs).
+        if workflow is not None:
+            workflow.set_invoke(kind="campaign", campaign_id=campaign_id,
+                                step=idx + 1)
+
         # Reviewer pass per step (goal-grounded suggestions; round-2/3 machinery).
         try:
             if getattr(rt, "reviewer_enabled", True) and best_id is not None:

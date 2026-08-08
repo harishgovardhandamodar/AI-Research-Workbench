@@ -52,9 +52,134 @@ class ProjectRuntime:
         self.audit_store, self.audit_emitter = make_audit(self.dir)
         self.audit_scanner = ProjectDeviationScanner(self.audit_store)
         self.audit_emitter.start()
+        # Round-6: fan-out for background tasks (campaigns) — any connected
+        # chat window that subscribes receives live events even when the task
+        # that started the work has disconnected.
+        self._event_subs: list = []
+        # Background-campaign control.
+        self.campaign_stop = False
+        self._campaign_task: "asyncio.Task | None" = None
         # Forward kernel lifecycle/execution events into the audit trail.
         try:
             self.kernels.python.subscribe(self._on_kernel_event)
+        except Exception:  # noqa: BLE001
+            pass
+        # Round-6: campaigns left running by a previous process are resumable.
+        self.recover_campaigns()
+
+    # ---------------------------------------------------- event bus (round 6)
+    def subscribe_events(self, fn) -> None:
+        if fn not in self._event_subs:
+            self._event_subs.append(fn)
+
+    def unsubscribe_events(self, fn) -> None:
+        if fn in self._event_subs:
+            self._event_subs.remove(fn)
+
+    async def broadcast(self, event: str, payload: dict) -> None:
+        for fn in list(self._event_subs):
+            try:
+                await fn(event, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ------------------------------------------------- background campaigns --
+    def campaign_running(self) -> bool:
+        return (self._campaign_task is not None
+                and not self._campaign_task.done())
+
+    def stop_campaign(self) -> bool:
+        """Request a graceful stop of the running background campaign (checked
+        between steps). Returns False when no campaign is running."""
+        if not self.campaign_running():
+            return False
+        self.campaign_stop = True
+        return True
+
+    def start_campaign(self, cid: int,
+                       plan_steps: list[dict] | None = None) -> tuple[bool, str]:
+        """Launch a background campaign for this project (one at a time). The
+        task broadcasts live progress to every subscribed chat window and
+        survives the launching connection closing. Returns (ok, message)."""
+        if self.campaign_running():
+            return False, "a campaign is already running for this project"
+        if self.store.get_campaign(cid) is None:
+            return False, f"campaign #{cid} not found"
+        self.campaign_stop = False
+        self._campaign_task = asyncio.create_task(
+            self._run_campaign_task(cid, plan_steps))
+        return True, "started"
+
+    async def _run_campaign_task(self, cid: int, plan_steps):
+        from .agents.approval import ApprovalBroker
+        from .agents.coordinator import Coordinator
+        from .campaign import run_campaign
+        from .experiment_repo import maybe_autocommit
+
+        async def bus_emit(event: str, payload: dict):
+            await self.broadcast(event, payload)
+
+        broker = ApprovalBroker(bus_emit, store=self.store, audit=self.audit_emitter,
+                                session_id=self.name, agent_id="Fox")
+
+        def _record_run(r: dict) -> int:
+            rid = self.store.add_run(
+                prompt=r.get("prompt", ""), reply=r.get("reply", ""),
+                status=r.get("status", "done"),
+                started_at=r.get("started_at", 0.0),
+                finished_at=r.get("finished_at", time.time()),
+                tool_sequence=r.get("tool_sequence"),
+                artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
+                review=r.get("review"),
+                experiment_id=r.get("experiment_id") or None,
+                config=r.get("config"), label=r.get("label"),
+                parent_run_id=r.get("parent_run_id") or None,
+                model=r.get("model") or None, code=r.get("code"), env=r.get("env"))
+            try:
+                r["id"] = rid
+                if r.get("experiment_id"):
+                    asyncio.get_running_loop().create_task(
+                        maybe_autocommit(self, r))
+            except Exception:  # noqa: BLE001
+                pass
+            return rid
+
+        coord = Coordinator(
+            self.llm, self.ctx(bus_emit, broker), emit=bus_emit,
+            persist=lambda role, content, meta=None: self.store.add_message(
+                role, content, meta),
+            record=_record_run, max_iters=self.max_iters, mcp=None,
+            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop)
+        try:
+            async with self.lock:
+                await run_campaign(self, coord, self.build_llm_messages, cid,
+                                   emit=bus_emit, workflow=self.workflow,
+                                   plan_steps=plan_steps)
+        except Exception as e:  # noqa: BLE001
+            try:
+                self.store.update_campaign(
+                    cid, status="failed",
+                    report=f"Campaign failed: {type(e).__name__}: {e}")
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self.broadcast("error", {"message": f"Campaign failed: {e}"})
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            self.campaign_stop = False
+
+    def recover_campaigns(self) -> None:
+        """Mark any campaign left 'running' by a previous process as interrupted
+        so the UI offers Resume (the resume point is stored in the workflow
+        snapshot's invoke metadata)."""
+        try:
+            for c in self.store.list_campaigns():
+                if c["status"] == "running":
+                    self.store.update_campaign(
+                        c["id"], status="failed",
+                        report=(c.get("report") or "") + "\n\n> Interrupted by "
+                                "a server restart — use Resume to continue.")
         except Exception:  # noqa: BLE001
             pass
 

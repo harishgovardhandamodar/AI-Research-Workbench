@@ -547,7 +547,42 @@ async def project_suggestions(name: str, experiment_id: str = "",
 async def project_campaigns(name: str):
     """Research campaigns for the project (id/name/question/status/steps)."""
     rt = get_runtime(name)
-    return {"campaigns": rt.store.list_campaigns()}
+    return {"campaigns": rt.store.list_campaigns(),
+            "running": rt.campaign_running()}
+
+
+@router.post("/api/projects/{name}/campaigns")
+async def project_campaigns_create(name: str, body: dict):
+    """Create a campaign (does not start it)."""
+    rt = get_runtime(name)
+    name_str = str(body.get("name") or "Campaign").strip() or "Campaign"
+    cid = rt.store.create_campaign(
+        name_str, str(body.get("research_question") or ""),
+        str(body.get("goal_metric") or ""),
+        bool(body.get("higher_better", True)))
+    return {"campaign": rt.store.get_campaign(cid)}
+
+
+@router.post("/api/projects/{name}/campaigns/{cid}/run")
+async def project_campaign_run(name: str, cid: int, body: dict):
+    """Start (or resume) a campaign in the background."""
+    rt = get_runtime(name)
+    if rt.store.get_campaign(cid) is None:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    ok, msg = rt.start_campaign(cid, plan_steps=body.get("plan_steps") if body else None)
+    if not ok:
+        raise HTTPException(status_code=409, detail=msg)
+    return {"campaign": rt.store.get_campaign(cid), "running": True}
+
+
+@router.post("/api/projects/{name}/campaigns/{cid}/stop")
+async def project_campaign_stop(name: str, cid: int):
+    """Request a graceful stop of the running background campaign."""
+    rt = get_runtime(name)
+    if rt.store.get_campaign(cid) is None:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    stopped = rt.stop_campaign()
+    return {"stopped": stopped, "running": rt.campaign_running()}
 
 
 @router.get("/api/projects/{name}/campaigns/{cid}")

@@ -275,8 +275,8 @@ function handleEvent(type, p) {
       break;
     case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p); break;
-    case "workflow": renderWorkflow(p); break;
-    case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); break;
+    case "workflow": renderWorkflow(p); loadCampaigns(); break;
+    case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); loadCampaigns(); break;
     case "error": onError(p.message); break;
   }
 }
@@ -2774,6 +2774,88 @@ async function loadSuggestions() {
   } catch (e) { /* silent */ }
 }
 
+/* ============================ campaigns (round 6) ========================= */
+
+let campaignPollTimer = null;
+
+function startCampaignPoll() {
+  if (campaignPollTimer) return;
+  campaignPollTimer = setInterval(async () => {
+    await loadCampaigns();
+    if (!state.campaignRunning) {
+      clearInterval(campaignPollTimer);
+      campaignPollTimer = null;
+    }
+  }, 3000);
+}
+
+function campaignStatusBadge(s) {
+  const map = { planned: "det", running: "warn", done: "ok", failed: "warn" };
+  return `<span class="exp-badge ${map[s] || "det"}">${esc(s)}</span>`;
+}
+
+async function loadCampaigns() {
+  try {
+    const r = await api(`/api/projects/${state.project}/campaigns`);
+    state.campaigns = r.campaigns || [];
+    state.campaignRunning = !!r.running;
+    renderCampaigns();
+  } catch (e) { /* silent */ }
+}
+
+function renderCampaigns() {
+  const el = $("campaign-list");
+  if (!el) return;
+  const cs = state.campaigns || [];
+  if (!cs.length) {
+    el.innerHTML = '<div class="empty">No campaigns yet — start one to run a multi-step investigation in the background.</div>';
+    return;
+  }
+  el.innerHTML = "";
+  for (const c of cs) {
+    const running = c.status === "running";
+    const done = c.status === "done";
+    const resumable = c.steps > 0 && !done;
+    const report = (c.report || "").replace(/\s+/g, " ").slice(0, 600);
+    const card = document.createElement("div");
+    card.className = "exp-card";
+    card.innerHTML = `<div class="exp-card-head">
+        <b class="exp-card-name">${esc(c.name)}</b>
+        ${campaignStatusBadge(c.status)}
+        <span class="muted exp-card-runs">${c.steps} step(s)</span>
+        <span class="spacer"></span>
+        ${running
+          ? `<button class="btn subtle small camp-stop" data-id="${c.id}">⏹ Stop</button>`
+          : (!done
+              ? `<button class="btn subtle small camp-run" data-id="${c.id}">▶ ${resumable ? "Resume" : "Run"}</button>`
+              : "")}
+      </div>
+      ${c.research_question ? `<div class="exp-card-hyp muted">${esc(c.research_question)}</div>` : ""}
+      ${c.report ? `<details class="exp-plan"><summary>Report</summary><div class="exp-plan-body">${esc(report)}</div></details>` : ""}`;
+    el.appendChild(card);
+  }
+  el.querySelectorAll(".camp-run").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        await api(`/api/projects/${state.project}/campaigns/${b.dataset.id}/run`, {
+          method: "POST", body: "{}",
+        });
+        toast("Campaign started in the background.");
+        await loadCampaigns();
+        startCampaignPoll();
+      } catch (e) { toast("Failed to start campaign: " + e.message); }
+    }));
+  el.querySelectorAll(".camp-stop").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        await api(`/api/projects/${state.project}/campaigns/${b.dataset.id}/stop`, {
+          method: "POST",
+        });
+        toast("Stop requested — it will halt at the next step boundary.");
+      } catch (e) { toast("Failed to stop campaign: " + e.message); }
+    }));
+}
+
 async function loadExpRankings() {
   const exps = state.expList || [];
   state.expRanking = state.expRanking || {};
@@ -4361,6 +4443,25 @@ $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") add
 $("runs-refresh").addEventListener("click", loadExperiments);
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
+$("campaign-new").addEventListener("click", () => $("campaign-new-form").classList.toggle("hidden"));
+$("campaign-new-create").addEventListener("click", async () => {
+  const name = ($("campaign-new-name").value || "Campaign").trim();
+  const question = $("campaign-new-question").value.trim();
+  const metric = $("campaign-new-metric").value.trim();
+  try {
+    const r = await api(`/api/projects/${state.project}/campaigns`, {
+      method: "POST",
+      body: JSON.stringify({ name, research_question: question, goal_metric: metric, higher_better: true }),
+    });
+    const cid = r.campaign.id;
+    await api(`/api/projects/${state.project}/campaigns/${cid}/run`, { method: "POST", body: "{}" });
+    $("campaign-new-form").classList.add("hidden");
+    $("campaign-new-name").value = $("campaign-new-question").value = $("campaign-new-metric").value = "";
+    await loadCampaigns();
+    startCampaignPoll();
+    toast("Campaign started in the background.");
+  } catch (e) { toast("Failed to start campaign: " + e.message); }
+});
 $("exp-edit-close").addEventListener("click", () => $("exp-edit-modal").classList.add("hidden"));
 $("exp-edit-save").addEventListener("click", saveExpEdit);
 
@@ -6127,5 +6228,6 @@ $("notebook-modal").addEventListener("click", (e) => {
   await refreshModels();
   await refreshState();
   loadExperiments();
+  loadCampaigns();
   connect();
 })();

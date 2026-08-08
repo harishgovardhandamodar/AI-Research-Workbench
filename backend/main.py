@@ -979,6 +979,8 @@ async def ws_chat(ws: WebSocket, name: str):
     # Live workflow-progress events are pushed to this chat window; the tracker
     # keeps the latest snapshot so page/section loads can fetch it via REST.
     rt.workflow.subscribe(emit)
+    # Round-6: background tasks (campaigns) broadcast to every open window.
+    rt.subscribe_events(emit)
 
     broker = ApprovalBroker(emit, store=rt.store, audit=rt.audit_emitter,
                             session_id=rt.name, agent_id="Fox")
@@ -1123,8 +1125,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("done", {})
                     return
                 if intent == "campaign":
-                    await emit("status", {"message": "Planning a research campaign…"})
-                    from .campaign import run_campaign
+                    # Round-6: launch the campaign in the background — it streams
+                    # live progress to every open window and survives disconnect.
                     cfg = dict(msg_extra.get("campaign") or {})
                     name = (cfg.get("name") or "campaign").strip() or "Campaign"
                     question = text or cfg.get("question") or ""
@@ -1132,10 +1134,14 @@ async def ws_chat(ws: WebSocket, name: str):
                     higher = bool(cfg.get("higher_better", True))
                     cid = rt.store.create_campaign(name, question, goal_metric, higher)
                     plan_steps = cfg.get("plan_steps")
-                    result = await run_campaign(
-                        rt, coordinator, rt.build_llm_messages, cid,
-                        emit=emit, workflow=rt.workflow, plan_steps=plan_steps)
-                    await emit("status", {"message": ""})
+                    ok, msg = rt.start_campaign(cid, plan_steps=plan_steps)
+                    if ok:
+                        await emit("status", {"message": "Campaign started — running in the background…"})
+                        await emit("notice", {"message":
+                            f"Campaign '{name}' started in the background. "
+                            "You can keep using the workbench; progress streams live."})
+                    else:
+                        await emit("error", {"message": msg})
                     await emit("done", {})
                     return
                 if intent == "retry_stage":
@@ -1408,6 +1414,7 @@ async def ws_chat(ws: WebSocket, name: str):
         recv_task.cancel()
         broker.reject_all()  # don't let the agent hang on a vanished client
         rt.workflow.unsubscribe(emit)
+        rt.unsubscribe_events(emit)
 # ------------------------------------------------------------ static files ---
 
 class NoCacheStaticFiles(StaticFiles):
