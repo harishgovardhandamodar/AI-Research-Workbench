@@ -44,8 +44,8 @@ class ReportTests(unittest.TestCase):
                                          experiment_id=self.eid, message_id=7)
 
     def test_report_contains_sections(self):
-        from backend.report import build_project_report
-        report = build_project_report(self.rt, include_summary=False)
+        from backend.report import build_report_body
+        report = build_report_body(self.rt)
         for section in ("# Research report", "## Experiments", "## Learnings",
                         "## Campaigns", "## Model benchmarks", "## Recent runs",
                         "## Audit"):
@@ -54,8 +54,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("0.8", report)
 
     def test_report_integrity_flag(self):
-        from backend.report import build_project_report
-        report = build_project_report(self.rt, include_summary=False)
+        from backend.report import build_report_body
+        report = build_report_body(self.rt)
         self.assertIn("✓", report)  # the run's integrity chip
 
 

@@ -669,7 +669,7 @@ async def project_report(name: str, summary: bool = True):
     """Comprehensive markdown research report for the project."""
     rt = get_runtime(name)
     from ..report import build_project_report
-    report = await asyncio.to_thread(build_project_report, rt, bool(summary))
+    report = await build_project_report(rt, bool(summary))
     return {"report": report}
 
 
@@ -678,8 +678,7 @@ async def project_report_save(name: str, body: dict | None = None):
     """Generate the report, save it as an artifact and post it to chat."""
     rt = get_runtime(name)
     from ..report import build_project_report
-    report = await asyncio.to_thread(build_project_report, rt,
-                                     bool((body or {}).get("summary", True)))
+    report = await build_project_report(rt, bool((body or {}).get("summary", True)))
     mid = rt.store.add_message("assistant", report, {"tags": ["report"]})
     art = Artifact(kind="text", name=f"{name}-report",
                    description=f"Comprehensive research report for project {name}",
@@ -694,7 +693,7 @@ async def project_export(name: str):
     """Portable zip bundle of the project's research record."""
     rt = get_runtime(name)
     from ..export import export_project
-    path = await asyncio.to_thread(export_project, rt)
+    path = export_project(rt)
     return FileResponse(path, media_type="application/zip",
                         filename=f"{name}-export.zip")
 

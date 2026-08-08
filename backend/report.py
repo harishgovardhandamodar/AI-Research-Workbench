@@ -8,6 +8,7 @@ Optionally prepends an LLM executive summary (best-effort).
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from .experiment_loop import best_metric
@@ -23,8 +24,9 @@ def _fmt_ts(ts) -> str:
         return str(ts)
 
 
-def build_project_report(rt, include_summary: bool = True) -> str:
-    """Deterministic markdown write-up of the whole project."""
+def build_report_body(rt) -> str:
+    """Deterministic markdown write-up of the whole project (no LLM summary).
+    Runs on the event loop (the store connection is thread-bound)."""
     store = rt.store
     exps = store.list_experiments()
     campaigns = store.list_campaigns()
@@ -53,23 +55,15 @@ def build_project_report(rt, include_summary: bool = True) -> str:
         pass
 
     lines = [f"# Research report — {rt.name}", "",
-             f"*Generated {_fmt_ts(__import__('time').time())} UTC*", "",
+             f"*Generated {_fmt_ts(time.time())} UTC*", "",
              f"- **Experiments**: {len(exps)} · **Runs**: {store.count_runs()} · "
              f"**Campaigns**: {len(campaigns)} · **Benchmarks**: {len(evals)} · "
              f"**Artifacts**: {artifact_count} · **Learnings**: {len(learnings)}",
              ""]
 
     # ---- executive summary --------------------------------------------------
-    if include_summary:
-        try:
-            summary = _exec_summary(rt, "\n".join(lines))
-            if summary:
-                lines = ["# Research report — " + rt.name, "",
-                         "## Executive summary", "",
-                         summary, "", "---", ""] + lines[2:]
-        except Exception:  # noqa: BLE001
-            pass
-
+    # (Handled by the async wrapper build_project_report — LLM calls can't run
+    # inside this synchronous body.)
     # ---- experiments --------------------------------------------------------
     lines += ["## Experiments", ""]
     if exps:
@@ -161,6 +155,23 @@ def build_project_report(rt, include_summary: bool = True) -> str:
               f"- Hash-chain verified: {'yes ✓' if chain_ok else 'no'}",
               f"- Suggestions tracked: {len(suggestions)}", ""]
     return "\n".join(lines)
+
+
+async def build_project_report(rt, include_summary: bool = True) -> str:
+    """The project report, optionally with an LLM executive summary prepended."""
+    body = build_report_body(rt)
+    if not include_summary or getattr(rt, "llm", None) is None:
+        return body
+    try:
+        summary = await _exec_summary(rt, body)
+    except Exception:  # noqa: BLE001
+        return body
+    if not summary:
+        return body
+    return "\n".join([
+        f"# Research report — {rt.name}", "",
+        "## Executive summary", "",
+        summary, "", "---", "", body])
 
 
 async def _exec_summary(rt, base: str) -> str:

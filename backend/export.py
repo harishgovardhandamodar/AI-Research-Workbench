@@ -19,9 +19,9 @@ def export_project(rt, include_code: bool = False) -> Path:
     """Build a zip bundle of the project's research record. Returns the zip path
     (in a temp dir); the caller streams it as a download."""
     store = rt.store
-    from .report import build_project_report
+    from .report import build_report_body
 
-    report = build_project_report(rt, include_summary=False)
+    report = build_report_body(rt)
     fd, tmp = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
     Path(tmp).unlink(missing_ok=True)
