@@ -529,6 +529,32 @@
   </div>
 </div>
 
+<!-- Experiment objective editor modal -->
+<div id="exp-edit-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Edit experiment objective</h3><button class="btn subtle" id="exp-edit-close">✕</button></div>
+    <div class="modal-body form">
+      <input id="exp-edit-id" type="hidden">
+      <label>Name</label>
+      <input id="exp-edit-name">
+      <label>Hypothesis (one sentence)</label>
+      <input id="exp-edit-hypothesis">
+      <label>Goal metric</label>
+      <input id="exp-edit-goal-metric" placeholder="e.g. accuracy">
+      <label>Goal target</label>
+      <input id="exp-edit-goal-target" type="number" step="any">
+      <label class="check"><input id="exp-edit-hb" type="checkbox" checked> higher is better</label>
+      <label>Plan (configs/variables to try, stopping criteria)</label>
+      <textarea id="exp-edit-plan" rows="3"></textarea>
+      <div class="modal-actions">
+        <span class="muted">Refine the objective without recreating the experiment — runs stay attached.</span>
+        <span class="spacer"></span>
+        <button id="exp-edit-save" class="btn primary">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Settings modal -->
 <div id="settings-modal" class="modal hidden">
   <div class="modal-box">

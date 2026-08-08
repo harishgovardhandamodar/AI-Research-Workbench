@@ -72,6 +72,19 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     goal_metric = exp.get("goal_metric") or ""
     goal_target = exp.get("goal_target")
     higher = bool(exp.get("higher_better", True))
+    # Combined goal checks: the experiment's own goal plus any Goals-panel goals
+    # (scoped or project-wide) that apply to this experiment — so the objective
+    # UI and the improve loop agree on when a target is reached.
+    goal_checks = []
+    if goal_metric and goal_target is not None:
+        goal_checks.append((goal_metric, float(goal_target), higher))
+    try:
+        for g in store.goals_for_experiment(experiment_id):
+            m, t = g.get("metric"), g.get("target")
+            if m and t is not None and m != goal_metric:
+                goal_checks.append((m, float(t), bool(g.get("higher_better", True))))
+    except Exception:  # noqa: BLE001
+        pass
 
     if workflow is not None:
         from .workflows import improve_stages
@@ -161,7 +174,12 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
             coordinator.ctx.parent_run_id = parent_run_id
         review = {"findings": [], "suggestions": []}
         try:
-            review = await reviewer() if reviewer else review
+            from .agents.reviewer import build_review_context
+            if reviewer:
+                try:
+                    review = await reviewer(build_review_context(store, run))
+                except TypeError:
+                    review = await reviewer()
         except Exception:  # noqa: BLE001
             review = {"findings": [], "suggestions": []}
         if run is not None:
@@ -189,15 +207,27 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                 best_val = mval
                 best_id = run["id"] if run else None
 
-        if mval is not None and goal_target is not None:
-            reached = mval >= goal_target if higher else mval <= goal_target
-            if reached:
-                goal_reached = True
-                stopped_reason = "goal reached"
-                await emit("notice", {"message": (
-                    f"Goal {goal_metric} reached: {mval:.4g} vs target {goal_target:.4g} "
-                    f"in run #{run['id']}")})
+        # Stop when any applicable target (experiment or Goals-panel) is reached.
+        reached_any = None
+        for cmetric, ctarget, chigher in goal_checks:
+            cm = iter_metrics.get(cmetric)
+            if cm is None:
+                continue
+            try:
+                cm = float(cm)
+            except (TypeError, ValueError):
+                continue
+            if cm >= ctarget if chigher else cm <= ctarget:
+                reached_any = (cmetric, cm, ctarget)
                 break
+        if reached_any is not None:
+            goal_reached = True
+            stopped_reason = "goal reached"
+            cmetric, cm, ctarget = reached_any
+            await emit("notice", {"message": (
+                f"Goal {cmetric} reached: {cm:.4g} vs target {ctarget:.4g} "
+                f"in run #{run['id']}")})
+            break
 
         suggestion = (review.get("suggestions") or [None])[0]
         if not suggestion or not (suggestion.get("prompt") or suggestion.get("action")):
@@ -213,6 +243,15 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
 
     summary = _loop_summary(exp, history, best_val, best_id, goal_reached,
                             goal_metric, goal_target, higher, stopped_reason)
+    if goal_reached:
+        try:
+            if store.get_experiment(experiment_id).get("status") == "active":
+                store.update_experiment_status(experiment_id, "completed")
+                summary += "\n\nExperiment marked **completed** — the target was reached."
+                await emit("notice", {"message":
+                                      "Goal reached — experiment marked completed."})
+        except Exception:  # noqa: BLE001
+            pass
     store.add_message("assistant", summary,
                       {"tags": ["improve loop", "summary"],
                        "experiment_id": experiment_id})

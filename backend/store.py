@@ -10,6 +10,10 @@ from pathlib import Path
 
 ROLES = {"user", "assistant", "tool", "system"}
 
+# Sentinel so callers can explicitly clear an optional field (e.g. goal_target,
+# plan) — None means "leave unchanged", _UNSET clears the column.
+_UNSET = object()
+
 # A single connection per project database, shared by ProjectStore and
 # ArtifactStore. SQLite is opened in WAL mode so reads don't block the writer
 # and the connection survives both store instances for the process lifetime.
@@ -289,6 +293,12 @@ class ProjectStore:
              json.dumps(metrics or {}), json.dumps(review or {}),
              experiment_id, json.dumps(config or {}), label or None,
              kind or "agent_run", parent_run_id, model or None))
+        if experiment_id is not None:
+            # A fresh run means the experiment is active now: bump updated_at so
+            # "most recently active" experiment selection reflects real activity.
+            self._conn.execute(
+                "UPDATE experiments SET updated_at=? WHERE id=?",
+                (time.time(), experiment_id))
         self._conn.commit()
         return cur.lastrowid
 
@@ -376,6 +386,40 @@ class ProjectStore:
         self._conn.execute(
             "UPDATE experiments SET status=?, updated_at=? WHERE id=?",
             (status, time.time(), eid))
+        self._conn.commit()
+
+    def update_experiment(self, eid: int, *, name: str | None = None,
+                          hypothesis: str | None = None,
+                          goal_metric: str | None = None,
+                          goal_target: float | str | None = None,
+                          higher_better: bool | None = None,
+                          plan: str | None = None) -> None:
+        """Edit an experiment's objective fields in place (co-design: the user can
+        refine a hypothesis/goal without recreating the experiment and orphaning
+        its runs). Bumps updated_at. Pass _UNSET to clear an optional field."""
+        exp = self.get_experiment(eid)
+        if exp is None:
+            return
+        sets, vals = [], []
+        if name is not None:
+            sets.append("name=?"); vals.append(name.strip() or exp["name"])
+        if hypothesis is not None:
+            sets.append("hypothesis=?"); vals.append(hypothesis)
+        if goal_metric is not None:
+            sets.append("goal_metric=?"); vals.append(goal_metric)
+        if goal_target is not None:
+            sets.append("goal_target=?")
+            vals.append(None if goal_target is _UNSET else goal_target)
+        if higher_better is not None:
+            sets.append("higher_better=?"); vals.append(1 if higher_better else 0)
+        if plan is not None:
+            sets.append("plan=?"); vals.append(None if plan is _UNSET else plan)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        self._conn.execute(
+            f"UPDATE experiments SET {', '.join(sets)} WHERE id=?", (*vals, eid))
         self._conn.commit()
 
     def _row_experiment(self, r) -> dict:

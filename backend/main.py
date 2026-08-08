@@ -704,6 +704,7 @@ HELP_TEXT = """\
 | Command | What it does |
 |---|---|
 | `/help` | Show this command list |
+| `/focus <name|id>` | Steer the agent toward one experiment's objective (or `/focus off`) |
 | `/godmode <request>` | Full access in a quarantined sandbox — run the experiment freely |
 | `/improve [name]` | Run the improve loop for the latest (or named) experiment |
 | `/experiments` | List experiments with status, goal and best metric |
@@ -779,6 +780,34 @@ async def _run_slash_command(rt: ProjectRuntime, emit, coordinator,
             lines.append(f"- **{e['name']}** (#{e['id']}, {e.get('status')}) — "
                          f"{goal} · best {best_txt}")
         await reply("\n".join(lines), ["experiments"])
+        return True
+
+    if cmd == "/focus":
+        focus = rt.store.get_setting("focus_experiment_id", "")
+        if not arg:
+            if str(focus).isdigit() and rt.store.get_experiment(int(focus)) is not None:
+                e = rt.store.get_experiment(int(focus))
+                await reply(f"Focused experiment: **{e['name']}** (#{e['id']}). "
+                            "Use `/focus <name|id>` or `/focus off` to change it.",
+                            ["experiments", "focus"])
+            else:
+                await reply("No experiment focused. Use `/focus <name|id>` to steer the "
+                            "agent toward one objective, or `/focus off` to clear.",
+                            ["experiments", "focus"])
+            return True
+        if arg.lower() in ("off", "none", "clear"):
+            rt.store.set_setting("focus_experiment_id", "")
+            await reply("Focus cleared — the agent will follow the most recently "
+                        "active experiment.", ["experiments", "focus"])
+            return True
+        eid = _resolve_experiment_id(rt, arg, "")
+        if eid is None:
+            await reply(f"No experiment matches {arg!r}.", ["experiments", "focus"])
+            return True
+        rt.store.set_setting("focus_experiment_id", str(eid))
+        e = rt.store.get_experiment(eid)
+        await reply(f"Now focusing on: **{e['name']}** (#{eid}). All future runs "
+                    "will be associated with this experiment.", ["experiments", "focus"])
         return True
 
     if cmd == "/compare":
@@ -891,7 +920,8 @@ def _resolve_experiment_id(rt: ProjectRuntime, text: str, experiment_id: str = "
     """Resolve an experiment id for the improve loop.
 
     Uses the explicit id when given, otherwise matches the experiment name in the
-    prompt, otherwise falls back to the most recently created experiment.
+    prompt, otherwise the project's focused experiment, otherwise falls back to
+    the most recently created experiment.
     """
     if str(experiment_id).isdigit():
         eid = int(experiment_id)
@@ -903,6 +933,11 @@ def _resolve_experiment_id(rt: ProjectRuntime, text: str, experiment_id: str = "
         for e in exps:
             if e["name"] and e["name"].lower() in low:
                 return e["id"]
+        focus = rt.store.get_setting("focus_experiment_id", "")
+        if str(focus).isdigit():
+            for e in exps:
+                if e["id"] == int(focus):
+                    return e["id"]
         return exps[-1]["id"]
     return None
 
@@ -1041,12 +1076,22 @@ async def ws_chat(ws: WebSocket, name: str):
                         return
                     result = await run_improve_loop(
                         rt.store, coordinator, rt.build_llm_messages,
-                        lambda: Reviewer(rt.llm, rt.store).review(),
+                        lambda extra="": Reviewer(rt.llm, rt.store).review(extra),
                         eid, text, emit=emit, workflow=rt.workflow)
                     await emit("status", {"message": ""})
                     await emit("done", {})
                     return
-                mid = rt.store.add_message("user", text, {"tags": user_tags})
+                # A free-form turn with no experiment context inherits the
+                # focused experiment, so runs/timelines attach automatically
+                # instead of drifting to a stale experiment id.
+                exp_meta = {}
+                if not str(coordinator.ctx.experiment_id).isdigit():
+                    fid = rt.store.get_setting("focus_experiment_id", "")
+                    if str(fid).isdigit() and rt.store.get_experiment(int(fid)) is not None:
+                        coordinator.ctx.experiment_id = fid
+                        exp_meta["experiment_id"] = int(fid)
+                mid = rt.store.add_message("user", text,
+                                           {"tags": user_tags, **exp_meta})
                 coordinator.ctx.message_id = str(mid)
                 broker.trace_id = str(mid)
                 await emit("user_message", {"id": mid, "content": text,
@@ -1174,7 +1219,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("status", {"message": "Reviewing the turn…"})
                     await emit("review_start", {})
                     try:
-                        review = await Reviewer(rt.llm, rt.store).review()
+                        from .agents.reviewer import build_review_context
+                        review = await Reviewer(rt.llm, rt.store).review(
+                            build_review_context(rt.store, runs_now[-1]))
                         if runs_now:
                             rt.store.update_run_review(runs_now[-1]["id"], review)
                         await emit("review", review)

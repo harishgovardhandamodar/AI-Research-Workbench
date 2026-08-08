@@ -1221,7 +1221,11 @@ function openSettings() {
   $("cfg-mgmt-autocommit").checked = mgmt.auto_commit !== false;
   $("cfg-mgmt-autopush").checked = !!mgmt.auto_push;
   const dl = $("model-list");
-  dl.innerHTML = (state.models || []).map((m) => `<option value="${esc(m.id)}">`).join("");
+  dl.innerHTML = (state.models || []).map((m) => {
+    const meta = modelMeta(m);
+    const label = meta.hint ? `${m.id} · ${meta.hint}` : m.id;
+    return `<option value="${esc(m.id)}">${esc(label)}</option>`;
+  }).join("");
   state.mcpServers = (c.mcp?.servers || []).map((s) => ({ ...s }));
   renderMcpList();
   $("settings-modal").classList.remove("hidden");
@@ -2256,20 +2260,22 @@ const MODEL_FAMILIES = [
   { re: /dolphin/i, family: "Dolphin", provider: "Cognitive" },
 ];
 
-function modelMeta(id, ownedBy) {
-  const s = String(id || "");
+function modelMeta(m) {
+  const s = String((m && m.id) || "");
   let family = "";
-  let provider = ownedBy || "";
+  let provider = (m && m.owned_by) || "";
   for (const f of MODEL_FAMILIES) {
     if (f.re.test(s)) { family = f.family; provider = provider || f.provider; break; }
   }
-  let size = "";
-  const sizeM = /(?:^|[:_-])(\d+(?:\.\d+)?)b/i.exec(s);
-  if (sizeM) size = sizeM[1] + "B";
+  let size = (m && m.size) || "";
+  if (!size) {
+    const sizeM = /(?:^|[:_-])(\d+(?:\.\d+)?)b/i.exec(s);
+    if (sizeM) size = sizeM[1] + "B";
+  }
   const tags = [];
   if (/instruct|[-_]it\b/i.test(s)) tags.push("instruct");
-  const recommended = isCurrentModel(id);
-  const hint = [family, size].filter(Boolean).join(" ");
+  const recommended = isCurrentModel(s);
+  const hint = [family, size, (m && m.quantization) || ""].filter(Boolean).join(" ");
   return { family: family || "Other", provider, size, tags, hint, recommended };
 }
 
@@ -2285,7 +2291,7 @@ function renderModelSelect() {
   if (!models.length) { sel.innerHTML = ""; return; }
   const groups = {};
   for (const m of models) {
-    const meta = modelMeta(m.id, m.owned_by);
+    const meta = modelMeta(m);
     const key = meta.recommended ? "★ Current" : meta.family;
     (groups[key] = groups[key] || []).push({ m, meta });
   }
@@ -2699,6 +2705,11 @@ async function loadExperiments() {
     state.expList = rr.experiments || [];
     renderExpList();
   } catch (e) { state.expList = state.expList || []; }
+  try {
+    const fc = await api(`/api/projects/${state.project}/experiments/focus`);
+    state.focusExperiment = fc.focus_id;
+    renderExpList();
+  } catch (e) { /* silent */ }
   await loadExpRankings();
   try {
     const rr = await api(`/api/projects/${state.project}/runs`);
@@ -2740,20 +2751,26 @@ function renderExpRankings() {
     const host = el.querySelector(`.exp-card[data-id="${e.id}"] .exp-rank-host`);
     if (!host) return;
     const rows = rank.rows || [];
+    const target = rank.goal_target;
     const head = rank.metric
-      ? `<summary class="exp-rank-sum">Leaderboard — <b>${esc(rank.metric.replace(/_/g, " "))}</b> ${rank.higher_better ? "↑" : "↓"} (best ${_fmtNum(rank.best)})</summary>`
+      ? `<summary class="exp-rank-sum">Leaderboard — <b>${esc(rank.metric.replace(/_/g, " "))}</b> ${rank.higher_better ? "↑" : "↓"} (best ${_fmtNum(rank.best)}${target != null ? ` · target ${_fmtNum(target)}` : ""})</summary>`
       : `<summary class="exp-rank-sum">Leaderboard — no numeric metric yet</summary>`;
     if (!rows.length) {
       host.innerHTML = `<details class="exp-rank">${head}<div class="exp-rank-body empty">No runs report the metric "${esc(rank.metric)}".</div></details>`;
       return;
     }
-    let html = `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric.replace(/_/g, " "))}</th><th>Δ best</th></tr></thead><tbody>`;
+    let html = `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric.replace(/_/g, " "))}</th>${target != null ? `<th>to target</th>` : ""}<th>Δ best</th></tr></thead><tbody>`;
     for (const row of rows) {
       const medal = row.rank === 1 ? " 🏆" : "";
+      const reached = target != null && ((row.metric >= target && rank.higher_better) || (row.metric <= target && !rank.higher_better));
+      const toTarget = target != null
+        ? (reached ? `<span class="rank-reached">✓ reached</span>` : `<span class="muted">${(row.to_target >= 0 ? "+" : "") + _fmtNum(row.to_target)}</span>`)
+        : "";
       html += `<tr${row.rank === 1 ? ' class="rank-top"' : ""}>
         <td class="rank-pos">${row.rank}${medal}</td>
         <td>${esc(row.label || "#" + row.run_id)}</td>
         <td>${_fmtNum(row.metric)}</td>
+        ${toTarget}
         <td class="muted">${row.rank === 1 ? "—" : (row.delta_best >= 0 ? "+" : "") + _fmtNum(row.delta_best)}</td>
       </tr>`;
     }
@@ -2870,9 +2887,10 @@ async function renderExpContext() {
   const exps = state.expList || [];
   if (!exps.length) { ctx.classList.add("hidden"); return; }
   const sel = $("ec-select");
+  const preferId = state.focusExperiment != null ? state.focusExperiment : state.activeExperiment;
   sel.innerHTML = exps.map((e) =>
-    `<option value="${e.id}"${e.id === state.activeExperiment ? " selected" : ""}>${esc(e.name)}</option>`).join("");
-  const eid = state.activeExperiment != null ? state.activeExperiment : (exps[0].id);
+    `<option value="${e.id}"${e.id === preferId ? " selected" : ""}>${esc(e.name)}${e.id === state.focusExperiment ? " ★" : ""}</option>`).join("");
+  const eid = preferId != null ? preferId : (exps[0].id);
   const detail = await loadExpDetail(eid);
   const exp = detail.id != null ? detail : exps.find((e) => e.id === eid);
   const runs = detail.runs || [];
@@ -3182,11 +3200,14 @@ function renderExpList() {
     const status = e.status || "active";
     const active = status === "active";
     const badgeCls = active ? "det" : (status === "completed" ? "ok" : "warn");
+    const focused = state.focusExperiment === e.id;
     card.innerHTML = `<div class="exp-card-head">
         <b class="exp-card-name">${esc(e.name)}</b>
         <span class="exp-badge ${badgeCls}">${esc(status)}</span>
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
         <span class="spacer"></span>
+        <button class="btn subtle small exp-focus${focused ? " focus-on" : ""}" data-id="${e.id}" title="${focused ? "Unfocus this experiment" : "Focus — steer the agent toward this objective"}">${focused ? "★" : "☆"}</button>
+        <button class="btn subtle small exp-edit" data-id="${e.id}" title="Edit hypothesis, goal or plan">✎</button>
         <select class="exp-status" data-id="${e.id}" title="lifecycle status">
           <option value="active"${active ? " selected" : ""}>active</option>
           <option value="completed"${status === "completed" ? " selected" : ""}>completed</option>
@@ -3205,6 +3226,21 @@ function renderExpList() {
       sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
                "improve_loop", { experiment_id: b.dataset.id });
     }));
+  el.querySelectorAll(".exp-focus").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const fid = state.focusExperiment === Number(b.dataset.id) ? null : Number(b.dataset.id);
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/focus`, {
+          method: "POST",
+          body: JSON.stringify({ id: fid }),
+        });
+        state.focusExperiment = r.focus_id;
+        await loadExperiments();
+        toast(fid ? "Experiment focused — the agent will steer toward it." : "Focus cleared.");
+      } catch (e) { toast("Failed to set focus: " + e.message); }
+    }));
+  el.querySelectorAll(".exp-edit").forEach((b) =>
+    b.addEventListener("click", () => openExpEdit(Number(b.dataset.id))));
   el.querySelectorAll(".exp-status").forEach((sel) =>
     sel.addEventListener("change", async () => {
       try {
@@ -3246,6 +3282,45 @@ async function createExp() {
     await loadExperiments();
     toast("Experiment created — ask Fox to run variants for it in chat.");
   } catch (e) { toast("Failed to create experiment: " + e.message); }
+}
+
+function openExpEdit(eid) {
+  const e = (state.expList || []).find((x) => x.id === eid);
+  if (!e) return;
+  $("exp-edit-id").value = eid;
+  $("exp-edit-name").value = e.name || "";
+  $("exp-edit-hypothesis").value = e.hypothesis || "";
+  $("exp-edit-goal-metric").value = e.goal_metric || "";
+  $("exp-edit-goal-target").value = e.goal_target != null ? String(e.goal_target) : "";
+  $("exp-edit-hb").checked = e.higher_better !== false;
+  $("exp-edit-plan").value = e.plan || "";
+  $("exp-edit-modal").classList.remove("hidden");
+}
+
+async function saveExpEdit() {
+  const eid = Number($("exp-edit-id").value);
+  const body = {
+    name: $("exp-edit-name").value.trim(),
+    hypothesis: $("exp-edit-hypothesis").value.trim(),
+    goal_metric: $("exp-edit-goal-metric").value.trim(),
+    goal_target: null,
+    higher_better: $("exp-edit-hb").checked,
+    plan: $("exp-edit-plan").value.trim(),
+  };
+  const t = $("exp-edit-goal-target").value.trim();
+  if (t !== "") {
+    body.goal_target = parseFloat(t);
+    if (Number.isNaN(body.goal_target)) { toast("Goal target must be a number"); return; }
+  }
+  try {
+    await api(`/api/projects/${state.project}/experiments/${eid}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    $("exp-edit-modal").classList.add("hidden");
+    await loadExperiments();
+    toast("Experiment updated.");
+  } catch (e) { toast("Failed to update experiment: " + e.message); }
 }
 
 function expMetric() { return state.expMetric || ""; }
@@ -4231,6 +4306,8 @@ $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") add
 $("runs-refresh").addEventListener("click", loadExperiments);
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
+$("exp-edit-close").addEventListener("click", () => $("exp-edit-modal").classList.add("hidden"));
+$("exp-edit-save").addEventListener("click", saveExpEdit);
 
 function setExpMetric(v) {
   state.expMetric = v;

@@ -12,8 +12,10 @@ cluster routes to.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import urllib.request
 from typing import AsyncIterator, Optional
 
 from openai import AsyncOpenAI
@@ -61,10 +63,43 @@ class LLMClient:
                 seen = {}
                 for m in resp.data:
                     seen.setdefault(m.id, {"id": m.id, "owned_by": getattr(m, "owned_by", "")})
-                return list(seen.values())
+                models = list(seen.values())
+                break
             except Exception as e:  # noqa: BLE001
                 last = e
-        raise LLMError(f"Cannot reach LLM server: {last}")
+        else:
+            raise LLMError(f"Cannot reach LLM server: {last}")
+        # Enrich with native Ollama details (parameter size, quantization) so the
+        # UI can label models instead of regex-guessing sizes. Best-effort.
+        try:
+            tags = await asyncio.to_thread(self._native_tags)
+            for m in models:
+                detail = tags.get(m["id"])
+                if detail:
+                    if detail.get("parameter_size"):
+                        m["size"] = detail["parameter_size"]
+                    if detail.get("quantization_level"):
+                        m["quantization"] = detail["quantization_level"]
+        except Exception:  # noqa: BLE001
+            pass
+        return models
+
+    def _native_tags(self) -> dict[str, dict]:
+        """Query the direct Ollama native /api/tags endpoint for model details."""
+        base = self.tool_base_url
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        url = base.rstrip("/") + "/api/tags"
+        with urllib.request.urlopen(url, timeout=3) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+        out = {}
+        for m in data.get("models") or []:
+            d = m.get("details") or {}
+            out[m.get("name") or ""] = {
+                "parameter_size": d.get("parameter_size") or "",
+                "quantization_level": d.get("quantization_level") or "",
+            }
+        return out
 
     def _params(self, messages, tools, temperature):
         params = dict(model=self.model, messages=messages, temperature=temperature,

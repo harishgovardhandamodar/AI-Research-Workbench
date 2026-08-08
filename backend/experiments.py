@@ -419,12 +419,13 @@ def build_branch_graph(runs: list[dict], experiments: list[dict]) -> dict:
 # -------------------------------------------------------------- leaderboard ----
 
 def rank_runs(runs: list[dict], metric: str, higher_better: bool = True,
-              limit: int = 50) -> dict:
+              limit: int = 50, goal_target: float | None = None) -> dict:
     """Rank runs by a numeric metric (multi-run leaderboard) for the UI.
 
-    Returns {"metric", "higher_better", "best", "rows": [...]} where each row is
-    {rank, run_id, label, config, metric, delta_best, pct_best}. Runs that do not
-    carry the metric are skipped.
+    Returns {"metric", "higher_better", "goal_target", "best", "rows": [...]}
+    where each row is {rank, run_id, label, config, metric, delta_best,
+    pct_best} plus, when a goal_target is given, distance-to-target
+    (to_target, pct_target). Runs that do not carry the metric are skipped.
     """
     rows = []
     for r in runs:
@@ -444,12 +445,15 @@ def rank_runs(runs: list[dict], metric: str, higher_better: bool = True,
         })
     if not rows:
         return {"metric": metric, "higher_better": higher_better,
-                "best": None, "rows": []}
+                "goal_target": goal_target, "best": None, "rows": []}
     rows.sort(key=lambda x: x["metric"], reverse=higher_better)
     best = rows[0]["metric"]
     for i, row in enumerate(rows, start=1):
         row["rank"] = i
         row["delta_best"] = row["metric"] - best
         row["pct_best"] = ((row["metric"] - best) / best * 100) if best else 0.0
+        if goal_target is not None:
+            row["to_target"] = goal_target - row["metric"]
+            row["pct_target"] = ((row["metric"] / goal_target) * 100) if goal_target else 0.0
     return {"metric": metric, "higher_better": higher_better,
-            "best": best, "rows": rows[:limit]}
+            "goal_target": goal_target, "best": best, "rows": rows[:limit]}

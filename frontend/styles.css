@@ -794,10 +794,11 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .exp-new-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .exp-new-row input { font-size: 12px; flex: 1; min-width: 120px; }
 #exp-new-plan { font-size: 12px; width: 100%; resize: vertical; font-family: var(--mono); }
-.exp-card {
-  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
-  display: flex; flex-direction: column; gap: 2px;
-}
+.exp-card { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  display: flex; flex-direction: column; gap: 2px; }
+.exp-focus { color: var(--text-dim); }
+.exp-focus.focus-on { color: var(--accent); border-color: var(--accent); }
+.rank-reached { color: var(--ok, #7ee787); font-weight: 600; }
 .exp-card-head { display: flex; align-items: center; gap: 8px; }
 .exp-card-name { font-size: 12.5px; }
 .exp-card-runs { font-size: 11px; margin-left: auto; }

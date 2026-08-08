@@ -43,14 +43,60 @@ useful, suggestions is an empty array.
 FINDINGS_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
+def build_review_context(store, run: dict) -> str:
+    """Build the 'Experiment context' block for the reviewer from a freshly
+    recorded run: the owning experiment's goal/target/direction, the best value
+    so far, and the run's own metrics, so suggestions aim at the objective."""
+    try:
+        metrics = run.get("metrics") or {}
+        eid = run.get("experiment_id")
+        lines = ["## Experiment context"]
+        if eid is not None:
+            exp = store.get_experiment(eid)
+            if exp is not None:
+                goal = exp.get("goal_metric") or ""
+                target = exp.get("goal_target")
+                higher = bool(exp.get("higher_better", True))
+                lines.append(f"- Experiment: {exp.get('name')}")
+                if goal:
+                    dirn = "higher" if higher else "lower"
+                    tgt = "" if target is None else f", target {target}"
+                    lines.append(f"- Goal: {goal} ({dirn} is better{tgt})")
+                try:
+                    runs = store.experiment_runs(eid)
+                    best = None
+                    for r in runs:
+                        m = (r.get("metrics") or {}).get(goal) if goal else None
+                        if m is None:
+                            continue
+                        if best is None or (higher and m > best[1]) or (not higher and m < best[1]):
+                            best = (r.get("id"), m)
+                    if best is not None:
+                        lines.append(f"- Best {goal or 'metric'} so far: {best[1]} (run #{best[0]})")
+                except Exception:  # noqa: BLE001
+                    pass
+        if metrics:
+            bits = ", ".join(f"{k}={v}" for k, v in list(metrics.items())[:12])
+            lines.append(f"- This run's metrics: {bits}")
+        if len(lines) == 1:
+            return ""
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 class Reviewer:
     def __init__(self, llm: LLMClient, store: ProjectStore, window: int = 8):
         self.llm = llm
         self.store = store
         self.window = window
 
-    async def review(self) -> dict:
-        """Return {"findings": [...], "suggestions": [...]} for the last turn."""
+    async def review(self, extra: str = "") -> dict:
+        """Return {"findings": [...], "suggestions": [...]} for the last turn.
+
+        `extra` is an optional "Experiment context" block (goal, target, best run,
+        this run's metrics) so suggestions chase the objective, not generic ideas.
+        """
         msgs = self.store.list_messages(limit=self.window)
         if not msgs:
             return {"findings": [], "suggestions": []}
@@ -66,7 +112,10 @@ class Reviewer:
                 meta = m.get("meta", {})
                 name = meta.get("name", "tool")
                 transcript.append(f"TOOL({name}) OUTPUT:\n{content[:4000]}")
-        prompt = REVIEWER_PROMPT + "\n\nTranscript:\n" + "\n".join(transcript)
+        prompt = REVIEWER_PROMPT
+        if extra:
+            prompt += "\n\n" + extra
+        prompt += "\n\nTranscript:\n" + "\n".join(transcript)
         try:
             resp = await self.llm.complete(
                 [{"role": "system", "content": prompt}],

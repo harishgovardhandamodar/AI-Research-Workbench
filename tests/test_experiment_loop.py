@@ -37,9 +37,11 @@ class ScriptedReviewer:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.calls = 0
+        self.extras = []
 
-    async def __call__(self):
+    async def __call__(self, extra: str = ""):
         self.calls += 1
+        self.extras.append(extra)
         if self.reviews:
             return self.reviews.pop(0)
         return {"findings": [], "suggestions": []}
@@ -166,6 +168,9 @@ class TestImproveLoop(unittest.IsolatedAsyncioTestCase):
         # Second iteration reused the first review's suggestion prompt.
         self.assertEqual(result["iterations"][1]["suggestion"]["title"], "try higher eps")
         self.assertEqual(len(self.store.experiment_runs(eid)), 2)
+        # The reviewer received the goal-first context block each iteration.
+        self.assertTrue(reviewer.extras)
+        self.assertTrue(all("Experiment context" in e for e in reviewer.extras))
 
     async def test_loop_stops_when_no_suggestion(self):
         eid = self.store.create_experiment("quiet", "h", "accuracy", 0.99, True)

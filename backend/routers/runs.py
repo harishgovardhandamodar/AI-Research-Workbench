@@ -110,18 +110,76 @@ EXPERIMENT_STATUSES = ("active", "completed", "cancelled")
 
 @router.patch("/api/projects/{name}/experiments/{eid}")
 async def update_project_experiment(name: str, eid: int, body: dict):
-    """Update an experiment's lifecycle status (active -> completed/cancelled)."""
+    """Update an experiment: its lifecycle status, or its objective fields
+    (name/hypothesis/goal_metric/goal_target/higher_better/plan) so the user can
+    refine the goal without recreating the experiment."""
+    from ..store import _UNSET
+
     store = get_runtime(name).store
     exp = store.get_experiment(eid)
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     status = (body.get("status") or "").strip()
-    if status not in EXPERIMENT_STATUSES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"status must be one of {', '.join(EXPERIMENT_STATUSES)}")
-    store.update_experiment_status(eid, status)
+    if status:
+        if status not in EXPERIMENT_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"status must be one of {', '.join(EXPERIMENT_STATUSES)}")
+        store.update_experiment_status(eid, status)
+        return {"experiment": store.get_experiment(eid)}
+
+    target = body.get("goal_target")
+    target = _UNSET if target is None and "goal_target" in body else target
+    if target is not _UNSET and target is not None:
+        try:
+            target = float(target)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="goal_target must be a number")
+    goal_metric = body.get("goal_metric")
+    if "goal_metric" not in body:
+        goal_metric = None
+    else:
+        goal_metric = (goal_metric or "").strip()
+        if goal_metric and target is None and "goal_target" not in body:
+            target = exp["goal_target"]  # keep existing target on metric edit
+    if target is not _UNSET and target is not None and not goal_metric:
+        raise HTTPException(status_code=400,
+                            detail="goal_target requires a goal_metric")
+    store.update_experiment(
+        eid,
+        name=body.get("name"),
+        hypothesis=body.get("hypothesis"),
+        goal_metric=goal_metric,
+        goal_target=target,
+        higher_better=body.get("higher_better"),
+        plan=body.get("plan"),
+    )
     return {"experiment": store.get_experiment(eid)}
+
+
+@router.get("/api/projects/{name}/experiments/focus")
+async def project_experiment_focus(name: str):
+    """The currently focused experiment (drives context steering + run tagging)."""
+    store = get_runtime(name).store
+    fid = store.get_setting("focus_experiment_id", "")
+    if str(fid).isdigit() and store.get_experiment(int(fid)) is not None:
+        return {"focus_id": int(fid)}
+    return {"focus_id": None}
+
+
+@router.post("/api/projects/{name}/experiments/focus")
+async def set_project_experiment_focus(name: str, body: dict):
+    """Set (id) or clear (null) the focused experiment."""
+    store = get_runtime(name).store
+    fid = body.get("id")
+    if fid is not None:
+        fid = int(fid)
+        if store.get_experiment(fid) is None:
+            raise HTTPException(status_code=404, detail="experiment not found")
+        store.set_setting("focus_experiment_id", str(fid))
+        return {"focus_id": fid}
+    store.set_setting("focus_experiment_id", "")
+    return {"focus_id": None}
 
 
 @router.post("/api/projects/{name}/experiments/run-obfuscation")
@@ -312,7 +370,8 @@ async def project_experiment_ranking(name: str, eid: int,
     if not m:
         return {"ranking": rank_runs([], ""), "experiment": exp}
     higher = bool(exp.get("higher_better", True))
-    return {"ranking": rank_runs(store.experiment_runs(eid), m, higher, limit),
+    return {"ranking": rank_runs(store.experiment_runs(eid), m, higher, limit,
+                                 goal_target=exp.get("goal_target")),
             "experiment": exp}
 
 
