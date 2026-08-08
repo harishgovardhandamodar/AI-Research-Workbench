@@ -158,8 +158,19 @@ def build_report_body(rt) -> str:
 
 
 async def build_project_report(rt, include_summary: bool = True) -> str:
-    """The project report, optionally with an LLM executive summary prepended."""
+    """The project report, optionally with an LLM executive summary prepended
+    and a literature-grounded 'Related work' section."""
     body = build_report_body(rt)
+    lit = ""
+    try:
+        from .literature import literature_context, project_question
+        q = project_question(rt)
+        if q:
+            lit = await literature_context(q, limit=4)
+    except Exception:  # noqa: BLE001
+        lit = ""
+    if lit:
+        body = body.rstrip() + "\n\n## Related work\n\n" + lit + "\n"
     if not include_summary or getattr(rt, "llm", None) is None:
         return body
     try:

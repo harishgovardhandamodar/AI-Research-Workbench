@@ -127,6 +127,24 @@ class Reviewer:
         prompt = REVIEWER_PROMPT
         if extra:
             prompt += "\n\n" + extra
+        # Round-11: ground the review in the literature (best-effort).
+        try:
+            question = ""
+            for m in reversed(msgs):
+                eid = (m.get("meta") or {}).get("experiment_id")
+                if eid:
+                    exp = self.store.get_experiment(int(eid))
+                    question = ((exp or {}).get("hypothesis") or "").strip() \
+                        or ((exp or {}).get("goal_metric") or "")
+                    if question:
+                        break
+            if question:
+                from ..literature import literature_context
+                lit = await literature_context(question, limit=3)
+                if lit:
+                    prompt += "\n\n" + lit
+        except Exception:  # noqa: BLE001
+            pass
         prompt += "\n\nTranscript:\n" + "\n".join(transcript)
         try:
             resp = await self.llm.complete(
