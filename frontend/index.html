@@ -475,8 +475,24 @@
     </div>
   </div>
   <button id="branch-toggle" class="branch-fab" title="Experiment branch history (git-flow)">
-    <span class="branch-fab-icon">🧪🦊</span>
+    <span class="branch-fab-icon">🦊</span>
   </button>
+  <button id="dgtop-toggle" class="branch-fab dgtop-fab" title="Server resource usage (DGXTOP-style)">
+    <span class="branch-fab-icon">📊</span>
+  </button>
+</div>
+
+<!-- Faded dgxtop-style server resource HUD (toggle via the 📊 FAB) -->
+<div id="dgtop" class="dgtop hidden">
+  <div class="dgtop-head">
+    <span class="dgtop-title">dgxtop · <span id="dgtop-host" class="dgtop-muted">—</span></span>
+    <span class="spacer"></span>
+    <span id="dgtop-age" class="dgtop-muted"></span>
+    <button id="dgtop-close" class="btn subtle small" title="Hide">✕</button>
+  </div>
+  <div id="dgtop-body" class="dgtop-body">
+    <div class="empty">Loading server stats…</div>
+  </div>
 </div>
 
 <!-- Artifact modal -->

@@ -405,8 +405,11 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 @keyframes exp-flash { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px #a974ff66, 0 0 18px #a974ff44; } }
 .msg.exp-flash { animation: exp-flash 1.4s ease; border-radius: 10px; }
 .msg-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
-.m-tag { font-size: 10px; padding: 1px 8px; border-radius: 10px; background: rgba(79,140,255,.15); color: var(--accent-2); border: 1px solid rgba(79,140,255,.35); }
+.m-tag { font-size: 10px; padding: 1px 8px; border-radius: 10px; background: rgba(79,140,255,.15); color: var(--accent-2); border: 1px solid rgba(79,140,255,.35); cursor: pointer; user-select: none; }
+.m-tag:hover { border-color: var(--accent); background: rgba(79,140,255,.28); }
 .msg.user .m-tag { background: rgba(224,91,91,.12); color: #ffb4b4; border-color: rgba(224,91,91,.35); }
+.msg.tag-dim { opacity: .28; transition: opacity .15s; }
+.msg.tag-hot { outline: 1px solid rgba(169,116,255,.55); outline-offset: 3px; border-radius: 10px; }
 
 .msg-body pre, .codeblock {
   background: #0a0e13; border: 1px solid var(--border); border-radius: 8px;
@@ -766,6 +769,12 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .exp-detail { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 .exp-detail .ed-head { font-weight: 700; font-size: 13px; }
 .exp-detail .ed-meta { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 8px; }
+.exp-detail .ed-fox {
+  display: inline-block; font-size: 10.5px; color: #c9aaff;
+  background: rgba(169,116,255,.12); border: 1px solid rgba(169,116,255,.35);
+  border-radius: 10px; padding: 1px 9px; margin-bottom: 6px; font-family: var(--mono);
+}
+.exp-detail .ed-fail { color: var(--danger); }
 .exp-detail .ed-sec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); margin: 8px 0 4px; }
 .exp-detail table { width: 100%; border-collapse: collapse; font-size: 11px; margin: 4px 0; }
 .exp-detail th, .exp-detail td { border: 1px solid var(--border); padding: 2px 6px; text-align: left; }
@@ -995,6 +1004,39 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .branch-fab-icon { font-size: 20px; line-height: 1; }
 .branch-fab:hover { border-color: var(--accent); background: var(--bg-3); transform: translateY(-1px); }
 .branch-fab.active { background: var(--accent); color: #04201d; border-color: var(--accent); }
+.dgtop-fab { bottom: 130px; border-color: rgba(76,208,141,.6); color: #4cd08d; }
+.dgtop-fab:hover { border-color: #4cd08d; }
+
+/* ===================== faded dgxtop-style server HUD ===================== */
+.dgtop {
+  position: fixed; right: 74px; bottom: 130px; z-index: 50;
+  width: 560px; max-width: calc(100vw - 40px);
+  background: rgba(10, 14, 19, .55);          /* faded / translucent */
+  border: 1px solid rgba(76, 208, 141, .35); border-radius: 12px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  opacity: .8; transition: opacity .15s;
+  overflow: hidden;
+}
+.dgtop:hover { opacity: 1; }                 /* sharpen on hover */
+.dgtop-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid rgba(76,208,141,.25);
+  font-size: 11px; letter-spacing: .4px; text-transform: uppercase;
+  color: #4cd08d;
+}
+.dgtop-muted { color: var(--text-dim); text-transform: none; letter-spacing: 0; font-size: 10px; }
+.dgtop-body { padding: 8px 10px; max-height: 60vh; overflow: auto; }
+.dgtop table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.dgtop th { text-align: left; color: #4cd08d; font-weight: 600; padding: 2px 6px; border-bottom: 1px solid rgba(76,208,141,.25); }
+.dgtop td { padding: 2px 6px; border-bottom: 1px solid rgba(255,255,255,.05); white-space: nowrap; }
+.dgtop td.right, .dgtop th.right { text-align: right; }
+.dgtop .dgtop-sec { color: var(--accent-2); margin: 8px 0 3px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; }
+.dgtop .bar-host { display: inline-block; width: 90px; height: 7px; background: rgba(255,255,255,.08); border-radius: 4px; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+.dgtop .bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #4cd08d, #a974ff); }
+.dgtop .gpu-hot { color: #e06c6c; }
+.dgtop .proc-row:hover { background: rgba(255,255,255,.05); }
 
 .branch-overlay {
   position: absolute;

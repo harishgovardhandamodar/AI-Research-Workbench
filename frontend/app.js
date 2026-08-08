@@ -246,7 +246,7 @@ function handleEvent(type, p) {
   switch (type) {
     case "user_message": renderUserMessage(p.content, p.tags, p.created_at, p.experiment_id); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id, p.mcp_name, p.action, p.tools, p.model); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -318,12 +318,14 @@ async function copyText(text) {
   ta.remove();
 }
 
-function msgContainer(role, tags, ts, target) {
+function msgContainer(role, tags, ts, target, who) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const label = document.createElement("div");
   label.className = "msg-label";
-  label.innerHTML = `<span class="msg-who">${role === "user" ? "You" : "Fox"}</span>
+  const sender = role === "user" ? "You"
+    : (who || foxSenderLabel()) || "Fox";
+  label.innerHTML = `<span class="msg-who">${esc(sender)}</span>
     <span class="spacer"></span>
     <span class="msg-time">${ts ? fmtClock(ts) : ""}</span>
     <button class="msg-copy" title="Copy message" data-role="${role}">⧉</button>`;
@@ -335,6 +337,32 @@ function msgContainer(role, tags, ts, target) {
   div.appendChild(body);
   (target || $("messages")).appendChild(div);
   return { div, body };
+}
+
+// "Fox - <Model> - <MCP Name> - <Action>": which model, MCP server and tool
+// action produced this bubble, so a glance at the chat shows what Fox actually
+// did. Falls back to the current model when a message predates the model/mcp
+// fields (old persisted history), and to plain "Fox" when nothing is known.
+function foxCurrentModel() {
+  try { return (state.config && state.config.llm && state.config.llm.model) || ""; }
+  catch (e) { return ""; }
+}
+
+function foxSenderLabel(mcp, action, model) {
+  const parts = ["Fox"];
+  const mdl = model || foxCurrentModel();
+  if (mdl) parts.push(mdl);
+  if (mcp && action) {
+    parts.push(mcp);
+    parts.push(action);
+  }
+  return parts.join(" - ");
+}
+
+function foxToolName(name) {
+  if (!name) return "tool";
+  if (name.indexOf("__") > 0) return name.split("__").join(" · ");
+  return name;
 }
 
 /* ---- conversation sets: group request + steps + result, collapsible ---- */
@@ -440,7 +468,7 @@ function streamDelta(text) {
   scrollBottom();
 }
 
-function finalizeAssistant(content, tags, ts, expId) {
+function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
@@ -452,6 +480,8 @@ function finalizeAssistant(content, tags, ts, expId) {
       const t = el.div.querySelector(".msg-time");
       if (t) t.textContent = fmtClock(ts);
     }
+    const who = el.div.querySelector(".msg-who");
+    if (who) who.textContent = foxSenderLabel(mcp, action, model);
     curAssistantEl = null;
   }
   state.streaming = false;
@@ -552,6 +582,14 @@ function scrollBottom() {
   if (nearBottom) m.scrollTop = m.scrollHeight;
 }
 
+// Jump straight to the newest message (used on full chat re-renders, e.g. page
+// refresh / project switch), regardless of the current scroll position.
+function scrollToLatest() {
+  const m = $("messages");
+  if (!m) return;
+  m.scrollTop = m.scrollHeight;
+}
+
 /* -------- workflow progress panel (arXiv ingestion & replication) -------- */
 
 const WF_STATES = {
@@ -623,7 +661,7 @@ function toolStart(p) {
   card.innerHTML = `
     <div class="toolcard-head">
       <span class="caret">▶</span>
-      <span class="tname">${esc(p.name)}</span>
+      <span class="tname">${esc(foxToolName(p.name))}</span>
       <span class="targs">${esc(JSON.stringify(p.args))}</span>
       <span class="tstatus busy">…running</span>
     </div>
@@ -1873,7 +1911,9 @@ function renderMessagesFlat(msgs, wrap) {
       turnUser = m.id;
     } else if (m.role === "assistant") {
       if (!(m.content || "").trim()) return;
-      const el = msgContainer("assistant", mtags, m.created_at);
+      const el = msgContainer("assistant", mtags, m.created_at, undefined,
+        foxSenderLabel(m.meta && m.meta.mcp_name, m.meta && m.meta.action,
+                       m.meta && m.meta.model));
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
@@ -1886,7 +1926,7 @@ function renderMessagesFlat(msgs, wrap) {
       card.className = "toolcard";
       card.innerHTML = `
         <div class="toolcard-head">
-          <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
+          <span class="caret">▶</span><span class="tname">${esc(foxToolName(meta.name || "tool"))}</span>
           <span class="tstatus ok">persisted</span>
         </div>
         <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
@@ -1903,7 +1943,8 @@ function renderMessages(msgs) {
     renderMessagesFlat(msgs || [], wrap);
     const st = $("chat-stats");
     if (st) st.textContent = (window.FOX_VER || "?") + " · flat mode";
-    scrollBottom();
+    if (state._tagFilter) applyTagFilter();
+    scrollToLatest();
     return;
   }
   let lastDay = "";
@@ -1939,7 +1980,9 @@ function renderMessages(msgs) {
         if (!(m.content || "").trim()) continue;
         currentSet.setState.preview = String(m.content).replace(/\s+/g, " ").slice(0, 70);
         currentSet.update();
-        const el = msgContainer("assistant", mtags, m.created_at, currentSet.body);
+        const el = msgContainer("assistant", mtags, m.created_at, currentSet.body,
+          foxSenderLabel(m.meta && m.meta.mcp_name, m.meta && m.meta.action,
+                         m.meta && m.meta.model));
         el.body.innerHTML = renderMarkdown(m.content);
         enhanceCodeBlocks(el.body);
         maybeAttachRepoButtons(el, mtags);
@@ -1955,7 +1998,7 @@ function renderMessages(msgs) {
         card.className = "toolcard";
         card.innerHTML = `
           <div class="toolcard-head">
-            <span class="caret">▶</span><span class="tname">${esc(meta.name || "tool")}</span>
+            <span class="caret">▶</span><span class="tname">${esc(foxToolName(meta.name || "tool"))}</span>
             <span class="tstatus ok">persisted</span>
           </div>
           <div class="toolcard-body"><pre>${esc(truncate(m.content || "", 2000))}</pre></div>`;
@@ -1970,7 +2013,11 @@ function renderMessages(msgs) {
         const fm = msgs[i];
         if (!fm) continue;
         const el = msgContainer(fm.role === "user" ? "user" : "assistant",
-                                (fm.meta && fm.meta.tags) || [], fm.created_at);
+                                (fm.meta && fm.meta.tags) || [], fm.created_at,
+                                undefined,
+                                foxSenderLabel(fm.meta && fm.meta.mcp_name,
+                                               fm.meta && fm.meta.action,
+                                               fm.meta && fm.meta.model));
         if (fm.role === "user") { el.body.textContent = fm.content || ""; turnUser = fm.id; }
         else el.body.innerHTML = renderMarkdown(fm.content || "");
       } catch (e2) { /* give up on this one */ }
@@ -1982,7 +2029,8 @@ function renderMessages(msgs) {
     stats.textContent = (window.FOX_VER || "?") + " · " + setCount + " conversation set(s) · " +
       (msgs || []).length + " message(s) · " + bodyN + " rendered" + (errCount ? " · " + errCount + " error(s)" : "");
   }
-  scrollBottom();
+  if (state._tagFilter) applyTagFilter();
+  scrollToLatest();
 }
 
 function attachTurnArtifacts(turnUserMsgId, div) {
@@ -2069,6 +2117,26 @@ $("messages").addEventListener("click", (e) => {
   if (!eid) return;
   focusExperiment(eid);
 });
+// Clicking a tag badge (e.g. an MCP server or action) filters the chat to the
+// messages carrying that tag, so tool provenance is navigable at a glance.
+$("messages").addEventListener("click", (e) => {
+  const tag = e.target.closest(".m-tag");
+  if (!tag) return;
+  const value = tag.textContent.trim();
+  state._tagFilter = state._tagFilter === value ? null : value;
+  applyTagFilter();
+});
+
+function applyTagFilter() {
+  const value = state._tagFilter;
+  const any = state._tagFilter != null;
+  $("messages").querySelectorAll(".msg").forEach((m) => {
+    const has = Array.from(m.querySelectorAll(".m-tag"))
+      .some((t) => t.textContent.trim() === value);
+    m.classList.toggle("tag-dim", any && !has);
+    m.classList.toggle("tag-hot", any && has);
+  });
+}
 $("session-switch").addEventListener("click", (e) => { e.stopPropagation(); toggleSessionMenu(); });
 $("session-new").addEventListener("click", async () => {
   const name = prompt("New session name:");
@@ -2881,6 +2949,28 @@ function expBestRun(runs, metric, higher) {
   return best;
 }
 
+// The "Fox - <Model> - <MCP> - <Action>" label for a run node in the
+// Experiments charts and detail panel.
+function runFoxLabel(n) {
+  const parts = ["Fox"];
+  if (n && n.model) parts.push(n.model);
+  if (n && n.mcp && n.action) {
+    parts.push(n.mcp);
+    parts.push(n.action);
+  }
+  return parts.length > 1 ? parts.join(" - ") : "";
+}
+
+// Compact tool-trail summary ("github/push, eda_profiler/profile_data") for
+// tooltips / detail panels.
+function runToolsSummary(n) {
+  const tools = (n && n.tools) || [];
+  if (!tools.length) return "";
+  return tools
+    .map((t) => (t.mcp && t.action ? `${t.mcp}/${t.action}` : t.name || "tool"))
+    .join(", ");
+}
+
 // Compare-mode: click two chart nodes to fill the run comparison.
 let expComparePicks = { a: null, b: null };
 
@@ -3078,7 +3168,8 @@ function buildTimelineSvg(metric, W, opts) {
     const sel = state.expSelected === n.id ? " selected" : "";
     const isBest = best && String(best.id) === String(n.id);
     const sug = reviewSuggestionsFor(n.id).length > 0;
-    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
+    const fx = runFoxLabel(n);
+    const tip = `Run #${i + 1} · ${n.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(vals[i])}\n${fx}\ntools: ${runToolsSummary(n) || "—"}\n${expOf(eid) ? "experiment: " + expOf(eid).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\n${n.timestamp ? new Date(n.timestamp).toLocaleString() : ""}`;
     let mark = "";
     if (isBest) {
       mark = `<circle r="12" fill="none" stroke="${cssVar("--chart-title", "#f3f0fa")}" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.9"></circle>`;
@@ -3090,7 +3181,9 @@ function buildTimelineSvg(metric, W, opts) {
       + (isBest ? `<text y="-20" text-anchor="middle" font-size="10">★</text>` : "")
       + (sug ? `<text y="-28" text-anchor="middle" font-size="10">💡</text>` : "")
       + `<text y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="${color}">${_fmtNum(vals[i])}</text>`
-      + `<text y="22" text-anchor="middle" font-size="9" fill="${cssVar("--chart-muted", "#9b93ab")}">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text></g>`;
+      + `<text y="22" text-anchor="middle" font-size="9" fill="${cssVar("--chart-muted", "#9b93ab")}">#${i + 1}${n.label ? " " + esc(n.label.slice(0, 12)) : ""}</text>`
+      + (fx ? `<text y="35" text-anchor="middle" font-size="8" fill="${color}" opacity="0.9">${esc(fx)}</text>` : "")
+      + `</g>`;
   });
 
   out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
@@ -3151,6 +3244,7 @@ function expSubNodes(run) {
   if (run.seed != null) tag("seed " + run.seed);
   if (run.fresh) tag("fresh");
   if (run.kind) tag(run.kind);
+  if (run.mcp && run.action) tag(run.mcp + "/" + run.action);
   for (const f of (run.findings || []).slice(0, 4)) {
     find(String(f).replace(/\s+/g, " ").slice(0, 24));
   }
@@ -3247,7 +3341,7 @@ function buildGraphSvg(metric, W, opts) {
     const bestForMetric = bestRunForMetric(metric);
     const isBest = bestForMetric && String(bestForMetric.id) === String(n.id);
     const sug = reviewSuggestionsFor(n.id).length > 0;
-    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\nclick for full summary`;
+    const tip = `Run #${i + 1} · ${n.run.label || ""}${n.fresh ? " (fresh)" : ""}\n${metric}: ${_fmtNum(v)}\n${runFoxLabel(n.g)}\ntools: ${runToolsSummary(n.g) || "—"}\n${expOf(n.g.experiment_id) ? "experiment: " + expOf(n.g.experiment_id).name : ""}\n${sug ? "💡 reviewer suggestions available" : ""}\nclick for full summary`;
     out += `<g class="exp-node${sel}" data-id="${esc(n.id)}" transform="translate(${pos[i].x},${pos[i].y})">`
       + `<title>${esc(tip)}</title>`
       + (n.g.experiment_id != null
@@ -3615,8 +3709,10 @@ function renderExpDetail() {
   const badge = run.fresh ? '<span class="exp-badge fresh">fresh</span>'
                           : `<span class="exp-badge det">${esc(run.kind || "run")}</span>`;
   const time = run.timestamp ? new Date(run.timestamp).toLocaleString() : "—";
+  const fx = runFoxLabel(run);
   let h = `<div class="ed-head">${esc(run.label || ("Run #" + run.id))} ${badge}</div>`;
   h += `<div class="ed-meta">${esc(time)}</div>`;
+  if (fx) h += `<div class="ed-fox">${esc(fx)}</div>`;
   h += `<div class="ed-actions">
     ${run.experiment_id != null
       ? `<button class="btn subtle small ed-improve" data-eid="${esc(run.experiment_id)}" data-rid="${esc(run.id)}" title="Run the improve loop for this experiment">🔁 Improve from here</button>` : ""}
@@ -3634,6 +3730,13 @@ function renderExpDetail() {
   }
   if (run.prompt) {
     h += `<div class="ed-sec">Prompt</div><div class="ed-find">${esc(run.prompt)}</div>`;
+  }
+  if ((run.tools || []).length) {
+    h += `<div class="ed-sec">Tool trail (MCP · action)</div>`;
+    for (const t of run.tools) {
+      const label = (t && t.mcp && t.action) ? `${t.mcp} · ${t.action}` : (t && t.name);
+      h += `<div class="ed-find">${esc(label || "tool")}${t.ok ? "" : ' <span class="ed-fail">✗</span>'}</div>`;
+    }
   }
   const sugs = reviewSuggestionsFor(run.id);
   if (sugs.length) {
@@ -4950,6 +5053,111 @@ $("branch-close").addEventListener("click", () => {
 const branchChat = $("branch-chat");
 if (branchChat) branchChat.addEventListener("click", () => switchMainView("chat"));
 $("branch-refresh").addEventListener("click", loadBranches);
+
+/* ---------- faded dgxtop-style server resource HUD ---------- */
+let dgtopTimer = null;
+const dgtopPollMs = 4000;
+
+function dgtopToggle(show) {
+  const panel = $("dgtop");
+  const fab = $("dgtop-toggle");
+  if (!panel || !fab) return;
+  const on = show != null ? show : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !on);
+  fab.classList.toggle("active", on);
+  try { localStorage.setItem("fox.dgtop", on ? "1" : "0"); } catch (e) { /* ignore */ }
+  if (on) {
+    dgtopLoad();
+    if (!dgtopTimer) dgtopTimer = setInterval(dgtopLoad, dgtopPollMs);
+  } else {
+    clearInterval(dgtopTimer);
+    dgtopTimer = null;
+  }
+}
+
+async function dgtopLoad() {
+  const body = $("dgtop-body");
+  if (!body) return;
+  try {
+    const s = await api("/api/system/stats");
+    const age = $("dgtop-age");
+    if (age) age.textContent = new Date().toLocaleTimeString();
+    renderDgtop(body, s);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">Server stats unavailable: ${esc(e.message || e)}</div>`;
+  }
+}
+
+function dgtopBar(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  return `<span class="bar-host"><span class="bar-fill" style="width:${p}%"></span></span>`;
+}
+
+function renderDgtop(el, s) {
+  const host = s.host || {};
+  const hn = $("dgtop-host");
+  if (hn) hn.textContent = host.hostname || "—";
+  const cpu = host.cpu || {};
+  const mem = host.memory || {};
+  const gpu = s.gpu || {};
+
+  let h = `<div class="dgtop-sec">host · cpu</div>`;
+  h += `<table><tbody>`;
+  h += `<tr><th>cpu</th><td class="right">${fmtVal(cpu.usage_percent)}% ${dgtopBar(cpu.usage_percent)}</td></tr>`;
+  if (cpu.per_core && Object.keys(cpu.per_core).length) {
+    const coreCells = Object.keys(cpu.per_core).sort((a, b) => +a - +b)
+      .map((c) => `<span title="core ${c}">${fmtVal(cpu.per_core[c])}%</span>`).join(" · ");
+    h += `<tr><th>cores</th><td>${coreCells}</td></tr>`;
+  }
+  h += `<tr><th>load</th><td>${(host.loadavg || []).map(fmtVal).join("  ")}</td></tr>`;
+  const memPct = mem.total_mb ? (mem.used_mb / mem.total_mb * 100) : 0;
+  h += `<tr><th>mem</th><td class="right">${fmtVal(mem.used_mb)} / ${fmtVal(mem.total_mb)} MB (${fmtVal(memPct)}%) ${dgtopBar(memPct)}</td></tr>`;
+  h += `</tbody></table>`;
+
+  h += `<div class="dgtop-sec">gpu</div>`;
+  if (gpu.available && gpu.devices.length) {
+    h += `<table><tbody>`;
+    for (const d of gpu.devices) {
+      const u = d.utilization_percent || 0;
+      const memP = d.memory_total_mb ? (d.memory_used_mb / d.memory_total_mb * 100) : 0;
+      h += `<tr><th>${esc(d.index)}: ${esc(d.name)}</th>
+        <td class="right">${u >= 95 ? '<span class="gpu-hot">' : ""}${fmtVal(u)}%${u >= 95 ? "</span>" : ""} ${dgtopBar(u)}</td>
+        <td class="right">${fmtVal(d.temperature_c)}°C</td>
+        <td class="right">${fmtVal(d.power_watts)}W</td>
+        <td class="right">${fmtVal(d.memory_used_mb)}/${fmtVal(d.memory_total_mb)} MB ${dgtopBar(memP)}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+    if (gpu.processes.length) {
+      h += `<table><tbody>` + gpu.processes.map((p) =>
+        `<tr class="proc-row"><td>${esc(p.pid)}</td><td>${esc(p.name)}</td><td class="right">${fmtVal(p.gpu_memory_mb)} MB</td></tr>`).join("") + `</tbody></table>`;
+    }
+  } else {
+    h += `<div class="dgtop-muted">no NVIDIA GPU available</div>`;
+  }
+
+  const procs = s.processes || [];
+  h += `<div class="dgtop-sec">processes · top ${procs.length}</div>`;
+  if (!procs.length) {
+    h += `<div class="dgtop-muted">none</div>`;
+  } else {
+    h += `<table><tbody><tr><th>pid</th><th>user</th><th class="right">cpu%</th><th class="right">mem</th><th>command</th></tr>`;
+    for (const p of procs) {
+      h += `<tr class="proc-row"><td>${esc(p.pid)}</td><td>${esc(p.user)}</td>
+        <td class="right">${fmtVal(p.cpu_percent)}</td><td class="right">${fmtVal(p.mem_mb)} MB</td>
+        <td title="${esc(p.command)}">${esc((p.command || "").slice(0, 60))}</td></tr>`;
+    }
+    h += `</tbody></table>`;
+  }
+  el.innerHTML = h;
+}
+
+const dgtopFab = $("dgtop-toggle");
+if (dgtopFab) dgtopFab.addEventListener("click", () => dgtopToggle());
+const dgtopClose = $("dgtop-close");
+if (dgtopClose) dgtopClose.addEventListener("click", () => dgtopToggle(false));
+try {
+  if (localStorage.getItem("fox.dgtop") === "1") dgtopToggle(true);
+} catch (e) { /* ignore */ }
 
 // Resizable split: drag the divider to widen the description/summary pane.
 (function initBranchResizer() {

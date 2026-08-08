@@ -21,11 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt pyproject.toml ./
 
-# Core + kernel stack + optional MCP + jupyter_server (matching the local setup).
+# Core + kernel stack + optional MCP + jupyter_server (matching the local setup),
+# plus the optional LangChain/LangGraph `agent` extras for the reliable
+# orchestrator (FOX_ORCHESTRATOR=langgraph).
 RUN pip install -r requirements.txt \
         numpy pandas scipy matplotlib scikit-learn \
         jupyter_server \
-        pymupdf
+        pymupdf \
+        "langchain>=0.3" "langchain-core>=0.3" "langchain-openai>=0.2" "langgraph>=0.2"
 
 COPY . .
 

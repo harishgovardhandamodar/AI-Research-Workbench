@@ -5,6 +5,7 @@ emitting streaming events to the client."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -110,6 +111,21 @@ async def _noop_emit(event: str, payload: dict):
     return None
 
 
+def tool_mcp_action(name: str) -> tuple[str, str]:
+    """Split a tool name into (MCP server, action).
+
+    MCP tools are namespaced as ``<server>__<tool>`` (see backend/mcp.py); core
+    workbench tools have no server and are attributed to the workbench itself.
+    Returns ("", "") for a falsy name so callers can fall back to a plain label.
+    """
+    if not name:
+        return "", ""
+    if "__" in name:
+        mcp, _, action = name.partition("__")
+        return mcp, action
+    return "core", name
+
+
 def parse_tool_call_json(content: str, tools: dict) -> tuple | None:
     """Try to interpret assistant text as a JSON tool call.
 
@@ -173,6 +189,11 @@ class Coordinator:
         self._run_started = 0.0
         self.agent_name = "Fox"
         self.model_name = getattr(self.llm, "model", "") or ""
+        # Which agent loop drives turns: "classic" (hand-rolled, default) or
+        # "langgraph" (LangChain orchestration, reliability features).
+        self.orchestrator = os.environ.get("FOX_ORCHESTRATOR", "classic").strip().lower() or "classic"
+        self.orchestrator_reliability = os.environ.get(
+            "FOX_ORCHESTRATOR_RELIABILITY", "1").strip().lower() not in ("0", "false", "no")
         try:
             from ..skills import load_skills
 
@@ -237,6 +258,15 @@ class Coordinator:
         turn completes, a run record (prompt → tool trail → reply) is emitted via
         `record` so every agent turn is traceable.
         Returns {"text": final assistant text}."""
+        if self.orchestrator == "langgraph":
+            try:
+                from .orchestrator import LangChainOrchestrator
+            except ImportError as e:  # noqa: BLE001
+                raise RuntimeError(
+                    "FOX_ORCHESTRATOR=langgraph requires the optional agent "
+                    "extras. Run: pip install -e '.[agent]'"
+                ) from e
+            return await LangChainOrchestrator(self).run(messages)
         await self._ensure_mcp()
         tools = get_tool_schemas() + list(getattr(self, "_mcp_schemas", []) or [])
         workflow = getattr(self.ctx, "workflow", None)
@@ -272,7 +302,8 @@ class Coordinator:
                         await workflow.finish()
                     text = full.get("content", "")
                     await self._emit_status(phase="complete")
-                    return {"text": text}
+                    return {"text": text, "tools": self._tool_summary(),
+                            "model": self.model_name}
 
                 assistant_msg = {
                     "role": "assistant",
@@ -289,88 +320,15 @@ class Coordinator:
                              self._exp_meta({"tool_calls": assistant_msg["tool_calls"]}))
 
                 for tc in full["tool_calls"]:
-                    fn = tc.get("function") or {}
-                    name = fn.get("name", "")
-                    args = fn.get("arguments", {}) or {}
-                    if name not in self.tools:
-                        result = f"[error] unknown tool: {name}"
-                        ok = False
-                    else:
-                        await self.emit("tool_start", {"id": tc.get("id"), "name": name,
-                                                       "args": args, "ok": True})
-                        mcp_server = name.split("__", 1)[0] if "__" in name else ""
-                        await self._emit_status(phase="tool", tool=name,
-                                                mcp=mcp_server,
-                                                skills=self._skill_names)
-                        if workflow is not None:
-                            await workflow.on_tool_start(name)
-                        t0 = time.perf_counter()
-                        try:
-                            if name == "run_shell":
-                                result = await self.tools[name](command=args.get("command", ""),
-                                                                timeout=args.get("timeout", 30))
-                            else:
-                                result = await self.tools[name](**args)
-                            ok = not result.startswith("[error]")
-                        except Exception as e:  # noqa: BLE001
-                            result = f"[error] {type(e).__name__}: {e}"
-                            ok = False
-                        duration_ms = (time.perf_counter() - t0) * 1000.0
-                        if self.audit is not None:
-                            try:
-                                from ..audit import emit_tool_audit
-
-                                await emit_tool_audit(
-                                    self.audit,
-                                    agent_id=self.agent_name,
-                                    session_id=audit_meta["session_id"],
-                                    trace_id=audit_meta["trace_id"],
-                                    tool_name=name, method=name,
-                                    args=args, result=result, ok=ok,
-                                    duration_ms=duration_ms,
-                                    source="mcp_proxy" if "__" in name else "coordinator",
-                                    mcp_server=mcp_server or None)
-                            except Exception:  # noqa: BLE001
-                                pass
-                        if workflow is not None:
-                            await workflow.on_tool_end(name, ok)
-                        await self.emit("tool_result", {"id": tc.get("id"), "name": name,
-                                                        "output": result, "ok": ok})
-                    self._run_seq.append({
-                        "name": name, "ok": ok,
-                        "args": _snippet(args, 200),
-                        "result": _snippet(result, 300),
-                    })
-                    self._run_artifacts.extend(_artifact_ids(name, result))
-                    # Exact artifact linkage from the tool itself (figures,
-                    # saved artifacts, notebook outputs), not text scraping.
-                    produced = list(getattr(self.ctx, "last_artifact_ids", []) or [])
-                    if produced:
-                        self._run_artifacts.extend(produced)
-                        self.ctx.last_artifact_ids = []
-                    structured = getattr(self.ctx, "last_metrics", None) or {}
-                    if structured:
-                        self._run_metrics.update(structured)
-                        if self.ctx.variant:
-                            self.ctx.variant.setdefault("metrics", {}).update(structured)
-                        self.ctx.last_metrics = None
-                    if name not in ("start_run", "finish_run", "create_experiment"):
-                        # Only compute tools feed the regex metric fallback, so
-                        # bookkeeping output (e.g. a config dump) isn't misread.
-                        self._run_metrics.update(_extract_metrics(result))
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", ""),
-                        "content": result,
-                    })
-                    self.persist("tool", result, self._exp_meta({"name": name, "tool_call_id": tc.get("id", "")}))
+                    await self._exec_tool_call(tc, audit_meta, messages)
                     self._raise_if_aborted()
 
             if workflow is not None:
                 await workflow.finish()
             text = self._fallback()
             await self._emit_status(phase="complete")
-            return {"text": text}
+            return {"text": text, "tools": self._tool_summary(),
+                    "model": self.model_name}
         except TurnAborted:
             status = "stopped"
             if workflow is not None:
@@ -415,6 +373,105 @@ class Coordinator:
         except Exception:  # noqa: BLE001
             pass
 
+    async def _exec_tool_call(self, tc: dict, audit_meta: dict,
+                              messages: list[dict]) -> bool:
+        """Execute one tool call with every side-effect (streaming events,
+        approval, audit, artifacts, metrics, transcript append).
+
+        Shared by the classic loop and the LangGraph orchestrator so both paths
+        are guaranteed identical. Returns ``ok`` (success flag)."""
+        fn = tc.get("function") or {}
+        name = fn.get("name", "")
+        args = fn.get("arguments", {}) or {}
+        if name not in self.tools:
+            result = f"[error] unknown tool: {name}"
+            ok = False
+        else:
+            await self.emit("tool_start", {"id": tc.get("id"), "name": name,
+                                           "args": args, "ok": True})
+            mcp_server = name.split("__", 1)[0] if "__" in name else ""
+            await self._emit_status(phase="tool", tool=name,
+                                    mcp=mcp_server,
+                                    skills=self._skill_names)
+            workflow = getattr(self.ctx, "workflow", None)
+            if workflow is not None:
+                await workflow.on_tool_start(name)
+            t0 = time.perf_counter()
+            try:
+                if name == "run_shell":
+                    result = await self.tools[name](command=args.get("command", ""),
+                                                    timeout=args.get("timeout", 30))
+                else:
+                    result = await self.tools[name](**args)
+                ok = not result.startswith("[error]")
+            except Exception as e:  # noqa: BLE001
+                result = f"[error] {type(e).__name__}: {e}"
+                ok = False
+            duration_ms = (time.perf_counter() - t0) * 1000.0
+            if self.audit is not None:
+                try:
+                    from ..audit import emit_tool_audit
+
+                    await emit_tool_audit(
+                        self.audit,
+                        agent_id=self.agent_name,
+                        session_id=audit_meta["session_id"],
+                        trace_id=audit_meta["trace_id"],
+                        tool_name=name, method=name,
+                        args=args, result=result, ok=ok,
+                        duration_ms=duration_ms,
+                        source="mcp_proxy" if "__" in name else "coordinator",
+                        mcp_server=mcp_server or None)
+                except Exception:  # noqa: BLE001
+                    pass
+            if workflow is not None:
+                await workflow.on_tool_end(name, ok)
+            await self.emit("tool_result", {"id": tc.get("id"), "name": name,
+                                            "output": result, "ok": ok})
+        self._run_seq.append({
+            "name": name, "ok": ok,
+            "args": _snippet(args, 200),
+            "result": _snippet(result, 300),
+        })
+        self._run_artifacts.extend(_artifact_ids(name, result))
+        # Exact artifact linkage from the tool itself (figures, saved artifacts,
+        # notebook outputs), not text scraping.
+        produced = list(getattr(self.ctx, "last_artifact_ids", []) or [])
+        if produced:
+            self._run_artifacts.extend(produced)
+            self.ctx.last_artifact_ids = []
+        structured = getattr(self.ctx, "last_metrics", None) or {}
+        if structured:
+            self._run_metrics.update(structured)
+            if self.ctx.variant:
+                self.ctx.variant.setdefault("metrics", {}).update(structured)
+            self.ctx.last_metrics = None
+        if name not in ("start_run", "finish_run", "create_experiment"):
+            # Only compute tools feed the regex metric fallback, so bookkeeping
+            # output (e.g. a config dump) isn't misread.
+            self._run_metrics.update(_extract_metrics(result))
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id", ""),
+            "content": result,
+        })
+        self.persist("tool", result, self._exp_meta(
+            {"name": name,
+             "mcp": tool_mcp_action(name)[0],
+             "action": tool_mcp_action(name)[1],
+             "tool_call_id": tc.get("id", "")}))
+        return ok
+
+    def _tool_summary(self) -> list[dict]:
+        """The turn's tool trail, namespaced into (mcp, action) pairs so the
+        chat bubbles and Experiments timeline can label what Fox actually did."""
+        out = []
+        for t in self._run_seq:
+            mcp, action = tool_mcp_action(t.get("name", ""))
+            out.append({"name": t.get("name", ""), "mcp": mcp, "action": action,
+                        "ok": t.get("ok", False)})
+        return out
+
     def _record_run(self, messages: list[dict], status: str, text: str) -> None:
         prompt = ""
         for m in reversed(messages):
@@ -441,6 +498,7 @@ class Coordinator:
                       or self.ctx.experiment_config,
             "label": (variant.get("label") if variant else None),
             "parent_run_id": getattr(self.ctx, "parent_run_id", None),
+            "model": self.model_name,
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)

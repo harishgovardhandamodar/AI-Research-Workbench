@@ -142,6 +142,12 @@ class ProjectStore:
             c.execute("ALTER TABLE experiments ADD COLUMN plan TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: older databases predate the per-run model label (which LLM
+        # produced the run) used by chat bubbles and the Experiments timeline.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN model TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -257,24 +263,26 @@ class ProjectStore:
                 config: dict | None = None,
                 label: str | None = None,
                 kind: str = "agent_run",
-                parent_run_id: int | None = None) -> int:
+                parent_run_id: int | None = None,
+                model: str | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
         privacy_workflow, ...) so the Experiments UI can render it generically.
         `parent_run_id` links a run to the run it was derived from (improve
         loops, reruns, branching) for the branch-history graph.
+        `model` records which LLM produced the run, for the chat/timeline label.
         """
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
-            " label, kind, parent_run_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " label, kind, parent_run_id, model)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
              json.dumps(metrics or {}), json.dumps(review or {}),
              experiment_id, json.dumps(config or {}), label or None,
-             kind or "agent_run", parent_run_id))
+             kind or "agent_run", parent_run_id, model or None))
         self._conn.commit()
         return cur.lastrowid
 
@@ -320,7 +328,8 @@ class ProjectStore:
                 "config": _jload(r["config"], {}),
                 "label": r["label"],
                 "kind": r["kind"] or "agent_run",
-                "parent_run_id": r["parent_run_id"]}
+                "parent_run_id": r["parent_run_id"],
+                "model": r["model"]}
 
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",

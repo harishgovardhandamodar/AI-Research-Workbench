@@ -8,6 +8,30 @@ Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
 ## What's New
 
+**🤖 LangGraph orchestration (reliable agents)** — the agent loop is now also
+available as an explicit LangGraph state machine (`invoke → tools → [check]`)
+behind an off-by-default flag: set `FOX_ORCHESTRATOR=langgraph` to enable a
+**JSON-schema-enforced QA gate** that verifies each final answer is complete and
+supported by the tool outputs and feeds corrective instructions back, plus a
+per-turn step budget and cooperative Stop. The classic loop stays the default,
+and both loops share one tool executor (`Coordinator._exec_tool_call`), so
+events, audit, artifacts and run records are identical. Optional deps:
+`pip install -e ".[agent]"` (already baked into the Docker image). See
+[docs/langchain-orchestration-plan.md](docs/langchain-orchestration-plan.md).
+
+**🦊 Chat provenance labels** — assistant bubbles now read
+**Fox - <model> - <MCP> - <action>** (e.g. `FOX - QWEN3.6:LATEST - GITHUB - PUSH`)
+instead of a bare "Fox", so a glance shows which model and which MCP tool produced
+the reply. The MCP/action tags are clickable to filter the chat, and the same
+info appears in the Experiments timeline, graph and run-detail panels. The model
+that produced each run is persisted per-run and shown across those views.
+
+**📊 Server resource HUD (DGXTOP-style)** — a floating 📊 button toggles a faded,
+translucent overlay showing live host CPU / memory / load, per-GPU utilization,
+temperature, power and memory (`nvidia-smi`), and a top-process table — served by
+the backend at `/api/system/stats` (cached), polling every 4s, sharpening on
+hover. The chat window also jumps to the latest message on refresh/project switch.
+
 **🦊 Headless kernel server** — the persistent Python kernel now runs as a
 standalone app (`fox-kernel` / `python -m backend.kernels.server`) with a REST +
 WebSocket API for executing code, inspecting variables/env, resetting state and

@@ -122,11 +122,34 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
         if workflow is not None:
             await workflow.update_stage(f"iter{i}", "done",
                                         message=f"Iteration {i} complete")
+        from .agents.coordinator import tool_mcp_action
+        tools = (result or {}).get("tools") or []
+        model = (result or {}).get("model") or ""
+        mcp = action = ""
+        extra: list[str] = []
+        seen: set[str] = set()
+        for t in tools:
+            m, _ = tool_mcp_action(t.get("name", ""))
+            if m and m != "core" and m not in seen:
+                seen.add(m)
+                extra.append(m)
+        for t in reversed(tools):
+            m, a = tool_mcp_action(t.get("name", ""))
+            if mcp == "":
+                mcp, action = m, a
+            if a and a not in extra:
+                extra.append(a)
+                break
+        itags = list(dict.fromkeys(["improve loop"] + extra))
         amid = store.add_message("assistant", text,
-                                 {"tags": ["improve loop"],
-                                  "experiment_id": experiment_id})
+                                 {"tags": itags,
+                                  "experiment_id": experiment_id,
+                                  "mcp_name": mcp, "action": action,
+                                  "tools": tools, "model": model})
         await emit("assistant_message", {"id": amid, "content": text,
-                                         "tags": ["improve loop"],
+                                         "tags": itags,
+                                         "mcp_name": mcp, "action": action,
+                                         "tools": tools, "model": model,
                                          "experiment_id": experiment_id,
                                          "created_at": _created(store, amid)})
 

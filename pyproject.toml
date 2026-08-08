@@ -24,6 +24,14 @@ dependencies = [
 [project.optional-dependencies]
 jupyter = ["jupyter_server>=2.0"]
 audit = ["streamlit>=1.30"]
+# LangChain / LangGraph orchestration for the reliable agent coordinator
+# (optional: the classic coordinator loop works without these). Imported lazily.
+agent = [
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph>=0.2",
+]
 
 [project.scripts]
 fox = "cli.main:main"

@@ -334,3 +334,12 @@ async def delete_mcp_server(name: str):
     CONFIG["mcp"]["servers"] = out
     await rebuild_mcp()
     return {"deleted": True}
+
+
+@router.get("/api/system/stats")
+async def system_stats():
+    """Live server resource usage (CPU / memory / GPU / processes) for the
+    faded dgxtop-style HUD. Cached server-side for a few seconds."""
+    from .. import system_stats as stats
+
+    return stats.get_stats()

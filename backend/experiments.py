@@ -146,6 +146,18 @@ def unify_record(run: dict, artifact_store=None) -> dict:
         fresh = bool(cfg.get("fresh"))
     label = run.get("label") or (
         "notebook" if kind == "notebook" else f"run {run.get('id')}")
+    tools = []
+    mcp = action = ""
+    for t in run.get("tool_sequence") or []:
+        name = (t or {}).get("name") or ""
+        if name:
+            if "__" in name:
+                m, _, a = name.partition("__")
+            else:
+                m, a = "core", name
+            mcp, action = m, a  # the last executed tool labels the run
+            tools.append({"name": name, "mcp": m, "action": a,
+                          "ok": bool((t or {}).get("ok"))})
     return {
         "id": run.get("id"),
         "kind": kind,
@@ -158,6 +170,10 @@ def unify_record(run: dict, artifact_store=None) -> dict:
         "artifacts": artifacts,
         "prompt": run.get("prompt") or "",
         "experiment_id": run.get("experiment_id"),
+        "model": run.get("model") or "",
+        "mcp": mcp,
+        "action": action,
+        "tools": tools,
     }
 
 
@@ -267,6 +283,10 @@ def build_graph(records: list[dict], artifact_store=None) -> dict:
             "artifacts": u["artifacts"],
             "prompt": u["prompt"],
             "experiment_id": u["experiment_id"],
+            "model": u["model"],
+            "mcp": u["mcp"],
+            "action": u["action"],
+            "tools": u["tools"],
         })
     edges = []
     for i in range(len(records)):

@@ -372,6 +372,37 @@ def message_tags(role: str, text: str) -> list[str]:
     return tags
 
 
+def tool_turn_tags(tools: list[dict]) -> list[str]:
+    """Derive navigable tags from a turn's tool trail: the distinct MCP servers
+    touched (e.g. 'github', 'eda_profiler') plus the final action, so bubbles
+    can be recognised and filtered without the noise of every intermediate
+    tool call."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in tools or []:
+        mcp = (t.get("mcp") or "").strip()
+        if mcp and mcp != "core" and mcp not in seen:
+            seen.add(mcp)
+            out.append(mcp)
+    for t in reversed(tools or []):
+        action = (t.get("action") or "").strip()
+        if action and action not in out:
+            out.append(action)
+            break
+    return out
+
+
+def tool_turn_label(tools: list[dict]) -> tuple[str, str]:
+    """The (mcp, action) pair that best labels a turn's final bubble — the last
+    tool executed, since the reply usually follows straight from it."""
+    for t in reversed(tools or []):
+        mcp = (t.get("mcp") or "").strip()
+        action = (t.get("action") or "").strip()
+        if mcp and action:
+            return mcp, action
+    return "", ""
+
+
 async def run_privacy_workflow(rt: ProjectRuntime, emit,
                                fresh: bool = False, compare: bool = False,
                                prompt: str = "") -> str:
@@ -913,7 +944,8 @@ async def ws_chat(ws: WebSocket, name: str):
             experiment_id=r.get("experiment_id") or None,
             config=r.get("config"),
             label=r.get("label"),
-            parent_run_id=r.get("parent_run_id") or None)
+            parent_run_id=r.get("parent_run_id") or None,
+            model=r.get("model") or None)
         # Auto-commit experiment artifacts to the management repo (best-effort,
         # off the event loop) when a run is part of an experiment.
         try:
@@ -1118,13 +1150,20 @@ async def ws_chat(ws: WebSocket, name: str):
                 if god_mode:
                     await emit("notice", {"message":
                         f"⚡ God-mode run finished — sandbox: {god_dir}"})
+                tools = (result or {}).get("tools") or []
+                model = (result or {}).get("model") or ""
+                mcp, action = tool_turn_label(tools)
+                atags = message_tags("assistant", result.get("text", ""))
+                atags = list(dict.fromkeys(atags + tool_turn_tags(tools)))
                 amid = rt.store.add_message(
                     "assistant", result.get("text", ""),
-                    {"tags": message_tags("assistant", result.get("text", ""))})
+                    {"tags": atags, "mcp_name": mcp, "action": action,
+                     "tools": tools, "model": model})
                 await emit("assistant_message", {"id": amid,
                                                  "content": result.get("text", ""),
-                                                 "tags": message_tags("assistant",
-                                                                      result.get("text", "")),
+                                                 "tags": atags,
+                                                 "mcp_name": mcp, "action": action,
+                                                 "tools": tools, "model": model,
                                                  "created_at": _msg_created_at(rt, amid)})
                 # Goal progress vs. the best-known run (improvement tracking).
                 runs_now = rt.store.list_runs()
