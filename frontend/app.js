@@ -1659,7 +1659,8 @@ function graphViewRestore(svg, key, W, H) {
 // Pointer-drag pan + wheel zoom (zooms toward the cursor) on a graph wrap.
 // `getSvg` resolves the <svg> (it may be rebuilt by re-renders); `skipSel` is a
 // selector for interactive elements (nodes) that should not start a drag.
-function attachGraphPan(wrap, key, getSvg, skipSel) {
+function attachGraphPan(wrap, key, getSvg, skipSel, opts) {
+  const noWheel = !!(opts && opts.noWheel);
   const st = { drag: null };
   wrap.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -1684,6 +1685,7 @@ function attachGraphPan(wrap, key, getSvg, skipSel) {
   const end = () => { st.drag = null; wrap.style.cursor = ""; };
   wrap.addEventListener("pointerup", end);
   wrap.addEventListener("pointercancel", end);
+  if (noWheel) return st;
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const svg = getSvg();
@@ -4790,7 +4792,7 @@ const expPan = {};
 EXP_VIEWS.forEach((id) => {
   const wrap = $(id);
   const getSvg = () => wrap.querySelector("svg");
-  expPan[id] = attachGraphPan(wrap, id, getSvg, ".exp-node, .exp-subnode");
+  expPan[id] = attachGraphPan(wrap, id, getSvg, ".exp-node, .exp-subnode", { noWheel: true });
   attachGraphControls(wrap, id, getSvg, 1240, id === "expmain-timeline" ? 330 : 580);
 });
 ["expmain-timeline", "expmain-graph"].forEach((id) => {
