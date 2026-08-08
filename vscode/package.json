@@ -1,0 +1,51 @@
+{
+  "name": "fox-experiment-tracking",
+  "displayName": "Fox — Experiment Tracking",
+  "description": "Experiment tracking, run inspection, campaigns, benchmarks and experimentation documentation for the Local · Open · Agentic Experimentation Workbench.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other", "Data Science"],
+  "activationEvents": [
+    "onCommand:fox.openTracking",
+    "onCommand:fox.generateReport",
+    "onCommand:fox.nextResearch",
+    "onCommand:fox.summary",
+    "onCommand:fox.refresh"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "fox.openTracking", "title": "Fox: Open Experiment Tracking" },
+      { "command": "fox.refresh", "title": "Fox: Refresh Tracking" },
+      { "command": "fox.generateReport", "title": "Fox: Generate Experimentation Report" },
+      { "command": "fox.nextResearch", "title": "Fox: Next Research Agenda" },
+      { "command": "fox.summary", "title": "Fox: Summary of Findings" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "fox.openTracking" },
+        { "command": "fox.refresh" },
+        { "command": "fox.generateReport" },
+        { "command": "fox.nextResearch" },
+        { "command": "fox.summary" }
+      ]
+    },
+    "configuration": {
+      "title": "Fox",
+      "properties": {
+        "fox.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:8765",
+          "description": "Fox workbench base URL (the backend the extension talks to)."
+        },
+        "fox.project": {
+          "type": "string",
+          "default": "",
+          "description": "Project name to track. Blank = auto-select the first project."
+        }
+      }
+    }
+  }
+}

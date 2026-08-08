@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="${cssUri}">
+<title>Fox · Experiment Tracking</title>
+</head>
+<body>
+  <header class="topbar">
+    <select id="project-select" title="Project"><option value="">loading…</option></select>
+    <span class="spacer"></span>
+    <button id="btn-refresh" title="Refresh">↻</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="experiments">Experiments</button>
+    <button class="tab" data-tab="campaigns">Campaigns</button>
+    <button class="tab" data-tab="benchmarks">Benchmarks</button>
+    <button class="tab" data-tab="learnings">Learnings</button>
+    <button class="tab" data-tab="docs">Docs &amp; summary</button>
+  </nav>
+
+  <section id="tab-experiments" class="pane active">
+    <div class="pane-head">
+      <button id="btn-new-exp" class="primary">+ New experiment</button>
+      <span class="spacer"></span>
+      <button id="btn-doc-report">📄 Report</button>
+      <button id="btn-doc-next">▶ Next</button>
+      <button id="btn-doc-summary">📋 Summary</button>
+    </div>
+    <div id="exp-form" class="card hidden">
+      <input id="exp-name" placeholder="name" />
+      <input id="exp-hyp" placeholder="hypothesis" />
+      <input id="exp-metric" placeholder="goal metric (e.g. accuracy)" />
+      <input id="exp-target" placeholder="target (e.g. 0.9)" type="number" step="any" />
+      <label><input id="exp-hb" type="checkbox" checked /> higher is better</label>
+      <button id="exp-create" class="primary">Create</button>
+      <button id="exp-cancel">Cancel</button>
+    </div>
+    <div id="exp-list"></div>
+    <div id="exp-detail" class="card hidden"></div>
+  </section>
+
+  <section id="tab-campaigns" class="pane">
+    <div class="pane-head"><button id="btn-new-campaign">🧭 New campaign</button></div>
+    <div id="campaign-form" class="card hidden">
+      <input id="campaign-name" placeholder="campaign name" />
+      <input id="campaign-question" placeholder="research question" />
+      <input id="campaign-metric" placeholder="goal metric" />
+      <button id="campaign-create" class="primary">Start</button>
+      <button id="campaign-cancel">Cancel</button>
+    </div>
+    <div id="campaign-list"></div>
+  </section>
+
+  <section id="tab-benchmarks" class="pane">
+    <div class="pane-head"><button id="btn-new-eval">⚖ New benchmark</button></div>
+    <div id="eval-form" class="card hidden">
+      <input id="eval-name" placeholder="benchmark name" />
+      <input id="eval-metric" placeholder="goal metric" />
+      <input id="eval-models" placeholder="models, comma-separated" />
+      <textarea id="eval-prompt" rows="3" placeholder="task prompt"></textarea>
+      <button id="eval-create" class="primary">Start</button>
+      <button id="eval-cancel">Cancel</button>
+    </div>
+    <div id="eval-list"></div>
+  </section>
+
+  <section id="tab-learnings" class="pane">
+    <div id="learning-list"></div>
+  </section>
+
+  <section id="tab-docs" class="pane">
+    <div class="card">
+      <h3>Experimentation documentation</h3>
+      <p class="muted">Generate the project report, the next-research agenda, or a summary of findings — saved to <code>reports/</code> and opened in the editor.</p>
+      <div class="row">
+        <button id="btn-doc-report2" class="primary">📄 Experimentation report</button>
+        <button id="btn-doc-next2">▶ Next research</button>
+        <button id="btn-doc-summary2">📋 Summary of findings</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>How this works</h3>
+      <p class="muted">This extension talks to the Fox workbench API at <code id="cfg-base">…</code>. Set <code>fox.baseUrl</code> and <code>fox.project</code> in settings if the workbench runs elsewhere.</p>
+    </div>
+  </section>
+
+  <div id="toast" class="hidden"></div>
+  <script src="${jsUri}"></script>
+</body>
+</html>
