@@ -564,12 +564,12 @@ async def project_campaigns_create(name: str, body: dict):
 
 
 @router.post("/api/projects/{name}/campaigns/{cid}/run")
-async def project_campaign_run(name: str, cid: int, body: dict):
+async def project_campaign_run(name: str, cid: int, body: dict | None = None):
     """Start (or resume) a campaign in the background."""
     rt = get_runtime(name)
     if rt.store.get_campaign(cid) is None:
         raise HTTPException(status_code=404, detail="campaign not found")
-    ok, msg = rt.start_campaign(cid, plan_steps=body.get("plan_steps") if body else None)
+    ok, msg = rt.start_campaign(cid, plan_steps=(body or {}).get("plan_steps"))
     if not ok:
         raise HTTPException(status_code=409, detail=msg)
     return {"campaign": rt.store.get_campaign(cid), "running": True}
