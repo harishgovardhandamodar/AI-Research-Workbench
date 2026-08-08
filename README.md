@@ -5,6 +5,15 @@ A fully local, open-source experiment workbench: the local-models equivalent of
 so your data never leaves home unless you explicitly approve a network command.
 The assistant persona is **Fox** (🦊).
 
+## Documentation
+
+- **GitBook** — the full, navigable documentation site: see
+  [gitbook/SUMMARY.md](gitbook/SUMMARY.md) (quick start, user guide, feature
+  deep-dives, REST API reference, data model, CLI, development).
+- **Guides** — `HOW-to-USE.md` (practical walkthrough) and `commands.md`
+  (chat slash commands).
+- **Design notes** — per-feature-round plans under `docs/`.
+
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
 ## What's New
