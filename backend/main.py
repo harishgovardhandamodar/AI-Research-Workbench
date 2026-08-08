@@ -690,6 +690,7 @@ _SLASH_INTENTS = {
     "/sandbox": "godmode",
     "/improve": "improve_loop",
     "/autoresearch": "autoresearch",
+    "/campaign": "campaign",
 }
 
 _SLASH_PROMPTS = {
@@ -698,6 +699,7 @@ _SLASH_PROMPTS = {
     "/sandbox": "Run a thorough experiment with full access and summarize what you did.",
     "/improve": "Improve the latest experiment toward its goal.",
     "/autoresearch": "accuracy",
+    "/campaign": "Plan and run a research campaign to investigate this question.",
 }
 
 
@@ -732,6 +734,7 @@ HELP_TEXT = """\
 | `/status` | Show model / config / MCP status |
 | `/clear` | Clear this project's conversation |
 | `/autoresearch [metric]` | Run the autonomous research loop over `research/experiment.py` |
+| `/campaign [question]` | Plan and run a multi-step research campaign (synthesis report) |
 
 UI switches: `?flat=1` plain bubbles (default) · `?sets=1` grouped collapsible sets.
 """
@@ -1070,6 +1073,9 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "retry_stage":
                     # Retry a failed workflow stage (resumable pipelines only).
                     user_tags = ["retry stage"]
+                elif intent == "campaign":
+                    # Round-5: plan + run a multi-step research campaign.
+                    user_tags = ["campaign"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1116,6 +1122,22 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("status", {"message": ""})
                     await emit("done", {})
                     return
+                if intent == "campaign":
+                    await emit("status", {"message": "Planning a research campaign…"})
+                    from .campaign import run_campaign
+                    cfg = dict(msg_extra.get("campaign") or {})
+                    name = (cfg.get("name") or "campaign").strip() or "Campaign"
+                    question = text or cfg.get("question") or ""
+                    goal_metric = (cfg.get("goal_metric") or "").strip()
+                    higher = bool(cfg.get("higher_better", True))
+                    cid = rt.store.create_campaign(name, question, goal_metric, higher)
+                    plan_steps = cfg.get("plan_steps")
+                    result = await run_campaign(
+                        rt, coordinator, rt.build_llm_messages, cid,
+                        emit=emit, workflow=rt.workflow, plan_steps=plan_steps)
+                    await emit("status", {"message": ""})
+                    await emit("done", {})
+                    return
                 if intent == "retry_stage":
                     await emit("status", {"message": "Retrying workflow stage…"})
                     snap = rt.workflow.snapshot()
@@ -1135,8 +1157,19 @@ async def ws_chat(ws: WebSocket, name: str):
                             await emit("status", {"message": ""})
                             await emit("done", {})
                             return
+                    if inv.get("kind") == "campaign" and str(stage).startswith("step"):
+                        from .campaign import run_campaign
+                        n = str(stage).replace("step", "")
+                        cid = inv.get("campaign_id")
+                        if str(n).isdigit() and cid is not None:
+                            result = await run_campaign(
+                                rt, coordinator, rt.build_llm_messages, int(cid),
+                                emit=emit, workflow=rt.workflow, resume_step=int(n))
+                            await emit("status", {"message": ""})
+                            await emit("done", {})
+                            return
                     await emit("error", {"message":
-                        "Cannot retry this stage — no resumable improve-loop workflow is active."})
+                        "Cannot retry this stage — no resumable workflow is active."})
                     await emit("done", {})
                     return
                 # A free-form turn with no experiment context inherits the

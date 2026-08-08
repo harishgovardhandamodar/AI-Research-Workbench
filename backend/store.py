@@ -113,6 +113,23 @@ class ProjectStore:
                 baseline_value REAL, outcome_value REAL, delta REAL,
                 improved INTEGER, created_at REAL, applied_at REAL)"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT, research_question TEXT,
+                goal_metric TEXT, higher_better INTEGER,
+                status TEXT DEFAULT 'planned',
+                report TEXT, created_at REAL, updated_at REAL)"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS campaign_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER, step_order INTEGER,
+                title TEXT, kind TEXT, hypothesis TEXT, plan TEXT,
+                experiment_id INTEGER, best_run_id INTEGER,
+                status TEXT DEFAULT 'planned',
+                note TEXT, created_at REAL, updated_at REAL)"""
+        )
         # Migration: older databases predate the metrics column.
         try:
             c.execute("ALTER TABLE runs ADD COLUMN metrics TEXT")
@@ -469,6 +486,106 @@ class ProjectStore:
                 "outcome_value": r["outcome_value"], "delta": r["delta"],
                 "improved": r["improved"], "created_at": r["created_at"],
                 "applied_at": r["applied_at"]}
+
+    # -- campaigns (long-horizon research: plan → steps → synthesis) --------
+    def create_campaign(self, name: str, research_question: str = "",
+                        goal_metric: str = "", higher_better: bool = True) -> int:
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO campaigns (name, research_question, goal_metric,"
+            " higher_better, status, created_at, updated_at)"
+            " VALUES (?,?,?,?, 'planned', ?, ?)",
+            (name, research_question, goal_metric, 1 if higher_better else 0,
+             now, now))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_campaign(self, cid: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM campaigns WHERE id=?", (cid,)).fetchone()
+        return self._row_campaign(row) if row else None
+
+    def list_campaigns(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM campaigns ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in reversed(rows):
+            c = self._row_campaign(r)
+            c["steps"] = len(self.list_campaign_steps(c["id"]))
+            out.append(c)
+        return out
+
+    def update_campaign(self, cid: int, *, status: str | None = None,
+                        report: str | None = None) -> None:
+        sets, vals = [], []
+        if status is not None:
+            sets.append("status=?"); vals.append(status)
+        if report is not None:
+            sets.append("report=?"); vals.append(report)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        self._conn.execute(
+            f"UPDATE campaigns SET {', '.join(sets)} WHERE id=?", (*vals, cid))
+        self._conn.commit()
+
+    def _row_campaign(self, r) -> dict:
+        return {"id": r["id"], "name": r["name"],
+                "research_question": r["research_question"] or "",
+                "goal_metric": r["goal_metric"] or "",
+                "higher_better": bool(r["higher_better"]),
+                "status": r["status"] or "planned",
+                "report": r["report"] or "",
+                "created_at": r["created_at"], "updated_at": r["updated_at"]}
+
+    def add_campaign_step(self, campaign_id: int, step_order: int, title: str,
+                          kind: str = "experiment", hypothesis: str = "",
+                          plan: str = "") -> int:
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO campaign_steps (campaign_id, step_order, title, kind,"
+            " hypothesis, plan, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?, 'planned', ?, ?)",
+            (campaign_id, step_order, title, kind, hypothesis, plan, now, now))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_campaign_steps(self, campaign_id: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM campaign_steps WHERE campaign_id=? ORDER BY step_order",
+            (campaign_id,)).fetchall()
+        return [self._row_campaign_step(r) for r in rows]
+
+    def update_campaign_step(self, sid: int, *, status: str | None = None,
+                             experiment_id: int | None = None,
+                             best_run_id: int | None = None,
+                             note: str | None = None) -> None:
+        sets, vals = [], []
+        if status is not None:
+            sets.append("status=?"); vals.append(status)
+        if experiment_id is not None:
+            sets.append("experiment_id=?"); vals.append(experiment_id)
+        if best_run_id is not None:
+            sets.append("best_run_id=?"); vals.append(best_run_id)
+        if note is not None:
+            sets.append("note=?"); vals.append(note)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        self._conn.execute(
+            f"UPDATE campaign_steps SET {', '.join(sets)} WHERE id=?", (*vals, sid))
+        self._conn.commit()
+
+    def _row_campaign_step(self, r) -> dict:
+        return {"id": r["id"], "campaign_id": r["campaign_id"],
+                "step_order": r["step_order"], "title": r["title"] or "",
+                "kind": r["kind"] or "experiment", "hypothesis": r["hypothesis"] or "",
+                "plan": r["plan"] or "", "experiment_id": r["experiment_id"],
+                "best_run_id": r["best_run_id"], "status": r["status"] or "planned",
+                "note": r["note"] or "", "created_at": r["created_at"],
+                "updated_at": r["updated_at"]}
 
     def _row_run(self, r, include_code: bool = False) -> dict:
         d = {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],

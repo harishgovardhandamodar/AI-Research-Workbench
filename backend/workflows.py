@@ -59,6 +59,12 @@ def improve_stages(iterations: int) -> list[dict]:
             for i in range(1, max(1, int(iterations)) + 1)]
 
 
+def campaign_stages(steps: int) -> list[dict]:
+    """Stages for a research campaign: one per planned step."""
+    return [{"id": f"step{i}", "label": f"Step {i}"}
+            for i in range(1, max(1, int(steps)) + 1)]
+
+
 # Privacy peer-exploitation / red-team / DP-robustness pipeline.
 PRIVACY_STAGES: list[dict] = [
     {"id": "stage1", "label": "Peer-in-distribution exploitation"},

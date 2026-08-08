@@ -543,6 +543,24 @@ async def project_suggestions(name: str, experiment_id: str = "",
     return {"suggestions": rt.store.list_suggestions(eid, status or None)}
 
 
+@router.get("/api/projects/{name}/campaigns")
+async def project_campaigns(name: str):
+    """Research campaigns for the project (id/name/question/status/steps)."""
+    rt = get_runtime(name)
+    return {"campaigns": rt.store.list_campaigns()}
+
+
+@router.get("/api/projects/{name}/campaigns/{cid}")
+async def project_campaign(name: str, cid: int):
+    """One campaign with its steps."""
+    rt = get_runtime(name)
+    c = rt.store.get_campaign(cid)
+    if c is None:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    c["steps"] = rt.store.list_campaign_steps(cid)
+    return {"campaign": c}
+
+
 @router.post("/api/projects/{name}/suggestions/{sid}/resolve")
 async def project_suggestion_resolve(name: str, sid: int):
     """Resolve (regression-check) an applied suggestion on demand."""
