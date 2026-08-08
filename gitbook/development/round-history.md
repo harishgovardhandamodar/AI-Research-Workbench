@@ -25,6 +25,7 @@ and a test file under `tests/`. The progression:
 | 23 | Horizontal experiment slider | The Experiments list is a horizontally scrollable slider (‹ › arrows, all experiments rendered, no chunk paging), so old experiments are always reachable; reveal scrolls the strip to center the card |
 | 24 | Show every run | The graph/timeline and branch endpoints no longer cap at the 50-run default (`list_runs(limit=None)`), so the chart, cards and runs list agree on the real run count (e.g. 93) instead of truncating to 50 |
 | 25 | Tool-step budget & continue | `agent.max_iters` (tool steps per turn) is editable in Settings and takes effect immediately; when a turn hits the limit the chat shows a one-click **Continue** button |
+| 26 | Pipeline view | Every assistant turn gets a 🛠 **Pipeline** block in the chat (and each run in the experiment detail modal) summarizing the whole run: experiment + goal, strategy, data steps, the ordered tool actions with code snippets, and finally the hyperparameters / model config + metrics — also re-attached to older messages after runs load |
 | + | Tooling | VS Code extension (experiment tracking + documentation) |
 
 ## Design docs

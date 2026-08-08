@@ -36,6 +36,23 @@ it — click it and the agent picks up where it left off with a fresh budget. To
 let the agent do more work per turn, raise **Max tool steps per turn** in
 Settings (⚙).
 
+## Pipeline view
+
+Each assistant reply that produced a run carries a 🛠 **Pipeline** block
+(collapsible) summarizing the entire turn at a glance:
+
+- **Experiment** — name, goal metric/target, and the **strategy** (baseline,
+  parameter sweep, improve-loop iteration, restore, …).
+- **Data** — the data-related steps and datasets touched.
+- **Steps** — the ordered tool actions with phase tags (🧬 Data · 🔍 Explore ·
+  🧠 Model · 📊 Evaluate · 💾 Persist) and the code/args snippet each ran.
+- **Hyperparameters / model config** — the final variant's config (model,
+  epochs, lr, …) and the **metrics** the run reported (goal ★ highlighted).
+
+The same per-run pipeline is available in the experiment **detail modal** — click
+any run there to expand its full pipeline. Pipelines are also re-attached to
+older messages once the run list loads, so history shows the same detail.
+
 ## Reviewer
 
 After each turn, the background reviewer re-reads the recent transcript and

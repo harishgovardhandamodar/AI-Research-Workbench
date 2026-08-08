@@ -558,6 +558,7 @@ function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model, 
     enhanceCodeBlocks(el.body);
     maybeAttachRepoButtons(el, tags);
     maybeAttachContinueBtn(el);
+    maybeAttachPipeline(el, tools, model, expId);
     tagMessageExperiment(el, expId);
     if (mid != null) el.div.dataset.mid = mid;
     if (ts) {
@@ -591,6 +592,145 @@ function maybeAttachContinueBtn(el) {
     sendChat("Continue from where you left off and finish the task. Take as many tool steps as you need — don't stop early.");
   });
   el.div.appendChild(bar);
+}
+
+/* ---------- pipeline view (what the agent did, step by step) ---------- */
+
+// Best-effort phase classification from the tool name + the args/code snippet.
+function pipelinePhase(step) {
+  const n = (step && step.name) || "";
+  const a = String((step && step.args) || "").toLowerCase();
+  const hay = n.toLowerCase() + " " + a;
+  if (/eda|profile|plot|figure|describe|missing|outlier|corr|hist|matplotlib|seaborn|scatter/i.test(hay))
+    return { id: "explore", ico: "🔍", label: "Explore" };
+  if (/sweep|\.fit\(|train|predict|model|svm|knn|logistic|regress|cluster|randomforest|xgboost|sklearn|torch|tensorflow|nn\./i.test(hay))
+    return { id: "model", ico: "🧠", label: "Model" };
+  if (/report_metric|eval|benchmark|score|verify|confusion|auc|roc|f1|accuracy|precision|recall/i.test(hay))
+    return { id: "evaluate", ico: "📊", label: "Evaluate" };
+  if (/save_artifact|notebook|commit|push|github|report|export|write_csv|\.save/i.test(hay))
+    return { id: "persist", ico: "💾", label: "Persist" };
+  if (/read_csv|read_excel|read_parquet|load|kaggle|dataset|read_sql|open\(/i.test(hay))
+    return { id: "data", ico: "🧬", label: "Data" };
+  return { id: "step", ico: "🔧", label: "Step" };
+}
+
+function pipelineStrategy(run) {
+  const kind = run.kind || "";
+  const label = (run.label || "").toLowerCase();
+  const tools = JSON.stringify((run.tool_sequence || []).map((s) => s.name || "")).toLowerCase();
+  if (/sweep|run_sweep/.test(label + " " + tools)) return { ico: "🌊", text: "parameter sweep" };
+  if (run.parent_run_id != null || /iter|improve/.test(label)) return { ico: "🔁", text: "improve-loop iteration" };
+  if (/notebook/.test(kind)) return { ico: "📓", text: "notebook run" };
+  if (/restore/.test(kind)) return { ico: "↶", text: "restore from git commit" };
+  if (/baseline/.test(label)) return { ico: "🎯", text: "baseline" };
+  if (/fresh/.test(label)) return { ico: "↻", text: "fresh rerun" };
+  return { ico: "⚙", text: "agent run" };
+}
+
+// The HTML pipeline for one run: experiment · strategy · data · steps · models ·
+// hyperparameters · metrics.
+function pipelineHtml(run, exp) {
+  const steps = (run && run.tool_sequence) || [];
+  const cfg = (run && run.config) || {};
+  const metrics = (run && run.metrics) || {};
+  const expNameStr = exp && exp.name ? exp.name : expName(run && run.experiment_id);
+  const goalMetric = exp && exp.goal_metric;
+  const strategy = pipelineStrategy(run || {});
+  let h = `<div class="pipe">`;
+  h += `<div class="pipe-head"><span class="pipe-title">🛠 Pipeline · run #${run.id}</span>`
+    + (run.status ? `<span class="exp-badge ${run.status === "done" ? "ok" : "warn"}">${esc(run.status)}</span>` : "")
+    + (run.model ? `<span class="run-ds-chip">🤖 ${esc(run.model)}</span>` : "")
+    + (run.dataset ? `<span class="run-ds-chip">🧬 ${esc(run.dataset)}</span>` : "")
+    + `<span class="spacer"></span>${run.label ? `<span class="muted">${esc(run.label)}</span>` : ""}</div>`;
+  h += `<div class="pipe-grid">`
+    + (expNameStr ? `<div><span class="rd-k">Experiment</span><span class="rd-v">${esc(expNameStr)}</span></div>` : "")
+    + (goalMetric ? `<div><span class="rd-k">Goal</span><span class="rd-v">${esc(goalMetric)} ${exp.higher_better !== false ? "↑" : "↓"}${exp.goal_target != null ? " → " + _fmtNum(exp.goal_target) : ""}</span></div>` : "")
+    + `<div><span class="rd-k">Strategy</span><span class="rd-v">${strategy.ico} ${esc(strategy.text)}</span></div>`
+    + `</div>`;
+  const dataNames = [...new Set(steps.filter((s) => pipelinePhase(s).id === "data").map((s) => foxToolName(s.name || "?")))];
+  if (dataNames.length) {
+    h += `<div class="pipe-sec">Data</div><div class="pipe-tags">`
+      + dataNames.map((d) => `<span class="run-tool-chip">🧬 ${esc(d)}</span>`).join("")
+      + `</div>`;
+  }
+  if (steps.length) {
+    h += `<div class="pipe-sec">Steps · ${steps.length}</div><ol class="pipe-steps">`;
+    steps.forEach((s, i) => {
+      const ph = pipelinePhase(s);
+      const ok = s.ok !== false;
+      h += `<li class="pipe-step ${ok ? "" : "fail"}"><span class="pipe-step-idx">${i + 1}</span>`
+        + `<span class="pipe-step-ico">${ph.ico}</span>`
+        + `<div class="pipe-step-body"><span class="pipe-step-name">${esc(foxToolName(s.name || "?"))}</span>`
+        + (s.args ? `<span class="pipe-step-args" title="${esc(s.args)}">${esc(s.args)}</span>` : "")
+        + `</div><span class="pipe-step-tag ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>`
+        + `<span class="pipe-step-phase">${esc(ph.label)}</span></li>`;
+    });
+    h += `</ol>`;
+  }
+  const cfgKeys = Object.keys(cfg).filter((k) => cfg[k] != null && !["findings", "fresh"].includes(k));
+  if (cfgKeys.length) {
+    h += `<div class="pipe-sec">Hyperparameters · model config</div><div class="run-detail-grid">`;
+    for (const k of cfgKeys) {
+      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(String(cfg[k]))}</span>`;
+    }
+    h += `</div>`;
+  }
+  const mkeys = Object.keys(metrics);
+  if (mkeys.length) {
+    h += `<div class="pipe-sec">Metrics</div><div class="run-detail-grid">`;
+    for (const k of mkeys) {
+      const isGoal = goalMetric === k;
+      h += `<span class="rd-k">${esc(k)}${isGoal ? " ★" : ""}</span><span class="rd-v">${_fmtNum(metrics[k])}</span>`;
+    }
+    h += `</div>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+// The run that belongs to a chat turn: matched by the turn's user-message id
+// (runs.message_id), falling back to the latest run of the experiment.
+function runForTurn(userId, expId) {
+  const runs = state.agentRuns || [];
+  if (userId != null) {
+    const hit = runs.find((r) => r.message_id != null && String(r.message_id) === String(userId));
+    if (hit) return hit;
+  }
+  if (expId != null) {
+    const cands = runs.filter((r) => String(r.experiment_id) === String(expId));
+    if (cands.length) return cands[cands.length - 1];
+  }
+  return null;
+}
+
+function maybeAttachPipeline(el, tools, model, expId) {
+  if (!el || !el.div) return;
+  if (el.div.querySelector(".pipe-wrap")) return;
+  const set = el.div.closest(".msg-set");
+  const userId = set ? set.dataset.userId : null;
+  const run = runForTurn(userId, expId);
+  const steps = (run && run.tool_sequence) || [];
+  const cfg = (run && run.config) || {};
+  if (!run || (!steps.length && !Object.keys(cfg).length)) return;
+  const exp = expOf(run.experiment_id) || expOf(expId);
+  const div = document.createElement("details");
+  div.className = "pipe-wrap";
+  div.open = true;
+  div.innerHTML = `<summary>🛠 Pipeline <span class="muted">· run #${run.id}${run.label ? " · " + esc(run.label) : ""}</span></summary>`
+    + pipelineHtml(run, exp);
+  el.div.appendChild(div);
+}
+
+// Re-attach pipelines to already-rendered assistant messages (e.g. after the
+// runs list finishes loading). Idempotent.
+function attachPipelinesToMessages() {
+  document.querySelectorAll(".msg.assistant").forEach((div) => {
+    const el = { div, body: div.querySelector(".msg-body") };
+    const set = div.closest(".msg-set");
+    const userId = set ? set.dataset.userId : null;
+    const expRaw = div.dataset.expId;
+    maybeAttachPipeline(el, null, null, expRaw != null ? Number(expRaw) : null);
+  });
 }
 
 function enhanceCodeBlocks(root) {
@@ -2167,6 +2307,9 @@ function renderMessagesFlat(msgs, wrap) {
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
+      maybeAttachContinueBtn(el);
+      maybeAttachPipeline(el, m.meta && m.meta.tools, m.meta && m.meta.model,
+                          m.meta && m.meta.experiment_id);
       tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       const next = msgs[i + 1];
       if ((!next || next.role === "user") && turnUser) attachTurnArtifacts(turnUser, el.div);
@@ -2237,6 +2380,9 @@ function renderMessages(msgs) {
         el.body.innerHTML = renderMarkdown(m.content);
         enhanceCodeBlocks(el.body);
         maybeAttachRepoButtons(el, mtags);
+        maybeAttachContinueBtn(el);
+        maybeAttachPipeline(el, m.meta && m.meta.tools, m.meta && m.meta.model,
+                            m.meta && m.meta.experiment_id);
         tagMessageExperiment(el, m.meta && m.meta.experiment_id);
         // Re-attach figures produced during this turn to the final assistant
         // reply of the turn, so charts survive refreshState() re-renders.
@@ -2799,6 +2945,7 @@ async function loadExperiments() {
   populateExpCompare();
   renderRuns();
   renderDatasetAnalysis();
+  attachPipelinesToMessages();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -3602,13 +3749,22 @@ function renderExpDetailBody(eid, meta, exp) {
       return `<div class="learning-row">${badge}<span>${esc(l.summary)}</span></div>`;
     }).join("");
   }
-  h += `<div class="run-detail-sec">Runs (${runs.length})</div>`;
+  h += `<div class="run-detail-sec">Runs (${runs.length}) — click a run for its pipeline</div>`;
   if (runs.length) {
     h += runs.slice(0, 50).map((r) => {
       const m = r.metrics || {};
       const mstr = Object.keys(m).length
         ? Object.keys(m).map((k) => `${k}=${_fmtNum(m[k])}`).join(", ") : "—";
-      return `<div class="learning-row"><span class="run-id">#${r.id}</span><span>${esc((r.label || "").slice(0, 30))} · ${esc(mstr.slice(0, 140))}</span></div>`;
+      const hasPipe = (r.tool_sequence && r.tool_sequence.length) || (r.config && Object.keys(r.config || {}).length);
+      if (!hasPipe) {
+        return `<div class="learning-row"><span class="run-id">#${r.id}</span><span>${esc((r.label || "").slice(0, 30))} · ${esc(mstr.slice(0, 140))}</span></div>`;
+      }
+      return `<details class="pipe-wrap expd-pipe"><summary><span class="run-id">#${r.id}</span>`
+        + `<span>${esc((r.label || "").slice(0, 30))}</span>`
+        + (r.model ? `<span class="run-ds-chip">🤖 ${esc(r.model)}</span>` : "")
+        + (r.dataset ? `<span class="run-ds-chip">🧬 ${esc(r.dataset)}</span>` : "")
+        + `<span class="muted">${esc(mstr.slice(0, 90))}</span><span class="pipe-sum">🛠 pipeline</span></summary>`
+        + pipelineHtml(r, meta) + `</details>`;
     }).join("");
   } else {
     h += `<div class="exp-empty">No runs yet — improve this experiment or run variants in chat.</div>`;
