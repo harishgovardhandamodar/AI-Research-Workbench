@@ -2850,7 +2850,15 @@ function revealExpCard(eid) {
   }
   const nav = $("exp-section-experiments");
   if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  // Center the card within the horizontal slider strip (instant — the strip's
+  // scroll-behavior:smooth would animate and never land predictably).
+  if (list && card) {
+    list.style.scrollBehavior = "auto";
+    const target = card.getBoundingClientRect().left - list.getBoundingClientRect().left
+      + list.scrollLeft - (list.clientWidth - card.getBoundingClientRect().width) / 2;
+    list.scrollLeft = Math.max(0, target);
+    list.style.scrollBehavior = "";
+  }
   card.classList.add("exp-flash");
   setTimeout(() => card.classList.remove("exp-flash"), 1800);
 }
@@ -4188,10 +4196,8 @@ function renderExpList() {
     el.innerHTML = '<div class="exp-empty">No experiments match “' + esc(q) + '”.</div>';
     return;
   }
-  const EXP_CHUNK = 30;
-  const shown = exps.slice(0, state.expChunk || EXP_CHUNK);
   el.innerHTML = "";
-  for (const e of shown) {
+  for (const e of exps) {
     const card = document.createElement("div");
     card.className = "exp-card";
     card.dataset.id = e.id;
@@ -4301,17 +4307,6 @@ function renderExpList() {
       const runs = (state.agentRuns || []).filter((r) => String(r.experiment_id) === String(eid));
       exportRunsCsv(runs, `experiment-${eid}-runs.csv`);
     }));
-  if (exps.length > shown.length) {
-    const more = document.createElement("div");
-    more.className = "exp-more";
-    const remaining = exps.length - shown.length;
-    more.innerHTML = `<button class="btn subtle small exp-more-btn">Show ${remaining} more experiment(s)…</button>`;
-    more.querySelector("button").addEventListener("click", () => {
-      state.expChunk = (state.expChunk || EXP_CHUNK) + EXP_CHUNK;
-      renderExpList();
-    });
-    el.appendChild(more);
-  }
   updateRunningIndicators();
 }
 
@@ -5689,6 +5684,16 @@ $("exp-panel").addEventListener("mousemove", (e) => {
   });
 });
 $("exp-refresh-main").addEventListener("click", loadExperiments);
+const expListPrev = $("exp-list-prev");
+const expListNext = $("exp-list-next");
+if (expListPrev) expListPrev.addEventListener("click", () => expSliderScroll(-1));
+if (expListNext) expListNext.addEventListener("click", () => expSliderScroll(1));
+function expSliderScroll(dir) {
+  const list = $("exp-list");
+  if (!list) return;
+  const cardW = 328; // card width (320) + gap (8)
+  list.scrollBy({ left: dir * cardW * 2.5, behavior: "smooth" });
+}
 $("exp-cmp-go").addEventListener("click", renderExpCompare);
 $("exp-cmp-a").addEventListener("change", renderExpCompare);
 $("exp-cmp-b").addEventListener("change", renderExpCompare);
@@ -5719,8 +5724,8 @@ $("runs-export").addEventListener("click", () => {
 });
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
-$("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; state.expChunk = 0; renderExpList(); });
-$("exp-sort").addEventListener("change", (e) => { state.expSort = e.target.value; state.expChunk = 0; renderExpList(); });
+$("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; renderExpList(); });
+$("exp-sort").addEventListener("change", (e) => { state.expSort = e.target.value; renderExpList(); });
 $("runs-search").addEventListener("input", (e) => { state.runsSearch = e.target.value; state.runsChunk = 0; renderRuns(); });
 $("runs-exp-filter").addEventListener("change", (e) => { state.runsExpFilter = e.target.value; state.runsChunk = 0; renderRuns(); });
 $("exp-chart-toggle").addEventListener("click", () => {

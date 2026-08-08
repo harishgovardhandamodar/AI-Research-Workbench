@@ -187,7 +187,11 @@
               <button id="exp-new-create" class="btn subtle small">Create</button>
             </div>
           </div>
-          <div id="exp-list"></div>
+          <div class="exp-list-slider">
+            <button id="exp-list-prev" class="exp-slider-arrow" title="Scroll to older experiments">‹</button>
+            <div id="exp-list" class="exp-list-strip"></div>
+            <button id="exp-list-next" class="exp-slider-arrow" title="Scroll to newer experiments">›</button>
+          </div>
         </div>
       </section>
 
@@ -883,7 +887,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v103";
+  window.FOX_VER = "v104";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

@@ -47,7 +47,8 @@ count, goal + best, a **trend sparkline** of the goal metric across runs with
 Actions: ★ focus, ✎ edit, status select, **🔁 Improve**, **⬇ export** (this
 experiment's runs as CSV), and **Details** (hypothesis, model pin, plan,
 learnings, leaderboard). Search + sort (recently active / best / name / runs).
-Large lists render in chunks with a **Show more** control.
+Experiments render in a **horizontal slider** (‹ › arrows, trackpad / scrollbar),
+so older experiments are always reachable — the "Show more" paging is gone.
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)
 

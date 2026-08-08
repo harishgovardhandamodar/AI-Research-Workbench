@@ -22,6 +22,7 @@ and a test file under `tests/`. The progression:
 | 20 | Experiments-tab insight & lifecycle | N-way run comparison (best-per-metric), trend stats (μ/σ/slope), goal-reached + campaign/benchmark completion alerts, clickable chart legend + best-fit trend line, time-range filter, run restore + bulk compare/export |
 | 21 | Running-experiments indicator | "Running now" strip + pulsing card badge + Running KPI for experiments the agent is actively working on (live turn, running campaign steps, running benchmarks) |
 | 22 | Dataset comparison | Runs carry a `dataset` tag (`report_dataset("real"/"synthetic")` kernel helper, config fallback, editable per-run); Datasets section groups an experiment's runs by dataset with per-dataset stats, a between-dataset metric matrix (best dataset per metric ★), and per-dataset run lists |
+| 23 | Horizontal experiment slider | The Experiments list is a horizontally scrollable slider (‹ › arrows, all experiments rendered, no chunk paging), so old experiments are always reachable; reveal scrolls the strip to center the card |
 | + | Tooling | VS Code extension (experiment tracking + documentation) |
 
 ## Design docs
