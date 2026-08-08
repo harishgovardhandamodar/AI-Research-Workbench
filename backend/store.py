@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -210,6 +211,18 @@ class ProjectStore:
             c.execute("ALTER TABLE runs ADD COLUMN env TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: round-8 — the turn's user-message id (= the audit trace_id),
+        # linking each run to its audit trail.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN message_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: round-8 — sha256 over the canonical run record so the
+        # recorded history is tamper-evident / verifiable.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN integrity_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -335,7 +348,8 @@ class ProjectStore:
                 model: str | None = None,
                 git_commit: str | None = None,
                 code: dict | list | None = None,
-                env: dict | None = None) -> int:
+                env: dict | None = None,
+                message_id: int | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
@@ -346,19 +360,35 @@ class ProjectStore:
         `git_commit` links the run to its management-repo snapshot commit
         (round-4 provenance); `code` is the full executed code per tool call;
         `env` is the kernel environment snapshot at run time.
+        `message_id` is the turn's user-message id (= the audit trace_id) and
+        `integrity_hash` is a sha256 over the canonical record (round-8).
         """
+        cfg = config or {}
+        met = metrics or {}
+        seq = tool_sequence or []
+        art = artifact_ids or []
+        cod = code or []
+        envd = env or {}
+        integrity = hashlib.sha256(_canonical_run({
+            "prompt": prompt, "reply": reply, "status": status, "kind": kind or "agent_run",
+            "label": label, "experiment_id": experiment_id,
+            "parent_run_id": parent_run_id, "model": model or "",
+            "git_commit": git_commit or "", "config": cfg, "metrics": met,
+            "tool_sequence": seq, "code": cod, "env": envd,
+        }).encode()).hexdigest()
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
-            " label, kind, parent_run_id, model, git_commit, code, env)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " label, kind, parent_run_id, model, git_commit, code, env, message_id,"
+            " integrity_hash)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
-             json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
-             json.dumps(metrics or {}), json.dumps(review or {}),
-             experiment_id, json.dumps(config or {}), label or None,
+             json.dumps(seq), json.dumps(art),
+             json.dumps(met), json.dumps(review or {}),
+             experiment_id, json.dumps(cfg), label or None,
              kind or "agent_run", parent_run_id, model or None,
-             git_commit or None, json.dumps(code or []),
-             json.dumps(env or {})))
+             git_commit or None, json.dumps(cod), json.dumps(envd),
+             message_id, integrity))
         if experiment_id is not None:
             # A fresh run means the experiment is active now: bump updated_at so
             # "most recently active" experiment selection reflects real activity.
@@ -367,6 +397,20 @@ class ProjectStore:
                 (time.time(), experiment_id))
         self._conn.commit()
         return cur.lastrowid
+
+    def verify_run_integrity(self, rid: int) -> dict | None:
+        """Recompute the canonical hash for a run and compare it to the stored
+        one (tamper-evidence). Returns {ok, hash, message}."""
+        run = self.get_run(rid, include_code=True)
+        if run is None:
+            return None
+        stored = run.get("integrity_hash") or ""
+        if not stored:
+            return {"ok": None, "hash": "",
+                    "message": "no integrity hash recorded (pre-round-8 run)"}
+        computed = hashlib.sha256(_canonical_run(run).encode()).hexdigest()
+        return {"ok": computed == stored, "hash": stored,
+                "message": "verified" if computed == stored else "MISMATCH"}
 
     def set_run_git_commit(self, rid: int, commit: str | None):
         self._conn.execute(
@@ -676,7 +720,9 @@ class ProjectStore:
              "parent_run_id": r["parent_run_id"],
              "model": r["model"] or "",
              "git_commit": r["git_commit"] or "",
-             "env": _jload(r["env"], {})}
+             "env": _jload(r["env"], {}),
+             "message_id": r["message_id"],
+             "integrity_hash": r["integrity_hash"] or ""}
         # Full executed code is large; only the single-run / diff paths request it.
         if include_code:
             d["code"] = _jload(r["code"], [])
@@ -815,3 +861,24 @@ def _jload(raw: str | None, default):
         return json.loads(raw or "null") or default
     except json.JSONDecodeError:
         return default
+
+
+def _canonical_run(run: dict) -> str:
+    """Stable serialization of a run's canonical record (round-8 integrity).
+    Normalized so add_run and verify recompute the same bytes."""
+    return json.dumps({
+        "prompt": run.get("prompt") or "",
+        "reply": run.get("reply") or "",
+        "status": run.get("status") or "",
+        "kind": run.get("kind") or "agent_run",
+        "label": run.get("label"),
+        "experiment_id": run.get("experiment_id"),
+        "parent_run_id": run.get("parent_run_id"),
+        "model": run.get("model") or "",
+        "git_commit": run.get("git_commit") or "",
+        "config": run.get("config") or {},
+        "metrics": run.get("metrics") or {},
+        "tool_sequence": run.get("tool_sequence") or [],
+        "code": run.get("code") or [],
+        "env": run.get("env") or {},
+    }, sort_keys=True, default=str)

@@ -3253,6 +3253,7 @@ function renderRuns() {
       <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
       <span class="run-meta muted">${esc(meta.join(" · "))}</span>
       ${r.git_commit ? `<span class="run-commit" title="Management-repo snapshot commit">${esc(String(r.git_commit).slice(0, 8))}</span>` : ""}
+      ${r.integrity_hash ? `<span class="run-commit" title="Content hash (integrity)">✓ ${esc(String(r.integrity_hash).slice(0, 8))}</span>` : ""}
       <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
     el.appendChild(d);
   }
@@ -5657,6 +5658,12 @@ function showBranchDetail(id) {
     }
   }
 
+  // Round-8: verifiability — content hash + audit trail.
+  h += `<div class="bd-actions">
+      <button class="btn subtle small bd-verify" data-rid="${n.id}">🔒 Verify integrity</button>
+      <button class="btn subtle small bd-audit" data-rid="${n.id}">🛡 Audit trail</button>
+    </div><div class="bd-audit-host"></div>`;
+
   // Metrics.
   if (Object.keys(metrics).length) {
     h += `<h4>Metrics</h4>`;
@@ -5710,6 +5717,50 @@ function showBranchDetail(id) {
         : `<div class="muted">Run state restored from commit ${esc(r.commit || "")} → new run #${r.run_id}.</div>`;
       loadBranches();
     } catch (e) { host.innerHTML = '<div class="muted">Restore failed: ' + esc(e.message) + "</div>"; }
+  });
+  const vbtn = el.querySelector(".bd-verify");
+  if (vbtn) vbtn.addEventListener("click", async () => {
+    const host = el.querySelector(".bd-audit-host");
+    host.innerHTML = '<div class="muted">Verifying…</div>';
+    try {
+      const r = await api(`/api/projects/${state.project}/runs/${vbtn.dataset.rid}/verify`);
+      host.innerHTML = r.ok === true
+        ? `<div class="bd-diff-sec"><b>Integrity</b><div class="bd-diff-add">✓ verified — ${esc(r.hash.slice(0, 12))}</div></div>`
+        : (r.ok === null
+            ? `<div class="bd-diff-sec"><b>Integrity</b><div class="muted">${esc(r.message || "no hash recorded")}</div></div>`
+            : `<div class="bd-diff-sec"><b>Integrity</b><div class="bd-diff-del">✗ MISMATCH — record was altered</div></div>`);
+    } catch (e) { host.innerHTML = '<div class="muted">Verify failed: ' + esc(e.message) + "</div>"; }
+  });
+  const abtn = el.querySelector(".bd-audit");
+  if (abtn) abtn.addEventListener("click", async () => {
+    const host = el.querySelector(".bd-audit-host");
+    host.innerHTML = '<div class="muted">Loading audit trail…</div>';
+    try {
+      const r = await api(`/api/projects/${state.project}/runs/${abtn.dataset.rid}/audit`);
+      const evs = r.events || [];
+      const devs = r.deviations || [];
+      let h = `<div class="bd-diff-sec"><b>Audit trail</b>` +
+        (r.chain_verified ? `<span class="sug-badge ok">chain ✓</span>` : `<span class="sug-badge warn">chain —</span>`) +
+        `</div>`;
+      if (!evs.length && !devs.length) { h += '<div class="muted">No audit events for this run (recorded before round 8?).</div>'; }
+      if (devs.length) {
+        h += `<div class="bd-diff-sec"><b>Deviations</b>`;
+        for (const d of devs.slice(0, 10)) {
+          h += `<div class="bd-diff-fail">⚠ ${esc(String(d.rule || d.severity || "deviation"))} — ${esc(String(d.explanation || "").slice(0, 200))}</div>`;
+        }
+        h += `</div>`;
+      }
+      h += `<table class="bd-diff-table"><tr><th>when</th><th>tool</th><th>sev</th><th>duration</th></tr>`;
+      for (const e of evs.slice(0, 30)) {
+        const sev = (e.severity || "info").slice(0, 7);
+        const cls = e.network ? "bd-diff-chg" : (e.filesystem ? "bd-diff-add" : "");
+        h += `<tr class="${cls}"><td>${esc(String(e.timestamp || "").slice(0, 19))}</td>` +
+          `<td>${esc(e.tool_name || e.method || "")}</td><td>${esc(sev)}</td>` +
+          `<td>${e.duration_ms != null ? Math.round(e.duration_ms) + "ms" : "—"}</td></tr>`;
+      }
+      h += `</table>`;
+      host.innerHTML = h;
+    } catch (e) { host.innerHTML = '<div class="muted">Audit failed: ' + esc(e.message) + "</div>"; }
   });
 }
 

@@ -134,7 +134,8 @@ class ProjectRuntime:
                 experiment_id=r.get("experiment_id") or None,
                 config=r.get("config"), label=r.get("label"),
                 parent_run_id=r.get("parent_run_id") or None,
-                model=r.get("model") or None, code=r.get("code"), env=r.get("env"))
+                model=r.get("model") or None, code=r.get("code"), env=r.get("env"),
+                message_id=r.get("message_id") or None)
             try:
                 r["id"] = rid
                 if r.get("experiment_id"):

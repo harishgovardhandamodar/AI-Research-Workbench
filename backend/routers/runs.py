@@ -682,6 +682,47 @@ async def project_run_commits(name: str, rid: int):
         return {"run_id": rid, "commit": None, "message": f"{type(e).__name__}: {e}"}
 
 
+@router.get("/api/projects/{name}/runs/{rid}/audit")
+async def project_run_audit(name: str, rid: int):
+    """Round-8: the audit trail for a run — its tool events (by trace_id),
+    any deviations touching those events, and the audit-chain status."""
+    rt = get_runtime(name)
+    run = rt.store.get_run(rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    from ..audit import public_event
+    mid = run.get("message_id")
+    events = []
+    deviations = []
+    chain = {}
+    try:
+        if mid is not None:
+            events = rt.audit_store.query(trace_id=str(mid), limit=500)
+            event_ids = {e.get("event_id") for e in events}
+            if event_ids:
+                for d in rt.audit_store.list_deviations(limit=1000):
+                    dids = set(d.get("event_ids") or [])
+                    if dids & event_ids:
+                        deviations.append(d)
+        chain = rt.audit_store.verify_chain()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"run_id": rid, "trace_id": str(mid) if mid is not None else None,
+            "events": [public_event(e) for e in events],
+            "deviations": deviations,
+            "chain_verified": bool(chain.get("verified"))}
+
+
+@router.get("/api/projects/{name}/runs/{rid}/verify")
+async def project_run_verify(name: str, rid: int):
+    """Round-8: recompute the run's content hash and compare to the recorded
+    one (tamper-evidence)."""
+    rt = get_runtime(name)
+    if rt.store.get_run(rid) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"run_id": rid, **rt.store.verify_run_integrity(rid)}
+
+
 @router.post("/api/projects/{name}/runs/{rid}/restore")
 async def project_run_restore(name: str, rid: int):
     """Restore a run's artifacts from its management-repo commit and fork a new

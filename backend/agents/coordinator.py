@@ -552,6 +552,8 @@ class Coordinator:
             "model": self.model_name,
             "code": self._run_code,
             "env": self._run_env,
+            "message_id": (int(self.ctx.message_id)
+                           if str(getattr(self.ctx, "message_id", "")).isdigit() else None),
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)
