@@ -2765,6 +2765,7 @@ async function loadExperiments() {
   renderRuns();
   loadGoals();
   refreshExpContext();
+  renderExpKpis();
 }
 
 async function loadSuggestions() {
@@ -2784,6 +2785,7 @@ async function loadLearnings() {
       (m[k] = m[k] || []).push(l);
       return m;
     }, {});
+    renderExpKpis();
   } catch (e) { state.learnings = state.learnings || {}; }
 }
 
@@ -2793,7 +2795,7 @@ async function loadCompareExperiments() {
   try {
     const r = await api(`/api/projects/${state.project}/experiments/compare`);
     const rows = r.rows || [];
-    if (!rows.length) { el.innerHTML = '<div class="empty">Set a goal metric on experiments to compare them.</div>'; return; }
+    if (!rows.length) { el.innerHTML = '<div class="exp-empty">Set a goal metric on experiments to compare them.</div>'; return; }
     const metric = r.metric || "metric";
     let h = `<table class="exp-rank-table"><thead><tr><th>#</th><th>experiment</th><th>${esc(metric)}</th><th>Δ best</th><th>% target</th><th>status</th></tr></thead><tbody>`;
     rows.forEach((row, i) => {
@@ -2811,6 +2813,64 @@ async function loadCompareExperiments() {
     el.innerHTML = h;
   } catch (e) { el.innerHTML = '<div class="muted">Compare failed: ' + esc(e.message) + "</div>"; }
 }
+
+/* ============================ experiments overview (round 13) ============= */
+
+function goalReachedLocal(g) {
+  const metric = g && g.metric;
+  const target = g && g.target;
+  if (!metric || target == null) return false;
+  const higher = !!(g && g.higher_better);
+  let best = null;
+  for (const r of (state.agentRuns || [])) {
+    const v = (r.metrics || {})[metric];
+    if (v == null || Number.isNaN(Number(v))) continue;
+    const n = Number(v);
+    if (best === null || (higher ? n > best : n < best)) best = n;
+  }
+  return best !== null && (higher ? best >= target : best <= target);
+}
+
+function renderExpKpis() {
+  const el = $("exp-kpis");
+  if (!el) return;
+  const learnings = Object.values(state.learnings || {}).reduce((n, a) => n + (a ? a.length : 0), 0);
+  const openGoals = (state.goals || []).filter((g) => !goalReachedLocal(g)).length;
+  const kpis = [
+    ["Experiments", (state.expList || []).length],
+    ["Runs", (state.agentRuns || []).length],
+    ["Campaigns", (state.campaigns || []).length],
+    ["Benchmarks", (state.evals || []).length],
+    ["Learnings", learnings],
+    ["Open goals", openGoals],
+  ];
+  el.innerHTML = kpis.map(([l, n]) =>
+    `<div class="exp-kpi"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
+}
+
+function initExpSectionNav() {
+  const chips = document.querySelectorAll(".exp-nav-chip");
+  const observed = [];
+  chips.forEach((chip) => {
+    const sec = $("exp-section-" + chip.dataset.target);
+    if (sec) observed.push({ chip, sec });
+    chip.addEventListener("click", () => {
+      const target = $("exp-section-" + chip.dataset.target);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  if (!("IntersectionObserver" in window)) return;
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) {
+        const target = (e.target.id || "").replace("exp-section-", "");
+        chips.forEach((c) => c.classList.toggle("active", c.dataset.target === target));
+      }
+    });
+  }, { rootMargin: "-70px 0px -72% 0px" });
+  observed.forEach((o) => obs.observe(o.sec));
+}
+
 
 /* ============================ evals (round 9) ============================= */
 
@@ -2830,6 +2890,7 @@ async function loadEvals() {
     state.evals = r.evals || [];
     state.evalRunning = !!r.running;
     renderEvals();
+    renderExpKpis();
   } catch (e) { /* silent */ }
 }
 
@@ -2910,6 +2971,7 @@ async function loadCampaigns() {
     state.campaigns = r.campaigns || [];
     state.campaignRunning = !!r.running;
     renderCampaigns();
+    renderExpKpis();
   } catch (e) { /* silent */ }
 }
 
@@ -3319,9 +3381,29 @@ $("ec-push").addEventListener("click", () => ecManagementAction("push"));
 function renderRuns() {
   const el = $("runs-list");
   if (!el) return;
-  const runs = state.agentRuns || [];
+  const all = state.agentRuns || [];
+  // Keep the experiment filter dropdown in sync.
+  const filterSel = $("runs-exp-filter");
+  if (filterSel && (state.expList || []).length) {
+    const cur = filterSel.value;
+    const opts = `<option value="">all experiments</option>` +
+      state.expList.map((e) =>
+        `<option value="${e.id}"${String(cur) === String(e.id) ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+    if (filterSel.innerHTML !== opts) filterSel.innerHTML = opts;
+  }
+  const eid = state.runsExpFilter || "";
+  const q = (state.runsSearch || "").toLowerCase().trim();
+  const runs = all.filter((r) => {
+    if (eid && String(r.experiment_id) !== String(eid)) return false;
+    if (q && !((r.prompt || "") + " " + (r.label || "") + " " + (r.kind || "")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  if (!all.length) {
+    el.innerHTML = '<div class="exp-empty">No agent runs yet in this project.</div>';
+    return;
+  }
   if (!runs.length) {
-    el.innerHTML = '<div class="empty">No agent runs yet in this project.</div>';
+    el.innerHTML = '<div class="exp-empty">No runs match the current filter.</div>';
     return;
   }
   el.innerHTML = "";
@@ -3374,6 +3456,7 @@ async function loadGoals() {
   el.innerHTML = "";
   if (!state.goals.length) {
     el.innerHTML = '<div class="empty">No goals yet — add a target metric and the workbench will flag new bests and progress on each run.</div>';
+    renderExpKpis();
     return;
   }
   const expName = (id) => {
@@ -3397,6 +3480,7 @@ async function loadGoals() {
         loadGoals();
       } catch (e) { toast("Failed to remove goal: " + e.message); }
     }));
+  renderExpKpis();
 }
 
 async function addGoal() {
@@ -3422,9 +3506,23 @@ async function addGoal() {
 function renderExpList() {
   const el = $("exp-list");
   if (!el) return;
-  const exps = state.expList || [];
+  const all = state.expList || [];
+  const q = (state.expSearch || "").toLowerCase().trim();
+  const exps = q
+    ? all.filter((e) =>
+        (e.name || "").toLowerCase().includes(q) ||
+        (e.hypothesis || "").toLowerCase().includes(q) ||
+        (e.goal_metric || "").toLowerCase().includes(q))
+    : all;
+  if ($("exp-count")) $("exp-count").textContent = q
+    ? `${exps.length} / ${all.length}`
+    : `(${all.length})`;
+  if (!all.length) {
+    el.innerHTML = '<div class="exp-empty">No experiments yet — ask Fox to plan and run one in chat, or create one below.</div>';
+    return;
+  }
   if (!exps.length) {
-    el.innerHTML = '<div class="empty">No experiments yet — ask Fox to plan and run one in chat, or create one below.</div>';
+    el.innerHTML = '<div class="exp-empty">No experiments match “' + esc(q) + '”.</div>';
     return;
   }
   el.innerHTML = "";
@@ -4555,6 +4653,16 @@ $("goal-metric").addEventListener("keydown", (e) => { if (e.key === "Enter") add
 $("runs-refresh").addEventListener("click", loadExperiments);
 $("exp-new-toggle").addEventListener("click", () => $("exp-new-form").classList.toggle("hidden"));
 $("exp-new-create").addEventListener("click", createExp);
+$("exp-search").addEventListener("input", (e) => { state.expSearch = e.target.value; renderExpList(); });
+$("runs-search").addEventListener("input", (e) => { state.runsSearch = e.target.value; renderRuns(); });
+$("runs-exp-filter").addEventListener("change", (e) => { state.runsExpFilter = e.target.value; renderRuns(); });
+$("exp-chart-toggle").addEventListener("click", () => {
+  const body = $("exp-chart-body");
+  if (!body) return;
+  const collapsed = body.classList.toggle("hidden");
+  $("exp-chart-toggle").textContent = collapsed ? "Expand" : "Collapse";
+});
+initExpSectionNav();
 $("campaign-new").addEventListener("click", () => $("campaign-new-form").classList.toggle("hidden"));
 $("campaign-new-create").addEventListener("click", async () => {
   const name = ($("campaign-new-name").value || "Campaign").trim();

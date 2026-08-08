@@ -73,119 +73,156 @@
         </div>
         <select id="exp-metric-main" title="Metric"></select>
         <button id="exp-compare-mode" class="btn subtle small" title="Pick two runs on the chart to compare">⇄ Compare</button>
-        <button id="exp-next" class="btn subtle small" title="What to research next (agenda + proposed campaign)">▶ Next</button>
-        <button id="exp-report" class="btn subtle small" title="Generate the comprehensive project report">📄 Report</button>
-        <button id="exp-export" class="btn subtle small" title="Export the project as a zip bundle">📦 Export</button>
-        <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
         <span class="spacer"></span>
-        <span class="muted exp-hint">Timeline = evolution · Graph = similarity edges · click a node for details · ⇄ Compare = click two runs</span>
-      </div>
-      <div id="exp-compare-pick" class="exp-compare-pick hidden">
-        <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
-      </div>
-      <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
-      <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
-      <div id="expmain-detail" class="exp-main-detail"></div>
-
-      <div class="exp-list">
-        <div class="exp-runs-head">
-          <span class="exp-runs-title">Experiments</span>
-          <span class="spacer"></span>
-          <button id="exp-new-toggle" class="btn subtle small">+ New experiment</button>
+        <button id="exp-refresh-main" class="btn subtle small">Refresh</button>
+        <div class="exp-toolbar-actions">
+          <button id="exp-next" class="btn subtle small" title="What to research next (agenda + proposed campaign)">▶ Next</button>
+          <button id="exp-report" class="btn subtle small" title="Generate the comprehensive project report">📄 Report</button>
+          <button id="exp-export" class="btn subtle small" title="Export the project as a zip bundle">📦 Export</button>
         </div>
-        <div id="exp-new-form" class="exp-new-form hidden">
-          <div class="exp-new-row">
-            <input id="exp-new-name" placeholder="name" />
-            <input id="exp-new-hypothesis" placeholder="hypothesis (one sentence)" />
-          </div>
-          <div class="exp-new-row">
-            <input id="exp-new-goal-metric" placeholder="goal metric (e.g. accuracy)" />
-            <input id="exp-new-goal-target" placeholder="goal target (e.g. 0.9)" type="number" step="any" />
-            <label class="goal-hb"><input id="exp-new-hb" type="checkbox" checked /> higher is better</label>
-          </div>
-          <textarea id="exp-new-plan" rows="3" placeholder="Experiment plan: hypothesis, configs/variables to try, stopping criteria"></textarea>
-          <div class="exp-new-row">
-            <span class="spacer"></span>
-            <button id="exp-new-create" class="btn subtle small">Create</button>
-          </div>
-        </div>
-        <div id="exp-list"></div>
       </div>
 
-      <div class="exp-list campaigns-list">
-        <div class="exp-runs-head">
-          <span class="exp-runs-title">Campaigns <span class="muted">(background)</span></span>
-          <span class="spacer"></span>
-          <button id="campaign-new" class="btn subtle small" title="Plan and run a multi-step research campaign">🧭 New campaign</button>
-        </div>
-        <div id="campaign-new-form" class="exp-new-form hidden">
-          <div class="exp-new-row">
-            <input id="campaign-new-name" placeholder="campaign name" />
-          </div>
-          <div class="exp-new-row">
-            <input id="campaign-new-question" placeholder="research question" />
-            <input id="campaign-new-metric" placeholder="goal metric (e.g. accuracy)" />
-          </div>
-          <div class="exp-new-row">
-            <span class="spacer"></span>
-            <button id="campaign-new-create" class="btn subtle small">Start</button>
-          </div>
-        </div>
-        <div id="campaign-list"></div>
-      </div>
+      <nav id="exp-section-nav" class="exp-section-nav">
+        <button class="exp-nav-chip active" data-target="overview">Overview</button>
+        <button class="exp-nav-chip" data-target="goals">Goals</button>
+        <button class="exp-nav-chip" data-target="chart">Chart</button>
+        <button class="exp-nav-chip" data-target="experiments">Experiments</button>
+        <button class="exp-nav-chip" data-target="campaigns">Campaigns</button>
+        <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
+        <button class="exp-nav-chip" data-target="runs">Runs</button>
+      </nav>
 
-      <div class="exp-list">
+      <section id="exp-section-overview" class="exp-section">
         <div class="exp-runs-head">
-          <span class="exp-runs-title">Compare experiments</span>
+          <span class="exp-runs-title">Overview</span>
           <span class="spacer"></span>
-          <button id="exp-compare-refresh" class="btn subtle small">↻</button>
+          <button id="exp-compare-refresh" class="btn subtle small" title="Refresh leaderboard">↻</button>
         </div>
+        <div id="exp-kpis" class="exp-kpis"></div>
         <div id="exp-compare-leaderboard"></div>
-      </div>
+      </section>
 
-      <div class="exp-list">
-        <div class="exp-runs-head">
-          <span class="exp-runs-title">Model benchmarks <span class="muted">(eval)</span></span>
-          <span class="spacer"></span>
-          <button id="eval-new" class="btn subtle small">+ New eval</button>
-        </div>
-        <div id="eval-new-form" class="exp-new-form hidden">
-          <div class="exp-new-row"><input id="eval-new-name" placeholder="eval name" /></div>
-          <div class="exp-new-row">
-            <input id="eval-new-metric" placeholder="goal metric (e.g. accuracy)" />
-            <input id="eval-new-models" placeholder="models, comma-separated (e.g. qwen3.6,llama3.1)" />
+      <section id="exp-section-goals" class="exp-section">
+        <div class="exp-goals">
+          <div class="exp-goals-head">
+            <span class="exp-goals-title">Goals</span>
+            <input id="goal-metric" placeholder="metric (e.g. accuracy)" class="goal-input" />
+            <input id="goal-target" placeholder="target (e.g. 0.95)" class="goal-input" type="number" step="any" />
+            <label class="goal-hb"><input id="goal-hb" type="checkbox" checked /> higher is better</label>
+            <select id="goal-experiment" class="goal-input" title="scope to an experiment (optional)">
+              <option value="">all runs (project-wide)</option>
+            </select>
+            <button id="goal-add" class="btn subtle small">Add</button>
           </div>
-          <textarea id="eval-new-prompt" rows="3" placeholder="Task prompt — the agent runs this under each model and reports the goal metric via report_metric"></textarea>
-          <div class="exp-new-row">
+          <div id="goal-list"></div>
+        </div>
+      </section>
+
+      <section id="exp-section-chart" class="exp-section">
+        <div class="exp-chart-head">
+          <span class="exp-runs-title">Evolution</span>
+          <span class="spacer"></span>
+          <button id="exp-chart-toggle" class="btn subtle small">Collapse</button>
+        </div>
+        <div id="exp-chart-body">
+          <div id="exp-compare-pick" class="exp-compare-pick hidden">
+            <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
+          </div>
+          <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
+          <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
+          <div id="expmain-detail" class="exp-main-detail"></div>
+        </div>
+      </section>
+
+      <section id="exp-section-experiments" class="exp-section">
+        <div class="exp-list">
+          <div class="exp-runs-head">
+            <span class="exp-runs-title">Experiments <span id="exp-count" class="muted"></span></span>
+            <input id="exp-search" placeholder="filter experiments…" class="exp-search" />
             <span class="spacer"></span>
-            <button id="eval-new-create" class="btn subtle small">Start</button>
+            <button id="exp-new-toggle" class="btn subtle small">+ New experiment</button>
           </div>
+          <div id="exp-new-form" class="exp-new-form hidden">
+            <div class="exp-new-row">
+              <input id="exp-new-name" placeholder="name" />
+              <input id="exp-new-hypothesis" placeholder="hypothesis (one sentence)" />
+            </div>
+            <div class="exp-new-row">
+              <input id="exp-new-goal-metric" placeholder="goal metric (e.g. accuracy)" />
+              <input id="exp-new-goal-target" placeholder="goal target (e.g. 0.9)" type="number" step="any" />
+              <label class="goal-hb"><input id="exp-new-hb" type="checkbox" checked /> higher is better</label>
+            </div>
+            <textarea id="exp-new-plan" rows="3" placeholder="Experiment plan: hypothesis, configs/variables to try, stopping criteria"></textarea>
+            <div class="exp-new-row">
+              <span class="spacer"></span>
+              <button id="exp-new-create" class="btn subtle small">Create</button>
+            </div>
+          </div>
+          <div id="exp-list"></div>
         </div>
-        <div id="eval-list"></div>
-      </div>
+      </section>
 
-      <div class="exp-runs">
-        <div class="exp-runs-head">
-          <span class="exp-runs-title">Recent runs</span>
-          <span class="spacer"></span>
-          <button id="runs-refresh" class="btn subtle small">Refresh</button>
+      <section id="exp-section-campaigns" class="exp-section">
+        <div class="exp-list campaigns-list">
+          <div class="exp-runs-head">
+            <span class="exp-runs-title">Campaigns <span id="campaign-count" class="muted"></span></span>
+            <span class="spacer"></span>
+            <button id="campaign-new" class="btn subtle small" title="Plan and run a multi-step research campaign">🧭 New campaign</button>
+          </div>
+          <div id="campaign-new-form" class="exp-new-form hidden">
+            <div class="exp-new-row">
+              <input id="campaign-new-name" placeholder="campaign name" />
+            </div>
+            <div class="exp-new-row">
+              <input id="campaign-new-question" placeholder="research question" />
+              <input id="campaign-new-metric" placeholder="goal metric (e.g. accuracy)" />
+            </div>
+            <div class="exp-new-row">
+              <span class="spacer"></span>
+              <button id="campaign-new-create" class="btn subtle small">Start</button>
+            </div>
+          </div>
+          <div id="campaign-list"></div>
         </div>
-        <div id="runs-list"></div>
-      </div>
+      </section>
 
-      <div class="exp-goals">
-        <div class="exp-goals-head">
-          <span class="exp-goals-title">Goals</span>
-          <input id="goal-metric" placeholder="metric (e.g. accuracy)" class="goal-input" />
-          <input id="goal-target" placeholder="target (e.g. 0.95)" class="goal-input" type="number" step="any" />
-          <label class="goal-hb"><input id="goal-hb" type="checkbox" checked /> higher is better</label>
-          <select id="goal-experiment" class="goal-input" title="scope to an experiment (optional)">
-            <option value="">all runs (project-wide)</option>
-          </select>
-          <button id="goal-add" class="btn subtle small">Add</button>
+      <section id="exp-section-benchmarks" class="exp-section">
+        <div class="exp-list">
+          <div class="exp-runs-head">
+            <span class="exp-runs-title">Model benchmarks <span id="eval-count" class="muted"></span></span>
+            <span class="spacer"></span>
+            <button id="eval-new" class="btn subtle small">+ New eval</button>
+          </div>
+          <div id="eval-new-form" class="exp-new-form hidden">
+            <div class="exp-new-row"><input id="eval-new-name" placeholder="eval name" /></div>
+            <div class="exp-new-row">
+              <input id="eval-new-metric" placeholder="goal metric (e.g. accuracy)" />
+              <input id="eval-new-models" placeholder="models, comma-separated (e.g. qwen3.6,llama3.1)" />
+            </div>
+            <textarea id="eval-new-prompt" rows="3" placeholder="Task prompt — the agent runs this under each model and reports the goal metric via report_metric"></textarea>
+            <div class="exp-new-row">
+              <span class="spacer"></span>
+              <button id="eval-new-create" class="btn subtle small">Start</button>
+            </div>
+          </div>
+          <div id="eval-list"></div>
         </div>
-        <div id="goal-list"></div>
-      </div>
+      </section>
+
+      <section id="exp-section-runs" class="exp-section">
+        <div class="exp-runs">
+          <div class="exp-runs-head">
+            <span class="exp-runs-title">Recent runs</span>
+            <select id="runs-exp-filter" class="exp-search" title="filter by experiment">
+              <option value="">all experiments</option>
+            </select>
+            <input id="runs-search" placeholder="filter runs…" class="exp-search" />
+            <span class="spacer"></span>
+            <button id="runs-refresh" class="btn subtle small">Refresh</button>
+          </div>
+          <div id="runs-list"></div>
+        </div>
+      </section>
 
       <div class="exp-compare">
         <div class="exp-compare-head">
