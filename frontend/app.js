@@ -2586,6 +2586,9 @@ $("theme-toggle").addEventListener("click", toggleTheme);
 $("brand").addEventListener("click", () => {
   window.location.href = (window.FOX_BASE || "") + "/features.html";
 });
+$("docs-btn").addEventListener("click", () => {
+  window.open((window.FOX_BASE || "") + "/gitbook/", "_blank");
+});
 $("side-toggle").addEventListener("click", () => {
   const collapsed = document.getElementById("app").classList.toggle("side-collapsed");
   try { localStorage.setItem("fox.sidePanel", collapsed ? "0" : "1"); } catch (e) {}

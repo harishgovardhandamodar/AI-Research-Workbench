@@ -1464,4 +1464,14 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+# Hosted GitBook docs (the gitbook/ folder) at /gitbook/ — open in a browser
+# for the local documentation site (docsify bootstrap). Mounted BEFORE the root
+# static mount so it isn't shadowed by the frontend.
+from .paths import ROOT as _ROOT
+
+_GITBOOK_DIR = _ROOT / "gitbook"
+if _GITBOOK_DIR.is_dir():
+    app.mount("/gitbook", StaticFiles(directory=str(_GITBOOK_DIR), html=True),
+              name="gitbook")
+
 app.mount("/", NoCacheStaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
