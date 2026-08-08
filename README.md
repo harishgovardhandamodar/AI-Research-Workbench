@@ -14,6 +14,22 @@ The assistant persona is **Fox** (🦊).
   (chat slash commands).
 - **Design notes** — per-feature-round plans under `docs/`.
 
+## Screenshots
+
+| | | |
+|---|---|---|
+| ![Chat](frontend/media/screenshots/chat.png) | ![Experiments](frontend/media/screenshots/experiments.png) | ![Experiment detail](frontend/media/screenshots/experiment-detail.png) |
+| *Chat with Fox* | *Experiments overview* | *Experiment detail (leaderboard + learnings + runs)* |
+| ![Goals](frontend/media/screenshots/goals.png) | ![Campaigns](frontend/media/screenshots/campaigns.png) | ![Benchmarks](frontend/media/screenshots/benchmarks.png) |
+| *Goals with progress* | *Background campaigns* | *Model benchmarks* |
+| ![Run detail](frontend/media/screenshots/run-detail.png) | ![Branches](frontend/media/screenshots/branches.png) | ![Report](frontend/media/screenshots/report.png) |
+| *Expandable run detail* | *Improve-loop lineage (branch graph)* | *Generated report in chat* |
+| ![Audit](frontend/media/screenshots/audit.png) | | |
+| *Audit trail* | | |
+
+> Screenshots are illustrative (a seeded "Demo" project); the audit view shows
+> real recorded events.
+
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
 ## What's New

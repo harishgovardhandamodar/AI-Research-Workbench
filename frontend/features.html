@@ -63,6 +63,14 @@
   /* ---------- stack / footer ---------- */
   .stack { display:flex; flex-wrap:wrap; gap:10px; }
   .chip { padding:6px 14px; border-radius:18px; border:1px solid #2a3350; font-size:13px; color:var(--muted); background:#0d1120; }
+  .shots { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:16px; }
+  .shot { background:var(--card); border:1px solid #232b3d; border-radius:14px; overflow:hidden; }
+  .shot img { width:100%; display:block; border-bottom:1px solid #232b3d; }
+  .shot .cap { padding:8px 12px; font-size:12.5px; color:var(--muted); }
+  .shot .cap b { color:var(--text); }
+  pre.audit { background:#0d1120; border:1px solid #232b3d; border-radius:12px; padding:16px; overflow:auto;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.6; color:var(--muted); }
+  pre.audit .k { color:var(--violet); } pre.audit .s { color:var(--green); } pre.audit .n { color:var(--gold); }
   footer { text-align:center; padding:44px 20px 60px; color:var(--muted); }
   footer .big { font-size:20px; margin-bottom:8px; }
   footer a.btn { display:inline-block; margin-top:10px; padding:10px 26px; border-radius:24px;
@@ -181,6 +189,43 @@
     <div class="step"><div class="n">CHAIN</div><h4>Hash-chained audit</h4><p>redacted event log, tamper-evident</p></div>
     <div class="step"><div class="n">FULL</div><h4>Full code capture</h4><p>every tool call's source retained for diffs</p></div>
   </div>
+</section>
+
+<section class="wrap">
+  <div class="sec-tag">Screenshots</div>
+  <h2>See it in action</h2>
+  <div class="shots">
+    <div class="shot"><img src="media/screenshots/chat.png" alt="Chat"><div class="cap"><b>Chat with Fox</b> — streaming agent turns with provenance labels.</div></div>
+    <div class="shot"><img src="media/screenshots/experiments.png" alt="Experiments"><div class="cap"><b>Experiments overview</b> — KPIs, leaderboard, compact cards.</div></div>
+    <div class="shot"><img src="media/screenshots/experiment-detail.png" alt="Experiment detail"><div class="cap"><b>Experiment detail</b> — leaderboard, learnings, and runs.</div></div>
+    <div class="shot"><img src="media/screenshots/goals.png" alt="Goals"><div class="cap"><b>Goals</b> — target metrics with progress bars.</div></div>
+    <div class="shot"><img src="media/screenshots/campaigns.png" alt="Campaigns"><div class="cap"><b>Campaigns</b> — background research investigations.</div></div>
+    <div class="shot"><img src="media/screenshots/benchmarks.png" alt="Benchmarks"><div class="cap"><b>Model benchmarks</b> — compare the workbench's LLMs.</div></div>
+    <div class="shot"><img src="media/screenshots/run-detail.png" alt="Run detail"><div class="cap"><b>Run detail</b> — metrics, config, tool trail, actions.</div></div>
+    <div class="shot"><img src="media/screenshots/branches.png" alt="Branches"><div class="cap"><b>Improve-loop lineage</b> — the git-flow branch graph.</div></div>
+    <div class="shot"><img src="media/screenshots/report.png" alt="Report"><div class="cap"><b>Generated report</b> — the project write-up in chat.</div></div>
+    <div class="shot"><img src="media/screenshots/audit.png" alt="Audit"><div class="cap"><b>Audit trail</b> — tamper-evident, hash-chained events.</div></div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="sec-tag">Trust</div>
+  <h2>Audit trail sample</h2>
+  <p class="muted">Every tool call, permission decision, network access and filesystem touch is captured,
+  redacted, and hash-chained (SHA-256, tamper-evident). A representative sample from the live trail:</p>
+  <pre class="audit">{
+  <span class="k">"event_id"</span>: <span class="s">"01KZGYCCBPFD6W1JXDS03P0R0T"</span>,
+  <span class="k">"source"</span>: <span class="s">"coordinator"</span>,
+  <span class="k">"tool_name"</span>: <span class="s">"save_artifact"</span>,
+  <span class="k">"severity"</span>: <span class="s">"info"</span>,
+  <span class="k">"duration_ms"</span>: <span class="n">0.48</span>,
+  <span class="k">"network"</span>: <span class="n">false</span>,
+  <span class="k">"filesystem"</span>: <span class="n">true</span>,
+  <span class="k">"data_access"</span>: <span class="n">true</span>
+}</pre>
+  <p class="muted">Each event is redacted (no secrets), references the previous event's hash, and can be
+  verified via <code>verify_chain</code>; each run carries an integrity hash and links to its audit trace.
+  The 🛡 Audit view adds per-agent history, permission-drift, deviation flags, and a searchable timeline.</p>
 </section>
 
 <footer>
