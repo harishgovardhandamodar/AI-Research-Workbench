@@ -3022,9 +3022,26 @@ async function loadEvals() {
     const r = await api(`/api/projects/${state.project}/evals`);
     state.evals = r.evals || [];
     state.evalRunning = !!r.running;
+    detectCompletions("eval", state.evals, state._evalStatus);
     renderEvals();
     renderExpKpis();
   } catch (e) { /* silent */ }
+}
+
+// Notify when a background campaign / benchmark transitions to "done".
+function detectCompletions(kind, items, prevMap) {
+  if (!items || !items.length) return;
+  const cur = {};
+  for (const it of items) cur[it.id] = it.status;
+  if (prevMap) {
+    for (const id of Object.keys(cur)) {
+      if ((prevMap[id] === "running" || prevMap[id] === "planned") && cur[id] === "done") {
+        const name = (items.find((x) => x.id === id) || {}).name || (kind === "eval" ? "benchmark" : "campaign");
+        notify(`"${name}" finished in the background.`, kind === "eval" ? "📊 Benchmark done" : "🧭 Campaign done");
+      }
+    }
+  }
+  state["_" + kind + "Status"] = cur;
 }
 
 function renderEvals() {
@@ -3107,6 +3124,7 @@ async function loadCampaigns() {
     const r = await api(`/api/projects/${state.project}/campaigns`);
     state.campaigns = r.campaigns || [];
     state.campaignRunning = !!r.running;
+    detectCompletions("campaign", state.campaigns, state._campaignStatus);
     renderCampaigns();
     renderExpKpis();
   } catch (e) { /* silent */ }
@@ -3626,6 +3644,7 @@ function renderRuns() {
   const runs = all.filter((r) => {
     if (eid && String(r.experiment_id) !== String(eid)) return false;
     if (q && !((r.prompt || "") + " " + (r.label || "") + " " + (r.kind || "")).toLowerCase().includes(q)) return false;
+    if (!inTimeRange(r)) return false;
     return true;
   });
   if (!all.length) {
@@ -3658,10 +3677,12 @@ function renderRuns() {
     const d = document.createElement("div");
     d.className = "run-row";
     d.dataset.id = r.id;
+    if (state.selectedRuns && state.selectedRuns.has(String(r.id))) d.classList.add("sel");
     const lbl = r.label ? `<span class="run-label">${esc(r.label)}</span> ` : "";
     d.innerHTML = `<div class="run-row-head" role="button" tabindex="0" aria-expanded="false" aria-controls="run-detail-${r.id}" title="Expand / collapse run details">
         <span class="run-caret">▶</span>
         <span class="run-id">#${r.id}</span>
+        <input type="checkbox" class="run-sel" data-id="${r.id}" title="Select for compare / export"${state.selectedRuns && state.selectedRuns.has(String(r.id)) ? " checked" : ""}>
         <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
         ${gvNum != null && goalMetric ? `<span class="run-goal" title="goal metric ${esc(goalMetric)}">${esc(goalMetric.replace(/_/g, " "))} ${_fmtNum(gvNum)}</span>` : ""}
         ${deltaBestChip(dBest)}
@@ -3673,6 +3694,15 @@ function renderRuns() {
       <div class="run-row-detail hidden" id="run-detail-${r.id}">${runDetailHtml(r)}</div>`;
     el.appendChild(d);
   }
+  el.querySelectorAll(".run-sel").forEach((cb) =>
+    cb.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!state.selectedRuns) state.selectedRuns = new Set();
+      const id = String(cb.dataset.id);
+      if (cb.checked) state.selectedRuns.add(id);
+      else state.selectedRuns.delete(id);
+      cb.closest(".run-row").classList.toggle("sel", cb.checked);
+    }));
   el.querySelectorAll(".run-row-head").forEach((h) =>
     h.addEventListener("click", () => {
       const row = h.parentElement;
@@ -3704,6 +3734,21 @@ function renderRuns() {
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       sendChat("", "rerun_run", { run_id: b.dataset.rid });
+    }));
+  el.querySelectorAll(".run-restore").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      b.disabled = true;
+      b.textContent = "…";
+      try {
+        await api(`/api/projects/${state.project}/runs/${b.dataset.rid}/restore`, { method: "POST" });
+        notify(`Run #${b.dataset.rid} restored — artifacts checked out and forked as a new restore run.`);
+        await loadExperiments();
+      } catch (e) {
+        toast("Restore failed: " + e.message, 5000);
+        b.disabled = false;
+        b.textContent = "↶ restore";
+      }
     }));
   el.querySelectorAll(".run-improve-exp").forEach((b) =>
     b.addEventListener("click", (ev) => {
@@ -3760,6 +3805,8 @@ function runDetailHtml(r) {
   const acts = [];
   if (r.kind !== "restore") acts.push(
     `<button class="btn subtle small run-revert" data-rid="${r.id}" title="Re-run this run's prompt as a fresh turn">↶ revert</button>`);
+  if (r.git_commit) acts.push(
+    `<button class="btn subtle small run-restore" data-rid="${r.id}" title="Check this run's artifacts out of its git commit and fork a restore run">↶ restore</button>`);
   if (r.experiment_id != null) {
     const nm = expName(r.experiment_id);
     acts.push(`<button class="btn subtle small run-improve-exp" data-eid="${r.experiment_id}" data-name="${esc(nm)}" title="Improve the owning experiment">🔁 improve</button>`);
@@ -3772,6 +3819,24 @@ async function loadGoals() {
   try {
     state.goals = (await api(`/api/projects/${state.project}/goals`)).goals || [];
   } catch (e) { state.goals = state.goals || []; }
+  // Alert on a goal newly reaching its target (once per goal). The first load
+  // only seeds the baseline; transitions are detected from the second load on.
+  const nowReached = new Set(state.goals
+    .filter((g) => g.target != null && goalReachedLocal(g))
+    .map((g) => `${g.metric}|${g.experiment_id ?? ""}`));
+  if (state._goalInit) {
+    for (const key of nowReached) {
+      if (!state._goalReached || !state._goalReached.has(key)) {
+        const [metric, eid] = key.split("|");
+        const label = eid ? `${expName(Number(eid)) || ("experiment #" + eid)}` : "project";
+        const text = `Goal reached — ${metric} reached its target on ${label}`;
+        notify(text, "🎯 Goal reached");
+        showGoalBanner(text);
+      }
+    }
+  }
+  state._goalInit = true;
+  state._goalReached = nowReached;
   const sel = $("goal-experiment");
   if (sel) {
     const cur = sel.value || "";
@@ -3888,6 +3953,7 @@ function renderExpList() {
     const series = e.goal_metric ? expSeries(e.id, e.goal_metric) : [];
     const deltaBest = (best != null && series.length)
       ? series[series.length - 1] - best : null;
+    const trend = series.length >= 2 ? seriesTrend(series) : null;
     const modelPin = e.model
       ? `<span class="muted exp-model-pin" title="Pinned model for this experiment">◈ ${esc(e.model)}</span>`
       : "";
@@ -3917,7 +3983,7 @@ function renderExpList() {
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
       ${goalLine ? `<div class="exp-card-sum muted">${goalLine}</div>` : ""}
-      ${(series.length >= 2 || deltaBest != null) ? `<div class="exp-card-row">${sparklineSvg(series, 110, 26, expColor(e.id))}${deltaBestChip(deltaBest)}</div>` : ""}
+      ${(series.length >= 2 || deltaBest != null || trend) ? `<div class="exp-card-row">${sparklineSvg(series, 110, 26, expColor(e.id))}${trendChipHtml(trend)}${deltaBestChip(deltaBest)}</div>` : ""}
       ${(best != null && target) ? `<div class="exp-goal-bar"><div class="exp-goal-fill ${reached ? "reached" : ""}" style="width:${pct}%"></div></div>` : ""}
       <div class="exp-card-detail hidden">
         ${e.hypothesis ? `<div class="exp-card-hyp muted">${esc(e.hypothesis)}</div>` : ""}
@@ -4141,8 +4207,10 @@ function expColor(eid) {
 
 function expLegend() {
   const exps = (state.expList || []).filter((e) => e.runs > 0);
+  const hidden = state.expHidden || new Set();
   return exps.map((e) =>
-    `<span class="exp-legend-item"><span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}</span>`).join("");
+    `<button class="exp-legend-item${hidden.has(String(e.id)) ? " off" : ""}" data-eid="${e.id}" type="button" title="Toggle this experiment on the charts">` +
+    `<span class="exp-legend-dot" style="background:${expColor(e.id)}"></span>${esc(e.name)}</button>`).join("");
 }
 
 function expBestRun(runs, metric, higher) {
@@ -4164,6 +4232,7 @@ function expSeries(eid, metric) {
   const out = [];
   for (const r of state.agentRuns || []) {
     if (String(r.experiment_id) !== String(eid)) continue;
+    if (!inTimeRange(r)) continue;
     const v = r.metrics && r.metrics[metric];
     if (v == null || Number.isNaN(Number(v))) continue;
     out.push(Number(v));
@@ -4239,6 +4308,80 @@ function runsCsv(runs) {
 function exportRunsCsv(runs, filename) {
   if (!(runs || []).length) { toast("Nothing to export — no runs match."); return; }
   downloadText(filename || "runs.csv", runsCsv(runs));
+}
+
+/* ---------- time-range filter + trend stats + notifications ---------- */
+
+// Runs/experiments within the active time window (state.timeRange seconds, "" = all).
+function timeRangeCutoff() {
+  const s = Number(state.timeRange || 0);
+  return s > 0 ? Date.now() / 1000 - s : 0;
+}
+function runTime(r) {
+  return r && (r.created_at || r.started_at || r.finished_at || r.timestamp || 0);
+}
+function inTimeRange(r) {
+  const cut = timeRangeCutoff();
+  return !cut || runTime(r) >= cut;
+}
+
+// Compact trend summary of a metric series: {mean, std, slope}.
+function seriesTrend(values) {
+  const v = (values || []).filter((x) => x != null && isFinite(Number(x))).map(Number);
+  if (!v.length) return null;
+  const n = v.length;
+  const mean = v.reduce((a, b) => a + b, 0) / n;
+  const std = Math.sqrt(v.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n);
+  let slope = 0;
+  if (n >= 2) {
+    const xm = (n - 1) / 2, ym = mean;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { num += (i - xm) * (v[i] - ym); den += (i - xm) * (i - xm); }
+    slope = den ? num / den : 0;
+  }
+  return { mean, std, slope, last: v[n - 1], first: v[0] };
+}
+
+function trendChipHtml(t, color) {
+  if (!t) return "";
+  const dir = t.slope > 0 ? "↗" : t.slope < 0 ? "↘" : "→";
+  const dirCls = t.slope > 0 ? "up" : t.slope < 0 ? "down" : "";
+  return `<span class="exp-trend ${dirCls}" title="mean ${_fmtNum(t.mean)} · σ ${_fmtNum(t.std)} · slope ${_fmtNum(t.slope)} per run">`
+    + `μ ${_fmtNum(t.mean)} · σ ${_fmtNum(t.std)} · ${dir} ${_fmtNum(Math.abs(t.slope))}/run</span>`;
+}
+
+// Toast + optional browser Notification (silent fallback when denied).
+function notify(msg, title) {
+  toast(msg, 6000);
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(title || "Fox workbench", { body: msg, silent: true });
+    }
+  } catch (e) { /* notifications unavailable */ }
+}
+function ensureNotifyPermission() {
+  try {
+    if ("Notification" in window && Notification.permission === "default")
+      Notification.requestPermission();
+  } catch (e) { /* ignore */ }
+}
+let _notifyPermAsked = false;
+function maybeAskNotifyPerm() {
+  if (_notifyPermAsked) return;
+  _notifyPermAsked = true;
+  ensureNotifyPermission();
+}
+
+// Dismissible goal-reached banner at the top of the Experiments tab.
+function showGoalBanner(text) {
+  const b = $("goal-banner");
+  if (!b) return;
+  b.innerHTML = `<span>🎯 ${esc(text)}</span>`
+    + `<button class="goal-banner-close" title="Dismiss">✕</button>`;
+  b.classList.remove("hidden");
+  b.querySelector(".goal-banner-close").addEventListener("click", () => b.classList.add("hidden"));
+  clearTimeout(b._h);
+  b._h = setTimeout(() => b.classList.add("hidden"), 12000);
 }
 
 // The "Fox - <Model> - <MCP> - <Action>" label for a run node in the
@@ -4440,6 +4583,48 @@ async function renderExpCompare() {
   }
 }
 
+// N-way side-by-side comparison of any number of runs (backend ?runs=a,b,c).
+async function renderManyCompare(ids) {
+  const el = $("exp-cmp-result");
+  if (!el) return;
+  if (!ids || ids.length < 2) { toast("Select at least two runs to compare."); return; }
+  el.innerHTML = '<div class="empty">Comparing ' + ids.length + " runs…</div>";
+  const cmp = $("exp-compare");
+  if (cmp) cmp.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await api(`/api/projects/${state.project}/compare?runs=${encodeURIComponent(ids.join(","))}`);
+    const m = r.many;
+    if (!m || !m.columns || !m.columns.length) {
+      el.innerHTML = '<div class="empty">Nothing comparable between the selected runs.</div>';
+      return;
+    }
+    let h = `<div class="cmp-many-head">Comparing <b>${m.columns.length}</b> runs · <b>${m.rows.length}</b> shared metric(s)`
+      + ` <button class="btn subtle small many-clear" title="Clear run selection">✕ clear selection</button></div>`;
+    h += `<div class="cmp-table-wrap"><table class="cmp-table cmp-many"><thead><tr><th>metric</th>`;
+    for (const c of m.columns) h += `<th>${esc(c)}</th>`;
+    h += `</tr></thead><tbody>`;
+    for (const row of m.rows) {
+      h += `<tr><td>${esc(row.metric)}</td>`;
+      for (const c of m.columns) {
+        const v = row.values[c];
+        const best = row.best === c;
+        h += `<td${best ? ' class="cmp-many-best" title="best"' : ""}>${v != null ? _fmtNum(v) : "—"}${best ? " ★" : ""}</td>`;
+      }
+      h += `</tr>`;
+    }
+    h += `</tbody></table></div>`;
+    el.innerHTML = h;
+    const clear = el.querySelector(".many-clear");
+    if (clear) clear.addEventListener("click", () => {
+      state.selectedRuns = new Set();
+      renderRuns();
+      el.innerHTML = "";
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Comparison failed: ${esc(e.message || e)}</div>`;
+  }
+}
+
 // --------------------------------------------------------- timeline chart ----
 
 function buildTimelineSvg(metric, W, opts) {
@@ -4501,6 +4686,19 @@ function buildTimelineSvg(metric, W, opts) {
     out += `<polyline points="${linePts}" fill="none" stroke="${cssVar("--chart-line", "#a974ff")}" stroke-width="2" filter="drop-shadow(0 0 6px ${cssVar("--chart-line-soft", "rgba(169,116,255,.5)")})"></polyline>`;
   }
 
+  // Best-fit linear trend over the visible runs (dashed overlay).
+  const visIdx = [], visVals = [];
+  nodes.forEach((n, i) => { if (vals[i] != null && inView(n.id)) { visIdx.push(i); visVals.push(vals[i]); } });
+  if (visVals.length >= 2) {
+    const nv = visVals.length;
+    const xm = (visIdx[0] + visIdx[nv - 1]) / 2;
+    const ym = visVals.reduce((a, b) => a + b, 0) / nv;
+    let num = 0, den = 0;
+    for (let k = 0; k < nv; k++) { num += (visIdx[k] - xm) * (visVals[k] - ym); den += (visIdx[k] - xm) * (visIdx[k] - xm); }
+    const slope = den ? num / den : 0;
+    out += `<line x1="${xs[visIdx[0]]}" y1="${y(ym + slope * (visIdx[0] - xm))}" x2="${xs[visIdx[nv - 1]]}" y2="${y(ym + slope * (visIdx[nv - 1] - xm))}" stroke="${cssVar("--chart-line", "#a974ff")}" stroke-width="1.6" stroke-dasharray="2 5" opacity="0.7" title="best-fit trend"></line>`;
+  }
+
   nodes.forEach((n, i) => {
     if (vals[i] == null || !inView(n.id)) return;
     const eid = n.experiment_id;
@@ -4528,7 +4726,7 @@ function buildTimelineSvg(metric, W, opts) {
 
   out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}">${metric.replace(/_/g, " ")} — evolution across runs (★ best · dashed = goal)</text>`;
   out += `</svg>`;
-  const legend = expLegend();
+  const legend = opts && opts.noLegend ? "" : expLegend();
   return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
@@ -4724,7 +4922,7 @@ function buildGraphSvg(metric, W, opts) {
 
   out += `<text x="${W / 2}" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="${cssVar("--chart-title", "#f3f0fa")}"><title>spokes = tags · findings · artifacts · edge labels = similarity/overlap · ring = experiment</title>experiment graph — ${metric.replace(/_/g, " ")}</text>`;
   out += `</svg>`;
-  const legend = expLegend();
+  const legend = opts && opts.noLegend ? "" : expLegend();
   return out + (legend ? `<div class="exp-chart-legend">${legend}</div>` : "");
 }
 
@@ -4732,14 +4930,22 @@ function renderExperiments() {
   const runs = state.expRuns || [];
   const empty = '<div class="exp-empty">No runs yet in this project. Ask Fox to run an analysis or experiment in chat and each turn will appear here.</div>';
   const metric = expMetric();
-  // Git-style run-kind filter: only chart runs whose kind matches.
+  // Git-style run-kind filter + time-range + per-experiment toggles all narrow
+  // which nodes the charts show.
   const kind = state.expKindFilter || "";
+  const cut = timeRangeCutoff();
+  const hidden = state.expHidden || new Set();
   let visibleIds = null;
-  if (kind) {
-    visibleIds = new Set((state.expGraph && state.expGraph.nodes || [])
-      .filter((n) => (n.kind || "") === kind).map((n) => n.id));
+  const nodes = (state.expGraph && state.expGraph.nodes) || [];
+  if (kind || cut || hidden.size) {
+    visibleIds = new Set(nodes.filter((n) => {
+      if (kind && (n.kind || "") !== kind) return false;
+      if (cut && (n.timestamp || n.created_at || 0) < cut) return false;
+      if (n.experiment_id != null && hidden.has(String(n.experiment_id))) return false;
+      return true;
+    }).map((n) => n.id));
   }
-  const opts = visibleIds ? { visibleIds } : undefined;
+  const opts = visibleIds ? { visibleIds, noLegend: true } : { noLegend: true };
   const charts = [
     ["expmain-timeline", "timeline", 1240, 330],
     ["expmain-graph", "graph", 1240, 580],
@@ -4752,6 +4958,20 @@ function renderExperiments() {
       : empty;
     graphViewRestore(el.querySelector("svg"), id, w, h);
     attachGraphControls(el, id, () => el.querySelector("svg"), w, h);
+  }
+  // Clickable per-experiment legend (toggle visibility on the charts).
+  const legendHost = $("exp-chart-legend");
+  if (legendHost) {
+    legendHost.innerHTML = expLegend();
+    legendHost.querySelectorAll(".exp-legend-item").forEach((li) =>
+      li.addEventListener("click", () => {
+        const eid = li.dataset.eid;
+        if (!state.expHidden) state.expHidden = new Set();
+        if (state.expHidden.has(eid)) state.expHidden.delete(eid);
+        else state.expHidden.add(eid);
+        li.classList.toggle("off", state.expHidden.has(eid));
+        renderExperiments();
+      }));
   }
   renderExpDetail();
 }
@@ -4787,7 +5007,7 @@ function switchMainView(view) {
     app.classList.toggle("side-collapsed", !!state._sideBefore);
     state._sideBefore = null;
   }
-  if (view === "experiments") loadExperiments();
+  if (view === "experiments") { maybeAskNotifyPerm(); loadExperiments(); }
   if (view === "agent") loadAgent();
   if (view === "editor") loadEditor();
   if (view === "rkg") loadRkg();
@@ -5233,6 +5453,7 @@ $("runs-export").addEventListener("click", () => {
   const runs = (state.agentRuns || []).filter((r) => {
     if (eid && String(r.experiment_id) !== String(eid)) return false;
     if (q && !((r.prompt || "") + " " + (r.label || "") + " " + (r.kind || "")).toLowerCase().includes(q)) return false;
+    if (!inTimeRange(r)) return false;
     return true;
   });
   exportRunsCsv(runs, `runs-${state.project || "project"}.csv`);
@@ -5335,6 +5556,24 @@ $("exp-branches").addEventListener("click", toggleBranches);
 $("exp-kind-filter").addEventListener("change", (e) => {
   state.expKindFilter = e.target.value;
   renderExperiments();
+});
+$("exp-time-filter").addEventListener("change", (e) => {
+  state.timeRange = e.target.value;
+  state.expChunk = 0;
+  state.runsChunk = 0;
+  renderExperiments();
+  renderExpList();
+  renderRuns();
+});
+$("runs-compare-sel").addEventListener("click", () => {
+  const sel = state.selectedRuns && [...state.selectedRuns];
+  renderManyCompare(sel || []);
+});
+$("runs-export-sel").addEventListener("click", () => {
+  const sel = state.selectedRuns ? [...state.selectedRuns] : [];
+  if (!sel.length) { toast("Select runs first (checkbox on each row)."); return; }
+  const runs = (state.agentRuns || []).filter((r) => sel.includes(String(r.id)));
+  exportRunsCsv(runs, `selected-runs-${state.project || "project"}.csv`);
 });
 
 function bindExpView(scope) {

@@ -74,6 +74,12 @@
           <button id="exp-branches" class="btn subtle small" title="Git-flow branch history (overlay)">Branches</button>
         </div>
         <select id="exp-metric-main" title="Metric"></select>
+        <select id="exp-time-filter" class="exp-search" title="filter by time">
+          <option value="">all time</option>
+          <option value="86400">last 24h</option>
+          <option value="604800">last 7 days</option>
+          <option value="2592000">last 30 days</option>
+        </select>
         <select id="exp-kind-filter" class="exp-search" title="filter chart by run kind">
           <option value="">all kinds</option>
           <option value="agent_run">agent</option>
@@ -93,6 +99,8 @@
           <button id="exp-export" class="btn subtle small" title="Export the project as a zip bundle">📦 Export</button>
         </div>
       </div>
+
+      <div id="goal-banner" class="goal-banner hidden" role="status"></div>
 
       <nav id="exp-section-nav" class="exp-section-nav">
         <button class="exp-nav-chip active" data-target="overview">Overview</button>
@@ -136,14 +144,15 @@
           <span class="spacer"></span>
           <button id="exp-chart-toggle" class="btn subtle small">Collapse</button>
         </div>
-        <div id="exp-chart-body">
-          <div id="exp-compare-pick" class="exp-compare-pick hidden">
-            <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
+          <div id="exp-chart-body">
+            <div id="exp-compare-pick" class="exp-compare-pick hidden">
+              <span class="muted">Compare mode: click run <b id="cpk-a">—</b> then <b id="cpk-b">—</b> (or Esc to cancel).</span>
+            </div>
+            <div id="exp-chart-legend" class="exp-chart-legend" title="Click an experiment to show / hide it on the charts"></div>
+            <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
+            <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
+            <div id="expmain-detail" class="exp-main-detail"></div>
           </div>
-          <div id="expmain-timeline" class="exp-main-chart exp-view"></div>
-          <div id="expmain-graph" class="exp-main-chart exp-view hidden"></div>
-          <div id="expmain-detail" class="exp-main-detail"></div>
-        </div>
       </section>
 
       <section id="exp-section-experiments" class="exp-section">
@@ -236,6 +245,8 @@
             </select>
             <input id="runs-search" placeholder="filter runs…" class="exp-search" />
             <span class="spacer"></span>
+            <button id="runs-compare-sel" class="btn subtle small" title="Compare the selected runs side-by-side">⇄ Compare N</button>
+            <button id="runs-export-sel" class="btn subtle small" title="Export the selected runs as CSV">⬇ Sel CSV</button>
             <button id="runs-export" class="btn subtle small" title="Export the filtered runs as CSV">⬇ CSV</button>
             <button id="runs-refresh" class="btn subtle small">Refresh</button>
           </div>
@@ -853,7 +864,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v100";
+  window.FOX_VER = "v101";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>
