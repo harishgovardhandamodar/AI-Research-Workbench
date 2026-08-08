@@ -37,7 +37,7 @@ class ProjectRuntime:
         self.lock = asyncio.Lock()
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
-        self.max_iters = CONFIG["agent"].get("max_iters", 8)
+        self.max_iters = CONFIG["agent"].get("max_iters", 20)
         self.workflow = WorkflowTracker(
             persist=lambda snap: self.store.set_setting(
                 "workflow_latest", json.dumps(snap)),

@@ -557,6 +557,7 @@ function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model, 
     renderStreamFinal(el);
     enhanceCodeBlocks(el.body);
     maybeAttachRepoButtons(el, tags);
+    maybeAttachContinueBtn(el);
     tagMessageExperiment(el, expId);
     if (mid != null) el.div.dataset.mid = mid;
     if (ts) {
@@ -573,6 +574,23 @@ function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model, 
     const art = pendingInlineFigs.shift();
     if (el) appendInlineFig(el, art);
   }
+}
+
+// When a turn ends with the coordinator's "maximum number of tool steps"
+// fallback, offer a one-click Continue so the user doesn't have to type a
+// follow-up prompt.
+function maybeAttachContinueBtn(el) {
+  if (!el) return;
+  const txt = ((el.raw || "") + " " + (el.body ? el.body.textContent : "")).trim();
+  if (!/I hit the maximum number of tool steps/i.test(txt)) return;
+  if (el.div.querySelector(".continue-bar")) return;
+  const bar = document.createElement("div");
+  bar.className = "continue-bar";
+  bar.innerHTML = `<button class="btn subtle small continue-btn">▶ Continue — keep going from where I stopped</button>`;
+  bar.querySelector("button").addEventListener("click", () => {
+    sendChat("Continue from where you left off and finish the task. Take as many tool steps as you need — don't stop early.");
+  });
+  el.div.appendChild(bar);
 }
 
 function enhanceCodeBlocks(root) {
@@ -1247,6 +1265,7 @@ function openSettings() {
   $("cfg-model").value = c.llm.model || "";
   $("cfg-temp").value = c.llm.temperature ?? 0.2;
   $("cfg-reviewer").checked = c.agent?.reviewer_enabled !== false;
+  $("cfg-max-iters").value = c.agent?.max_iters ?? 20;
   const kg = c.kaggle || {};
   $("cfg-kaggle-user").value = kg.username || "";
   $("cfg-kaggle-key").value = kg.key || "";
@@ -1322,7 +1341,10 @@ async function saveSettings() {
       model: $("cfg-model").value.trim(),
       temperature: parseFloat($("cfg-temp").value) || 0.2,
     },
-    agent: { reviewer_enabled: $("cfg-reviewer").checked },
+    agent: {
+      reviewer_enabled: $("cfg-reviewer").checked,
+      max_iters: parseInt($("cfg-max-iters").value, 10) || 20,
+    },
     mcp: { servers: state.mcpServers || [] },
     kaggle: {
       username: $("cfg-kaggle-user").value.trim(),

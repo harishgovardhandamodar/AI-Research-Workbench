@@ -351,6 +351,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 }
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .repo-actions .btn { padding: 2px 9px; font-size: 11px; }
+.continue-bar { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.continue-bar .continue-btn { padding: 3px 10px; font-size: 11.5px; }
 .repo-status { font-size: 11px; color: var(--text-dim); }
 .repo-status.err { color: var(--danger); }
 
@@ -905,8 +907,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   border-radius: 50%; background: var(--accent, #a974ff); animation: exp-pulse 1.2s ease-in-out infinite; }
 .run-ds-chip { font-size: 10.5px; font-weight: 700; color: #4f8cff; background: rgba(79, 140, 255, .12);
   padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
-.run-ds-row { display: flex; align-items: center; gap: 6px; }
-.run-ds-input { flex: 0 1 220px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+.run-ds-row { display: flex; align-items: center; gap: 6px; }.run-ds-input { flex: 0 1 220px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: 3px 6px; font-size: 12px; }
 .ds-summary { font-size: 12px; margin: 6px 0; }
 .ds-cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }

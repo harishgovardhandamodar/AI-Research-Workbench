@@ -51,7 +51,7 @@ async def set_config(body: dict):
     for rt in runtimes.values():
         rt.llm = make_llm()
         rt.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
-        rt.max_iters = CONFIG["agent"].get("max_iters", 8)
+        rt.max_iters = CONFIG["agent"].get("max_iters", 20)
     return {"config": CONFIG}
 
 

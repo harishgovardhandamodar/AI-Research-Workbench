@@ -729,6 +729,8 @@
       <label>Temperature</label>
       <input id="cfg-temp" type="number" step="0.05" min="0" max="2">
       <label class="check"><input id="cfg-reviewer" type="checkbox"> Run background reviewer after each turn</label>
+      <label>Max tool steps per turn</label>
+      <input id="cfg-max-iters" type="number" min="1" max="200" title="How many tool calls the agent may make before it must answer (raise it if turns like long analyses hit the limit)">
       <div class="form-section">
         <span class="plabel">Kaggle API (for dataset imports)</span>
         <label>Username (or KAGGLE_USERNAME env)</label>
@@ -887,7 +889,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v105";
+  window.FOX_VER = "v106";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

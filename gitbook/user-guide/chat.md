@@ -27,6 +27,15 @@ window). Decisions can be **allowed / denied** and remembered as grants.
 **God mode** (`/godmode`, ⚡) auto-approves everything but confines all work to
 a quarantined per-turn sandbox folder `<project>/godmode/<timestamp>/`.
 
+## Tool-step budget
+
+Each turn may make up to **`agent.max_iters`** tool calls (default 20) before
+the agent must answer. If a long task hits the limit, the reply ends with the
+"maximum number of tool steps" message and a **▶ Continue** button appears under
+it — click it and the agent picks up where it left off with a fresh budget. To
+let the agent do more work per turn, raise **Max tool steps per turn** in
+Settings (⚙).
+
 ## Reviewer
 
 After each turn, the background reviewer re-reads the recent transcript and
