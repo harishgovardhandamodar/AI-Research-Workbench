@@ -85,7 +85,7 @@ function truncate(s, n = 2000) {
 
 function renderMarkdown(src) {
   if (!src) return "";
-  let text = esc(String(src));
+  let text = esc(String(src)).replace(/\r\n/g, "\n");
   const codeBlocks = [];
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, body) => {
     const idx = codeBlocks.length;
@@ -120,9 +120,15 @@ function renderMarkdown(src) {
     return h + "</tbody></table>";
   });
 
-  // lists (simple, non-nested)
+  // lists (simple, non-nested; task-list items get checkboxes)
   text = text.replace(/((?:^[ \t]*[-*] .*\n?)+)/gm, (m) => {
-    const items = m.trim().split("\n").map((l) => `<li>${l.replace(/^[ \t]*[-*] /, "")}</li>`).join("");
+    const items = m.trim().split("\n").map((l) => {
+      const done = /^[ \t]*[-*] \[x\]/i.test(l);
+      const checked = /^[ \t]*[-*] \[[ xX]\]/.test(l);
+      const content = l.replace(/^[ \t]*[-*] \[[ xX]\]\s*/, "").replace(/^[ \t]*[-*] /, "");
+      const box = checked ? `<input type="checkbox" disabled ${done ? "checked" : ""}>` : "";
+      return `<li>${box}${content}</li>`;
+    }).join("");
     return `<ul>${items}</ul>`;
   });
   text = text.replace(/((?:^[ \t]*\d+\. .*\n?)+)/gm, (m) => {
@@ -131,6 +137,8 @@ function renderMarkdown(src) {
   });
 
   text = text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // auto-link bare URLs (after markdown links so already-linked ones win)
+  text = text.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
   // images (workflow figures): ![name](/artifacts/<id>) -> <img> (base-aware);
   // also accept artifact:<id> URLs the agent sometimes writes.
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
@@ -141,6 +149,7 @@ function renderMarkdown(src) {
   });
   text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
   text = text.replace(/\u0000IC\d+\u0000/g, (m) => inlinePlaceholders[m] ?? m);
   text = text.replace(/\u0000CB\d+\u0000/g, (m) => codeBlocks[Number(m.slice(3, -1))]);
   text = text.replace(/\n{3,}/g, "\n\n");
@@ -244,9 +253,9 @@ function send(obj) {
 
 function handleEvent(type, p) {
   switch (type) {
-    case "user_message": renderUserMessage(p.content, p.tags, p.created_at, p.experiment_id); break;
+    case "user_message": renderUserMessage(p.content, p.tags, p.created_at, p.experiment_id, p.id); break;
     case "stream_delta": streamDelta(p.text); break;
-    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id, p.mcp_name, p.action, p.tools, p.model); break;
+    case "assistant_message": finalizeAssistant(p.content, p.tags, p.created_at, p.experiment_id, p.mcp_name, p.action, p.tools, p.model, p.id); break;
     case "tool_start": toolStart(p); break;
     case "tool_result": toolResult(p); break;
     case "artifact": addArtifact(p.artifact); renderArtifacts(); renderArtifactInline(p.artifact); break;
@@ -265,7 +274,7 @@ function handleEvent(type, p) {
     case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p); break;
     case "workflow": renderWorkflow(p); break;
-    case "done": onTurnDone(); loadExperiments(); break;
+    case "done": onTurnDone(); attachNextSteps(); loadExperiments(); break;
     case "error": onError(p.message); break;
   }
 }
@@ -318,17 +327,25 @@ async function copyText(text) {
   ta.remove();
 }
 
-function msgContainer(role, tags, ts, target, who) {
+function msgContainer(role, tags, ts, target, who, mid) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
+  if (mid != null) div.dataset.mid = mid;
   const label = document.createElement("div");
   label.className = "msg-label";
   const sender = role === "user" ? "You"
     : (who || foxSenderLabel()) || "Fox";
+  const primaryAction = role === "user"
+    ? `<button class="msg-act msg-edit" title="Edit & resend this message">✎</button>`
+    : `<button class="msg-act msg-retry" title="Regenerate this reply">↻</button>`;
   label.innerHTML = `<span class="msg-who">${esc(sender)}</span>
     <span class="spacer"></span>
     <span class="msg-time">${ts ? fmtClock(ts) : ""}</span>
-    <button class="msg-copy" title="Copy message" data-role="${role}">⧉</button>`;
+    <span class="msg-actions">
+      ${primaryAction}
+      <button class="msg-act msg-copy" title="Copy message" data-role="${role}">⧉</button>
+      <button class="msg-act msg-del" title="Delete this message">🗑</button>
+    </span>`;
   div.appendChild(label);
   const tagHtml = msgTagsHtml(tags);
   if (tagHtml) div.insertAdjacentHTML("beforeend", tagHtml);
@@ -336,7 +353,55 @@ function msgContainer(role, tags, ts, target, who) {
   body.className = "msg-body";
   div.appendChild(body);
   (target || $("messages")).appendChild(div);
+  // Retry / edit / delete are wired directly (copy stays delegated below).
+  const retry = div.querySelector(".msg-retry");
+  if (retry) retry.addEventListener("click", () => retryMessage(div));
+  const edit = div.querySelector(".msg-edit");
+  if (edit) edit.addEventListener("click", () => editUserMessage(div));
+  const del = div.querySelector(".msg-del");
+  if (del) del.addEventListener("click", () => deleteMessage(mid, div));
   return { div, body };
+}
+
+function retryMessage(msgEl) {
+  const text = previousUserText(msgEl);
+  if (!text) { toast("No earlier user message to retry."); return; }
+  sendChat(text);
+}
+
+function editUserMessage(msgEl) {
+  const input = $("input");
+  const body = msgEl && msgEl.querySelector(".msg-body");
+  const txt = body ? body.textContent : "";
+  if (input && txt) {
+    input.value = txt;
+    autoResize(input);
+    input.focus();
+    input.setSelectionRange(txt.length, txt.length);
+    toast("Editing this message — press Enter to resend.");
+  }
+}
+
+function deleteMessage(mid, msgEl) {
+  if (!confirm("Delete this message?")) return;
+  if (mid == null) { msgEl.remove(); toast("Message removed (not persisted)."); return; }
+  api(`/api/projects/${state.project}/messages/${mid}`, { method: "DELETE" })
+    .then(() => { toast("Message deleted."); refreshState(); })
+    .catch((e) => toast("Delete failed: " + e.message, 4000));
+}
+
+// Text of the most recent user message that appears before `el` in the chat.
+function previousUserText(el) {
+  const msgs = $("messages").querySelectorAll(".msg");
+  let out = "";
+  for (const m of msgs) {
+    if (m === el) break;
+    if (m.classList.contains("user")) {
+      const b = m.querySelector(".msg-body");
+      if (b) out = b.textContent;
+    }
+  }
+  return out;
 }
 
 // "Fox - <Model> - <MCP Name> - <Action>": which model, MCP server and tool
@@ -436,8 +501,9 @@ function expandSetOf(el) {
   if (set) set.classList.remove("collapsed");
 }
 
-function renderUserMessage(content, tags, ts, expId) {
+function renderUserMessage(content, tags, ts, expId, mid) {
   const userMsg = {
+    id: mid,
     content: content || "",
     tags: tags || [],
     created_at: ts,
@@ -445,16 +511,16 @@ function renderUserMessage(content, tags, ts, expId) {
   };
   const set = msgSetCreate(userMsg, true);
   state._currentSet = set;
-  const el = msgContainer("user", tags, ts, set.body);
+  const el = msgContainer("user", tags, ts, set.body, undefined, mid);
   el.body.textContent = content;
   tagMessageExperiment(el, expId);
   scrollBottom();
 }
 
-function ensureAssistant(tags) {
+function ensureAssistant(tags, mid) {
   if (curAssistantEl && document.body.contains(curAssistantEl.div)) return curAssistantEl;
   if (!state._currentSet) state._currentSet = msgSetCreate(null, true);
-  const el = msgContainer("assistant", tags, null, state._currentSet.body);
+  const el = msgContainer("assistant", tags, null, state._currentSet.body, undefined, mid);
   curAssistantEl = el;
   setConn("busy");
   state.streaming = true;
@@ -464,18 +530,33 @@ function ensureAssistant(tags) {
 function streamDelta(text) {
   const el = ensureAssistant();
   el.raw = (el.raw || "") + text;
-  el.body.innerHTML = renderMarkdown(el.raw) + '<span class="cursor"></span>';
+  // Debounce the full markdown re-render: rendering the whole buffer on every
+  // token is O(n²) and flickers on half-formed tables/fences. Re-render at
+  // ~10 Hz during streaming, then once, cleanly, on finalize.
+  if (!el._renderTimer) {
+    el._renderTimer = setTimeout(() => {
+      el._renderTimer = null;
+      el.body.innerHTML = renderMarkdown(el.raw) + '<span class="cursor"></span>';
+    }, 90);
+  }
   scrollBottom();
 }
 
-function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model) {
+function renderStreamFinal(el) {
+  if (!el) return;
+  if (el._renderTimer) { clearTimeout(el._renderTimer); el._renderTimer = null; }
+  el.body.innerHTML = renderMarkdown(el.raw || "");
+}
+
+function finalizeAssistant(content, tags, ts, expId, mcp, action, tools, model, mid) {
   const el = curAssistantEl;
   if (el) {
     el.raw = content || el.raw || "";
-    el.body.innerHTML = renderMarkdown(el.raw);
+    renderStreamFinal(el);
     enhanceCodeBlocks(el.body);
     maybeAttachRepoButtons(el, tags);
     tagMessageExperiment(el, expId);
+    if (mid != null) el.div.dataset.mid = mid;
     if (ts) {
       const t = el.div.querySelector(".msg-time");
       if (t) t.textContent = fmtClock(ts);
@@ -910,6 +991,38 @@ function setReviewStatus(txt) {
   c.innerHTML = `<div class="empty">${esc(txt)}</div>`;
 }
 
+// Render the latest reviewer suggestions as "next steps" under the most recent
+// assistant reply, right where the user is looking, with one-click rerun.
+function attachNextSteps() {
+  const ss = state._lastSuggestions || [];
+  if (!ss.length) return;
+  const msgs = $("messages").querySelectorAll(".msg.assistant");
+  const last = msgs[msgs.length - 1];
+  if (!last || last.querySelector(".next-steps")) return;
+  const block = document.createElement("div");
+  block.className = "next-steps";
+  block.innerHTML = '<div class="next-steps-title">Suggested next steps</div>';
+  for (const s of ss) {
+    const title = (typeof s === "object" && s && s.title) ? s.title
+      : (typeof s === "string" ? s : "");
+    const prompt = (typeof s === "object" && s && s.prompt) ? s.prompt
+      : (typeof s === "string" ? s : "");
+    if (!title) continue;
+    const row = document.createElement("div");
+    row.className = "next-step";
+    row.innerHTML = `<span class="ns-title">${esc(title)}</span>`;
+    if (prompt) {
+      const btn = document.createElement("button");
+      btn.className = "btn subtle small ns-run";
+      btn.textContent = "Run";
+      btn.addEventListener("click", () => sendChat(prompt, "rerun_suggestion"));
+      row.appendChild(btn);
+    }
+    block.appendChild(row);
+  }
+  last.appendChild(block);
+}
+
 function renderGrants(grants) {
   const c = $("grant-list");
   c.innerHTML = "";
@@ -1007,6 +1120,7 @@ function setTurnControls(busy) {
   $("input").disabled = busy;
   $("stop-btn").classList.toggle("hidden", !busy);
   $("activity").classList.toggle("hidden", !busy);
+  document.querySelectorAll(".quick").forEach((b) => { b.disabled = busy; });
   clearInterval(state.turnTimer);
   state.turnTimer = null;
   if (busy) {
@@ -1032,8 +1146,14 @@ function onError(msg) {
   setConn("ok");
   state.busy = false;
   setTurnControls(false);
+  if (curAssistantEl && curAssistantEl._renderTimer) {
+    clearTimeout(curAssistantEl._renderTimer);
+    curAssistantEl._renderTimer = null;
+  }
   const el = ensureAssistant();
   el.body.innerHTML += `<p style="color:var(--danger)"><strong>Error:</strong> ${esc(msg)}</p>`;
+  state.streaming = false;
+  curAssistantEl = null;
   onTurnDone();
 }
 
@@ -1052,10 +1172,23 @@ async function sendChat(textOverride, intent, extra) {
   const t = text.trim();
   if (t === "/flat" || t === "/flat=1") { setViewParam("flat"); return; }
   if (t === "/sets" || t === "/sets=1") { setViewParam("sets"); return; }
+  // Data inspection command: "@schema data.csv" renders a schema card inline
+  // (no LLM round-trip) so the user can see columns/dtypes before prompting.
+  if (/^@schema\b/i.test(t)) {
+    const fname = t.replace(/^@schema\b/i, "").trim().split(/\s+/)[0] || "";
+    if (textOverride === undefined) {
+      input.value = "";
+      autoResize(input);
+    }
+    if (fname) await showSchemaInline(fname);
+    else toast("Usage: @schema <filename> (e.g. @schema data.csv)", 4000);
+    return;
+  }
   if (textOverride !== undefined) {
     input.value = "";
     autoResize(input);
   }
+  state._lastSuggestions = null;
   state.busy = true;
   setTurnControls(true);
   setConn("busy");
@@ -1321,6 +1454,60 @@ async function deleteFile(name) {
     renderFiles(r.files || []);
     toast(`Deleted ${name}`);
   } catch (e) { toast("Delete failed: " + e.message, 4000); }
+}
+
+/* ---- data schema inspection (@schema command) ---- */
+
+function schemaCardHtml(s) {
+  if (!s || !s.columns || !s.columns.length) {
+    return '<div class="muted">No schema available for this file.</div>';
+  }
+  const cols = s.columns.map((c) => `
+    <div class="sc-col">
+      <span class="sc-name" title="${esc(c.name)}">${esc(c.name)}</span>
+      <span class="sc-dtype">${esc(c.dtype)}</span>
+      <span class="sc-kind">${esc(c.kind)}</span>
+      ${c.null_pct ? `<span class="sc-null">${Math.round(c.null_pct * 100)}% null</span>` : ""}
+      <span class="sc-sample">${esc((c.sample || []).join(" · ") || "—")}</span>
+    </div>`).join("");
+  const prev = (s.preview && s.preview.length) ? `
+    <table class="schema-preview"><thead><tr>
+      ${s.columns.map((c) => `<th>${esc(c.name)}</th>`).join("")}
+    </tr></thead><tbody>
+      ${s.preview.map((row) => `<tr>${s.columns.map((c) => `<td>${esc(row[c.name] ?? "")}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>` : "";
+  return `<div class="schema-head">
+      <span class="sc-file">📋 ${esc(s.file)}</span>
+      <span class="sc-rows">${s.rows} rows · ${s.columns.length} columns</span>
+      <span class="spacer"></span>
+      <button class="btn subtle small schema-copy" title="Copy schema as text">⧉</button>
+    </div>
+    <div class="schema-cols">${cols}</div>
+    ${prev}`;
+}
+
+async function showSchemaInline(fname) {
+  const userMsg = { content: "@schema " + fname, created_at: null };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const uel = msgContainer("user", [], null, set.body);
+  uel.body.textContent = "@schema " + fname;
+  const ael = msgContainer("assistant", [], null, set.body, "Fox · schema");
+  const box = document.createElement("div");
+  box.className = "schema-card";
+  box.innerHTML = '<div class="empty">Reading schema…</div>';
+  ael.body.appendChild(box);
+  scrollBottom();
+  try {
+    const r = await api(`/api/projects/${state.project}/files/schema?fname=${encodeURIComponent(fname)}`);
+    box.innerHTML = schemaCardHtml(r.schema);
+  } catch (e) {
+    box.classList.add("schema-err");
+    box.innerHTML = `<span class="sev">error</span>${esc(e.message)}`;
+  }
+  const copyBtn = box.querySelector(".schema-copy");
+  if (copyBtn) copyBtn.addEventListener("click", () => copyText(box.innerText));
+  scrollBottom();
 }
 
 /* ---- Kaggle dataset import ---- */
@@ -1905,7 +2092,7 @@ function renderMessagesFlat(msgs, wrap) {
   msgs.forEach((m, i) => {
     const mtags = (m.meta && m.meta.tags) || [];
     if (m.role === "user") {
-      const el = msgContainer("user", mtags, m.created_at);
+      const el = msgContainer("user", mtags, m.created_at, undefined, undefined, m.id);
       el.body.textContent = m.content;
       tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       turnUser = m.id;
@@ -1913,7 +2100,7 @@ function renderMessagesFlat(msgs, wrap) {
       if (!(m.content || "").trim()) return;
       const el = msgContainer("assistant", mtags, m.created_at, undefined,
         foxSenderLabel(m.meta && m.meta.mcp_name, m.meta && m.meta.action,
-                       m.meta && m.meta.model));
+                       m.meta && m.meta.model), m.id);
       el.body.innerHTML = renderMarkdown(m.content);
       enhanceCodeBlocks(el.body);
       maybeAttachRepoButtons(el, mtags);
@@ -1934,6 +2121,7 @@ function renderMessagesFlat(msgs, wrap) {
       wrap.appendChild(card);
     }
   });
+  attachNextSteps();
 }
 
 function renderMessages(msgs) {
@@ -1967,7 +2155,7 @@ function renderMessages(msgs) {
         }
         currentSet = msgSetCreate(m, true);
         setCount++;
-        const el = msgContainer("user", mtags, m.created_at, currentSet.body);
+        const el = msgContainer("user", mtags, m.created_at, currentSet.body, undefined, m.id);
         el.body.textContent = m.content;
         tagMessageExperiment(el, m.meta && m.meta.experiment_id);
         turnUser = m.id;
@@ -1982,7 +2170,7 @@ function renderMessages(msgs) {
         currentSet.update();
         const el = msgContainer("assistant", mtags, m.created_at, currentSet.body,
           foxSenderLabel(m.meta && m.meta.mcp_name, m.meta && m.meta.action,
-                         m.meta && m.meta.model));
+                         m.meta && m.meta.model), m.id);
         el.body.innerHTML = renderMarkdown(m.content);
         enhanceCodeBlocks(el.body);
         maybeAttachRepoButtons(el, mtags);
@@ -2017,7 +2205,8 @@ function renderMessages(msgs) {
                                 undefined,
                                 foxSenderLabel(fm.meta && fm.meta.mcp_name,
                                                fm.meta && fm.meta.action,
-                                               fm.meta && fm.meta.model));
+                                               fm.meta && fm.meta.model),
+                                fm.id);
         if (fm.role === "user") { el.body.textContent = fm.content || ""; turnUser = fm.id; }
         else el.body.innerHTML = renderMarkdown(fm.content || "");
       } catch (e2) { /* give up on this one */ }
@@ -2041,15 +2230,88 @@ function attachTurnArtifacts(turnUserMsgId, div) {
 
 /* ============================ model refresh ============================== */
 
+// Friendly metadata for a model id so the dropdown is more than a raw id list.
+const MODEL_FAMILIES = [
+  { re: /qwen/i, family: "Qwen", provider: "Alibaba" },
+  { re: /llama/i, family: "Llama", provider: "Meta" },
+  { re: /mistral/i, family: "Mistral", provider: "Mistral AI" },
+  { re: /mixtral/i, family: "Mixtral", provider: "Mistral AI" },
+  { re: /codestral/i, family: "Codestral", provider: "Mistral AI" },
+  { re: /deepseek/i, family: "DeepSeek", provider: "DeepSeek" },
+  { re: /gemini/i, family: "Gemini", provider: "Google" },
+  { re: /gemma/i, family: "Gemma", provider: "Google" },
+  { re: /gpt/i, family: "GPT", provider: "OpenAI" },
+  { re: /claude/i, family: "Claude", provider: "Anthropic" },
+  { re: /phi/i, family: "Phi", provider: "Microsoft" },
+  { re: /granite/i, family: "Granite", provider: "IBM" },
+  { re: /command\b/i, family: "Command", provider: "Cohere" },
+  { re: /aya/i, family: "Aya", provider: "Cohere" },
+  { re: /starcoder/i, family: "StarCoder", provider: "BigCode" },
+  { re: /codellama/i, family: "CodeLlama", provider: "Meta" },
+  { re: /llava/i, family: "LLaVA", provider: "UW-Madison" },
+  { re: /nomic/i, family: "Nomic", provider: "Nomic AI" },
+  { re: /dbrx/i, family: "DBRX", provider: "Databricks" },
+  { re: /solar/i, family: "Solar", provider: "Upstage" },
+  { re: /openchat/i, family: "OpenChat", provider: "OpenChat" },
+  { re: /dolphin/i, family: "Dolphin", provider: "Cognitive" },
+];
+
+function modelMeta(id, ownedBy) {
+  const s = String(id || "");
+  let family = "";
+  let provider = ownedBy || "";
+  for (const f of MODEL_FAMILIES) {
+    if (f.re.test(s)) { family = f.family; provider = provider || f.provider; break; }
+  }
+  let size = "";
+  const sizeM = /(?:^|[:_-])(\d+(?:\.\d+)?)b/i.exec(s);
+  if (sizeM) size = sizeM[1] + "B";
+  const tags = [];
+  if (/instruct|[-_]it\b/i.test(s)) tags.push("instruct");
+  const recommended = isCurrentModel(id);
+  const hint = [family, size].filter(Boolean).join(" ");
+  return { family: family || "Other", provider, size, tags, hint, recommended };
+}
+
+function isCurrentModel(id) {
+  try { return state.config && state.config.llm && state.config.llm.model === id; }
+  catch (e) { return false; }
+}
+
+function renderModelSelect() {
+  const sel = $("model-select");
+  if (!sel) return;
+  const models = state.models || [];
+  if (!models.length) { sel.innerHTML = ""; return; }
+  const groups = {};
+  for (const m of models) {
+    const meta = modelMeta(m.id, m.owned_by);
+    const key = meta.recommended ? "★ Current" : meta.family;
+    (groups[key] = groups[key] || []).push({ m, meta });
+  }
+  const keys = Object.keys(groups).sort((a, b) => {
+    if (a === "★ Current") return -1;
+    if (b === "★ Current") return 1;
+    return a.localeCompare(b);
+  });
+  sel.innerHTML = keys.map((k) => {
+    const opts = groups[k].map(({ m, meta }) => {
+      const label = meta.hint ? `${m.id} · ${meta.hint}` : m.id;
+      return `<option value="${esc(m.id)}">${esc(label)}</option>`;
+    }).join("");
+    return `<optgroup label="${esc(k)}">${opts}</optgroup>`;
+  }).join("");
+  if (state.config?.llm?.model && models.some((m) => m.id === state.config.llm.model)) {
+    sel.value = state.config.llm.model;
+  }
+}
+
 async function refreshModels() {
   const sel = $("model-select");
   try {
     const r = await api("/api/models");
     state.models = r.models || [];
-    sel.innerHTML = state.models.map((m) => `<option value="${esc(m.id)}">${esc(m.id)}</option>`).join("");
-    if (state.config?.llm?.model && state.models.some((m) => m.id === state.config.llm.model)) {
-      sel.value = state.config.llm.model;
-    }
+    renderModelSelect();
   } catch (e) {
     sel.innerHTML = `<option>${esc(state.config?.llm?.model || "")}</option>`;
   }
@@ -2095,6 +2357,89 @@ $("stop-btn").addEventListener("click", () => {
   send({ type: "stop" });
   toast("Stopping…");
 });
+
+/* ---- composer file attach (📎) ---- */
+$("attach-btn").addEventListener("click", () => $("chat-attach-input").click());
+$("chat-attach-input").addEventListener("change", async () => {
+  const input = $("chat-attach-input");
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("upload", file, file.name);
+  try {
+    const res = await fetch(B(`/api/projects/${state.project}/files`), {
+      method: "POST", body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    const ta = $("input");
+    const hint = `I attached ${file.name} — it is saved in the project as ${file.name}. Inspect it with @schema ${file.name}, or ask Fox to load and analyze it.`;
+    ta.value = (ta.value ? ta.value.trimEnd() + "\n" : "") + hint;
+    autoResize(ta);
+    ta.focus();
+    toast(`Uploaded ${file.name} — data hint added to your message.`);
+    loadFiles();
+  } catch (e) { toast("Upload failed: " + e.message, 4000); }
+  input.value = "";
+});
+
+/* ---- configurable quick-actions tray (custom shortcuts) ---- */
+function qaLoad() {
+  try { state.customActions = JSON.parse(localStorage.getItem("fox.quickActions") || "[]"); }
+  catch (e) { state.customActions = []; }
+  if (!Array.isArray(state.customActions)) state.customActions = [];
+}
+function qaSave() {
+  try { localStorage.setItem("fox.quickActions", JSON.stringify(state.customActions || [])); }
+  catch (e) { /* storage unavailable */ }
+}
+function qaRender() {
+  const wrap = $("quick-actions");
+  if (!wrap) return;
+  wrap.querySelectorAll(".qa-custom").forEach((el) => el.remove());
+  (state.customActions || []).forEach((a, i) => {
+    const row = document.createElement("span");
+    row.className = "qa-custom";
+    const b = document.createElement("button");
+    b.className = "btn subtle small quick";
+    b.textContent = a.label || a.text || "shortcut";
+    b.title = a.text || "";
+    b.addEventListener("click", () => sendChat(a.text || "", a.intent || "", null));
+    const rm = document.createElement("button");
+    rm.className = "qa-remove";
+    rm.textContent = "✕";
+    rm.title = "Remove this shortcut";
+    rm.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.customActions.splice(i, 1);
+      qaSave();
+      qaRender();
+    });
+    row.appendChild(b);
+    row.appendChild(rm);
+    wrap.appendChild(row);
+  });
+}
+$("qa-add").addEventListener("click", () => {
+  const label = prompt("Shortcut label (e.g. 'Plot loss curves'):");
+  if (!label) return;
+  const text = prompt("Prompt text sent to Fox:", label);
+  if (!text) return;
+  state.customActions = state.customActions || [];
+  state.customActions.push({ label, text });
+  qaSave();
+  qaRender();
+  toast("Shortcut added.");
+});
+$("qa-reset").addEventListener("click", () => {
+  if (!confirm("Remove all custom shortcuts?")) return;
+  state.customActions = [];
+  qaSave();
+  qaRender();
+  toast("Custom shortcuts cleared.");
+});
+qaLoad();
+qaRender();
 // Copy a message's text from its ⧉ button.
 $("messages").addEventListener("click", (e) => {
   const btn = e.target.closest(".msg-copy");
@@ -2460,6 +2805,7 @@ async function refreshExpContext() {
   if (!state.expList || !state.expList.length) {
     state.activeExperiment = null;
     $("exp-context").classList.add("hidden");
+    updateComposerCtx(null, null);
     return;
   }
   const eid = detectActiveExperiment();
@@ -2486,6 +2832,36 @@ function ecProgress(exp, best) {
   const higher = exp.higher_better !== false;
   const ratio = higher ? best.v / target : target / best.v;
   return Math.max(0, Math.min(100, ratio * 100));
+}
+
+const DEFAULT_PLACEHOLDER = "Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'";
+
+// Reflect the active experiment's goal above the composer so the prompt stays
+// pointed at the objective while the user types.
+function updateComposerCtx(exp, best) {
+  const chip = $("composer-ctx");
+  const input = $("input");
+  if (!chip) return;
+  if (!exp || !exp.goal_metric) {
+    chip.classList.add("hidden");
+    if (input) input.placeholder = DEFAULT_PLACEHOLDER;
+    return;
+  }
+  const target = exp.goal_target != null ? " → " + _fmtNum(exp.goal_target) : "";
+  const dirn = exp.higher_better !== false ? "↑" : "↓";
+  const bestTxt = best ? ` · best ${_fmtNum(best.v)}` : "";
+  chip.classList.remove("hidden");
+  chip.innerHTML = `<span class="composer-goal" title="Active experiment: ${esc(exp.name)}">
+    🎯 ${esc(exp.name)} · ${esc(exp.goal_metric)} ${dirn}${esc(target)}${bestTxt}
+    <span class="composer-goal-sub">click to open experiment controls</span></span>`;
+  if (input) input.placeholder = `Work toward ${exp.goal_metric}${dirn}${target} — tell Fox what to try next`;
+  chip.querySelector(".composer-goal").addEventListener("click", () => {
+    const body = $("ec-body");
+    if (body) {
+      const open = body.classList.toggle("hidden");
+      $("ec-toggle").classList.toggle("open", !open);
+    }
+  });
 }
 
 async function renderExpContext() {
@@ -2546,6 +2922,7 @@ async function renderExpContext() {
     rc.innerHTML = '<span class="muted">No runs yet — ask the agent to improve it, or create a run.</span>';
   }
   ctx.classList.remove("hidden");
+  updateComposerCtx(exp, best);
   // Persisted last commit/push (survives page refresh).
   const mgmtEl = $("ec-mgmt-msg");
   if (mgmtEl) mgmtEl.innerHTML = mgmtActivityHtml(state.mgmtActivity);

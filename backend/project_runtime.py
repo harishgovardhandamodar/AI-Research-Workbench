@@ -107,6 +107,53 @@ class ProjectRuntime:
                            approval=approval, emit=emit, notebooks=self.notebooks,
                            workflow=self.workflow, audit=self.audit_emitter)
 
+    def _experiment_context(self) -> str:
+        """A compact block describing the most recently active experiment, so the
+        agent steers its work toward the user's objective (goal metric/target and
+        best run so far) instead of only reacting to the last message."""
+        try:
+            exps = self.store.list_experiments()
+        except Exception:  # noqa: BLE001
+            return ""
+        active = [e for e in exps if e.get("status") == "active"]
+        if not active:
+            return ""
+        pick = sorted(active, key=lambda e: e.get("updated_at") or 0, reverse=True)[0]
+        name = (pick.get("name") or "untitled").strip()
+        hypothesis = (pick.get("hypothesis") or "").strip()
+        goal = (pick.get("goal_metric") or "").strip()
+        target = pick.get("goal_target")
+        higher = pick.get("higher_better") is not False
+        plan = (pick.get("plan") or "").strip()
+
+        lines = [f"## Active experiment context: {name}"]
+        if hypothesis:
+            lines.append(f"- Hypothesis: {hypothesis}")
+        if goal:
+            dirn = "higher is better" if higher else "lower is better"
+            tgt = "" if target is None else f", target {target}"
+            lines.append(f"- Goal: {goal} ({dirn}{tgt})")
+        if plan:
+            lines.append(f"- Plan: {plan}")
+        try:
+            runs = self.store.list_runs(limit=500)
+            exp_runs = [r for r in runs if r.get("experiment_id") == pick.get("id")]
+            if exp_runs:
+                best = None
+                for r in exp_runs:
+                    m = (r.get("metrics") or {}).get(goal) if goal else None
+                    if m is None:
+                        continue
+                    if best is None or (higher and m > best[1]) or (not higher and m < best[1]):
+                        best = (r.get("id"), m)
+                if best is not None:
+                    lines.append(f"- Runs recorded: {len(exp_runs)}; best {goal or 'metric'} so far: {best[1]} (run #{best[0]})")
+                else:
+                    lines.append(f"- Runs recorded: {len(exp_runs)}")
+        except Exception:  # noqa: BLE001
+            pass
+        return "\n".join(lines)
+
     def build_llm_messages(self) -> list[dict]:
         from .agents.coordinator import SYSTEM_PROMPT
         from .skills import skills_context
@@ -135,6 +182,9 @@ class ProjectRuntime:
                              "content": r["content"]})
         sk = skills_context()
         system = SYSTEM_PROMPT + ("\n\n" + sk if sk else "")
+        exp_ctx = self._experiment_context()
+        if exp_ctx:
+            system += "\n\n" + exp_ctx
         if summary:
             system += ("\n\n## Summary of earlier conversation (compacted)\n"
                        "The following is a persistent summary of turns that were "

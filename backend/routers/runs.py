@@ -33,6 +33,15 @@ async def project_run(name: str, rid: int):
     return {"run": run}
 
 
+@router.delete("/api/projects/{name}/messages/{mid}")
+async def project_message_delete(name: str, mid: int):
+    """Delete a single chat message so the user can curate the conversation."""
+    rt = get_runtime(name)
+    if not rt.store.delete_message(mid):
+        raise HTTPException(status_code=404, detail="message not found")
+    return {"ok": True, "messages": rt.store.list_messages()}
+
+
 @router.get("/api/projects/{name}/experiments")
 async def project_experiments(name: str):
     """Structured experiments (families of runs) for this project."""

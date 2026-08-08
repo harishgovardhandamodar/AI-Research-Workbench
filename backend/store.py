@@ -170,6 +170,12 @@ class ProjectStore:
         row = self._conn.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
         return self._row_msg(row) if row else None
 
+    def delete_message(self, mid: int) -> bool:
+        """Delete one message row. Returns True if a row was removed."""
+        cur = self._conn.execute("DELETE FROM messages WHERE id=?", (mid,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def _row_msg(self, row) -> dict:
         d = {"id": row["id"], "role": row["role"], "content": row["content"],
              "created_at": row["created_at"]}

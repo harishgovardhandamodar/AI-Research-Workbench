@@ -314,13 +314,15 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 }
 .msg-who { }
 .msg-time { font-size: 10px; text-transform: none; letter-spacing: 0; opacity: .8; }
-.msg-copy {
+.msg-actions { display: inline-flex; align-items: center; gap: 2px; }
+.msg-act {
   background: none; border: none; color: var(--text-dim); cursor: pointer;
   font-size: 12px; padding: 1px 5px; border-radius: 4px; opacity: 0;
   transition: opacity .12s;
 }
-.msg:hover .msg-copy { opacity: .85; }
-.msg-copy:hover { opacity: 1; color: var(--accent-2); background: rgba(79,140,255,.12); }
+.msg:hover .msg-act { opacity: .85; }
+.msg-act:hover { opacity: 1; color: var(--accent-2); background: rgba(79,140,255,.12); }
+.msg-act.msg-del:hover { color: var(--danger); background: rgba(224,91,91,.14); }
 .day-sep {
   text-align: center; font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px;
   color: var(--text-dim); opacity: .7; margin: 8px 0 0;
@@ -438,6 +440,75 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); animation: blink 1s steps(1) infinite; vertical-align: text-bottom; }
 @keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- suggested next steps (inline under assistant replies) ---------- */
+.next-steps {
+  margin-top: 8px; border: 1px solid rgba(169,116,255,.4); border-radius: 10px;
+  background: rgba(169,116,255,.07); padding: 8px 10px;
+}
+.next-steps-title {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px;
+  color: #c9aaff; margin-bottom: 5px;
+}
+.next-step {
+  display: flex; align-items: center; gap: 8px; padding: 3px 0;
+  font-size: 12.5px;
+}
+.next-step + .next-step { border-top: 1px solid rgba(169,116,255,.15); }
+.ns-title { flex: 1; }
+.ns-run { flex: none; }
+
+/* ---------- schema card (@schema command) ---------- */
+.schema-card { font-size: 12.5px; }
+.schema-card .empty { color: var(--text-dim); }
+.schema-card.schema-err { color: var(--danger); }
+.schema-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.sc-file { font-weight: 700; }
+.sc-rows { color: var(--text-dim); font-size: 11.5px; }
+.schema-cols { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.sc-col {
+  display: grid; grid-template-columns: 1fr auto auto auto;
+  gap: 10px; align-items: baseline; padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sc-name { font-family: var(--mono); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-dtype { font-family: var(--mono); font-size: 11px; color: var(--accent-2); }
+.sc-kind { font-size: 10.5px; color: var(--text-dim); }
+.sc-null { font-size: 10.5px; color: var(--warn); }
+.sc-sample { font-size: 11px; color: var(--text-dim); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-preview { width: 100%; }
+.schema-preview th, .schema-preview td {
+  border: 1px solid var(--border); padding: 3px 8px; font-size: 11.5px;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.schema-preview th { background: var(--bg-3); }
+
+/* ---------- composer context (active experiment goal) ---------- */
+.composer-ctx { flex: 0 0 auto; padding: 6px 16px 0; }
+.composer-goal {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; cursor: pointer;
+  background: rgba(169,116,255,.10); border: 1px solid rgba(169,116,255,.4);
+  color: #c9aaff; border-radius: 12px; padding: 3px 10px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.composer-goal:hover { border-color: #a974ff; background: rgba(169,116,255,.2); }
+.composer-goal-sub { font-size: 10px; opacity: .7; }
+.composer-attach { align-self: flex-end; }
+
+/* ---------- custom quick actions ---------- */
+.qa-custom { position: relative; display: inline-flex; align-items: center; }
+.qa-custom .quick { padding-right: 16px; }
+.qa-remove {
+  position: absolute; right: 0; top: -2px;
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 10px; padding: 1px 3px; opacity: .7;
+}
+.qa-remove:hover { color: var(--danger); opacity: 1; }
+.quick:disabled { opacity: .4; cursor: not-allowed; }
 
 /* tool cards */
 .toolcard { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-3); overflow: hidden; }

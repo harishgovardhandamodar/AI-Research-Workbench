@@ -327,8 +327,13 @@
                 data-text="Show the best run so far and why it wins">🏆 Best run so far</button>
         <button class="btn subtle small quick"
                 data-text="List all experiments with their status and best metric">🗂 Experiments</button>
+        <button id="qa-add" class="btn subtle small" title="Add a custom shortcut">＋ Add</button>
+        <button id="qa-reset" class="btn subtle small" title="Remove custom shortcuts">⌫</button>
       </div>
+      <div id="composer-ctx" class="composer-ctx hidden" title="Active experiment"></div>
       <div id="composer">
+        <button id="attach-btn" class="btn subtle composer-attach" title="Attach a file to the conversation">📎</button>
+        <input id="chat-attach-input" type="file" class="file-input hidden" />
         <span id="activity" class="activity hidden" title="Generating"></span>
         <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
         <button id="stop-btn" class="btn danger hidden" title="Stop generating">Stop</button>

@@ -184,6 +184,142 @@ async def project_files(name: str):
     return {"files": _list_project_files(name)}
 
 
+# Formats the schema reader understands, mapped to how pandas should read them.
+_SCHEMA_READERS = {
+    ".csv": "read_csv",
+    ".tsv": "read_csv",
+    ".txt": "read_csv",
+    ".json": "read_json",
+    ".jsonl": "read_json",
+    ".parquet": "read_parquet",
+    ".xlsx": "read_excel",
+}
+_PREVIEW_ROWS = 5
+_SCHEMA_MAX_LINES = 1_000_000
+
+
+def _schema_from_file(path: Path) -> dict:
+    """Lightweight schema preview for a tabular data file.
+
+    Returns column names/dtypes/type-hints, null percentages, a short value
+    sample, and a few preview rows — enough for the user (and the model) to
+    understand the data without dumping it. Safe for notebooks-size data.
+    """
+    try:
+        import pandas as pd  # noqa: PLC0415
+    except ImportError:
+        raise HTTPException(status_code=501, detail="pandas not available on server")
+
+    if path.stat().st_size == 0:
+        raise HTTPException(status_code=400, detail="file is empty")
+
+    ext = path.suffix.lower()
+    reader = _SCHEMA_READERS.get(ext)
+    if reader is None:
+        raise HTTPException(status_code=400,
+                            detail=f"unsupported type '{ext}' (try csv/tsv/json/parquet/xlsx)")
+
+    try:
+        kwargs: dict = {}
+        if reader == "read_csv":
+            kwargs = {"sep": "\t" if ext == ".tsv" else ",", "nrows": 500,
+                      "low_memory": False}
+            for enc in ("utf-8-sig", "utf-8", "latin-1"):
+                try:
+                    df = pd.read_csv(path, **kwargs, encoding=enc)
+                    break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            else:
+                df = pd.read_csv(path, **kwargs)
+        elif reader == "read_json":
+            lines = ext == ".jsonl"
+            if lines:
+                df = pd.read_json(path, lines=True, nrows=500)
+            else:
+                df = pd.read_json(path)
+        elif reader == "read_excel":
+            df = pd.read_excel(path, nrows=500)
+        else:
+            df = getattr(pd, reader)(path)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"could not read file: {e}")
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=422, detail="file contains no data rows")
+
+    n = len(df)
+    rows_est = n
+    if reader == "read_csv" and ext != ".tsv":
+        # Cheap full-count estimate for text formats (bounded).
+        try:
+            with path.open("rb") as fh:
+                rows_est = min(_SCHEMA_MAX_LINES,
+                               sum(1 for _ in fh) - 1)
+        except OSError:
+            rows_est = n
+    elif reader == "read_parquet":
+        try:
+            rows_est = int(df.attrs.get("nrows") or 0) or int(len(df))
+        except (TypeError, ValueError):
+            rows_est = len(df)
+
+    cols = []
+    for cname in df.columns:
+        col = df[cname]
+        try:
+            null_pct = round(float(col.isna().mean() or 0.0), 4)
+        except Exception:  # noqa: BLE001
+            null_pct = 0.0
+        sample = []
+        for v in col.head(4).tolist():
+            if isinstance(v, (list, dict)):
+                v = repr(v)
+            sample.append("" if v is None else str(v)[:40])
+        cols.append({
+            "name": str(cname),
+            "dtype": str(col.dtype),
+            "kind": ("numeric" if col.dtype.kind in "fiu" else
+                     "bool" if col.dtype.kind == "b" else
+                     "datetime" if col.dtype.kind == "M" else "text"),
+            "null_pct": null_pct,
+            "sample": sample,
+        })
+
+    preview = []
+    for _, row in df.head(_PREVIEW_ROWS).iterrows():
+        rec = {}
+        for cname in df.columns:
+            v = row[cname]
+            if isinstance(v, (list, dict)):
+                v = repr(v)
+            rec[str(cname)] = "" if v is None else str(v)[:80]
+        preview.append(rec)
+
+    return {
+        "file": path.name,
+        "rows": rows_est,
+        "preview_rows": _PREVIEW_ROWS,
+        "columns": cols,
+        "preview": preview,
+    }
+
+
+@router.get("/api/projects/{name}/files/schema")
+async def project_file_schema(name: str, fname: str = ""):
+    """Schema preview (columns, dtypes, sample rows) for a project data file."""
+    if not fname:
+        raise HTTPException(status_code=400, detail="query param 'fname' required")
+    rt = get_runtime(name)
+    rel = _safe_relpath(fname)
+    dest = rt.dir / rel
+    if not dest.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return {"schema": _schema_from_file(dest)}
+
+
 @router.post("/api/projects/{name}/files")
 async def project_files_upload(name: str, upload: UploadFile = File(...)):
     rt = get_runtime(name)
