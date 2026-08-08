@@ -3163,6 +3163,95 @@ async function loadExpDetail(eid) {
   } catch (e) { return { id: eid }; }
 }
 
+async function openExpDetail(eid) {
+  const meta = (state.expList || []).find((x) => x.id === eid) || {};
+  $("exp-detail-title").textContent = meta.name || `Experiment #${eid}`;
+  const body = $("exp-detail-body");
+  body.innerHTML = '<div class="exp-loading">Loading…</div>';
+  const exp = await loadExpDetail(eid);
+  body.innerHTML = renderExpDetailBody(eid, meta, exp);
+  body.querySelectorAll(".expd-close").forEach((b) =>
+    b.addEventListener("click", () => $("exp-detail-modal").classList.add("hidden")));
+  body.querySelectorAll(".expd-improve").forEach((b) =>
+    b.addEventListener("click", () => {
+      $("exp-detail-modal").classList.add("hidden");
+      sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
+               "improve_loop", { experiment_id: b.dataset.eid });
+    }));
+  body.querySelectorAll(".expd-edit").forEach((b) =>
+    b.addEventListener("click", () => {
+      $("exp-detail-modal").classList.add("hidden");
+      openExpEdit(Number(b.dataset.eid));
+    }));
+  body.querySelectorAll(".expd-focus").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const fid = state.focusExperiment === Number(b.dataset.eid) ? null : Number(b.dataset.eid);
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/focus`, {
+          method: "POST", body: JSON.stringify({ id: fid }),
+        });
+        state.focusExperiment = r.focus_id;
+        await loadExperiments();
+        toast(fid ? "Experiment focused." : "Focus cleared.");
+      } catch (e) { toast("Failed to set focus: " + e.message); }
+    }));
+  $("exp-detail-modal").classList.remove("hidden");
+}
+
+function renderExpDetailBody(eid, meta, exp) {
+  const rank = (state.expRanking && state.expRanking[eid]) || null;
+  const best = rank && rank.best != null ? rank.best : null;
+  const higher = meta.higher_better !== false;
+  const target = meta.goal_target != null ? meta.goal_target : null;
+  const reached = best != null && target != null && (higher ? best >= target : best <= target);
+  const runs = exp.runs || [];
+  const ls = (state.learnings || {})[String(eid)] || [];
+  let h = "";
+  if (meta.hypothesis || meta.goal_metric || best != null || meta.model || meta.plan) {
+    h += `<div class="run-detail-grid">`;
+    if (meta.hypothesis) h += `<div><span class="rd-k">Hypothesis</span><span class="rd-v">${esc(meta.hypothesis)}</span></div>`;
+    if (meta.goal_metric) h += `<div><span class="rd-k">Goal</span><span class="rd-v">${esc(meta.goal_metric)} ${higher ? "↑" : "↓"}${target != null ? " → " + _fmtNum(target) : ""}</span></div>`;
+    if (best != null) h += `<div><span class="rd-k">Best</span><span class="rd-v">${_fmtNum(best)}${reached ? ' <span class="rank-reached">✓</span>' : ""}</span></div>`;
+    if (meta.model) h += `<div><span class="rd-k">Model</span><span class="rd-v">${esc(meta.model)}</span></div>`;
+    if (meta.plan) h += `<div><span class="rd-k">Plan</span><span class="rd-v">${esc(meta.plan)}</span></div>`;
+    h += `</div>`;
+  }
+  h += `<div class="run-actions">
+      <button class="btn subtle small expd-improve" data-eid="${eid}" data-name="${esc(meta.name || "")}">🔁 Improve</button>
+      <button class="btn subtle small expd-edit" data-eid="${eid}">✎ Edit</button>
+      <button class="btn subtle small expd-focus" data-eid="${eid}">${state.focusExperiment === eid ? "☆ Unfocus" : "★ Focus"}</button>
+      <button class="btn subtle small expd-close">Close</button>
+    </div>`;
+  if (rank && (rank.rows || []).length) {
+    h += `<div class="run-detail-sec">Leaderboard (${esc(rank.metric || "metric")})</div>` +
+      `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric || "metric")}</th><th>Δ best</th></tr></thead><tbody>`;
+    rank.rows.forEach((row) => {
+      h += `<tr${row.rank === 1 ? ' class="rank-top"' : ""}><td class="rank-pos">${row.rank}</td><td>${esc(row.label || "#" + row.run_id)}</td><td>${_fmtNum(row.metric)}</td><td class="muted">${row.rank === 1 ? "—" : _fmtNum(row.delta_best)}</td></tr>`;
+    });
+    h += `</tbody></table>`;
+  }
+  if (ls.length) {
+    h += `<div class="run-detail-sec">Learnings (${ls.length})</div>`;
+    h += ls.map((l) => {
+      const badge = l.improved === 1 ? '<span class="sug-badge ok">✓ improved</span>'
+        : (l.improved === 0 ? '<span class="sug-badge warn">✗ no gain</span>' : "");
+      return `<div class="learning-row">${badge}<span>${esc(l.summary)}</span></div>`;
+    }).join("");
+  }
+  h += `<div class="run-detail-sec">Runs (${runs.length})</div>`;
+  if (runs.length) {
+    h += runs.slice(0, 50).map((r) => {
+      const m = r.metrics || {};
+      const mstr = Object.keys(m).length
+        ? Object.keys(m).map((k) => `${k}=${_fmtNum(m[k])}`).join(", ") : "—";
+      return `<div class="learning-row"><span class="run-id">#${r.id}</span><span>${esc((r.label || "").slice(0, 30))} · ${esc(mstr.slice(0, 140))}</span></div>`;
+    }).join("");
+  } else {
+    h += `<div class="exp-empty">No runs yet — improve this experiment or run variants in chat.</div>`;
+  }
+  return h;
+}
+
 function detectActiveExperiment() {
   const exps = state.expList || [];
   if (!exps.length) { state.activeExperiment = null; return null; }
@@ -3701,7 +3790,7 @@ function renderExpList() {
     const badgeCls = active ? "det" : (status === "completed" ? "ok" : "warn");
     const focused = state.focusExperiment === e.id;
     card.innerHTML = `<div class="exp-card-head">
-        <b class="exp-card-name">${esc(e.name)}</b>
+        <b class="exp-card-name" data-id="${e.id}" title="Open experiment detail">${esc(e.name)}</b>
         <span class="exp-badge ${badgeCls}">${esc(status)}</span>
         ${reached ? `<span class="rank-reached" title="Goal reached">✓</span>` : ""}
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
@@ -3768,6 +3857,8 @@ function renderExpList() {
       detail.classList.toggle("hidden", open);
       b.textContent = open ? "Details ▸" : "Details ▾";
     }));
+  el.querySelectorAll(".exp-card-name").forEach((b) =>
+    b.addEventListener("click", () => openExpDetail(Number(b.dataset.id))));
 }
 
 function sortedExps(list) {
@@ -4802,6 +4893,33 @@ EXP_VIEWS.forEach((id) => {
     if (n && n.dataset.id) handleExpNodeClick(n.dataset.id);
   });
 });
+
+// Custom styled hover tooltip for experiment chart nodes.
+let _expTipEl = null;
+function expChartTip() {
+  if (!_expTipEl) {
+    _expTipEl = document.createElement("div");
+    _expTipEl.className = "exp-chart-tip hidden";
+    document.body.appendChild(_expTipEl);
+  }
+  return _expTipEl;
+}
+$("exp-panel").addEventListener("mouseover", (e) => {
+  const tip = expChartTip();
+  const n = e.target.closest(".exp-node");
+  if (!n) { tip.classList.add("hidden"); return; }
+  const t = n.querySelector("title");
+  tip.textContent = t ? t.textContent : "";
+  tip.classList.remove("hidden");
+  tip.style.left = (e.clientX + 12) + "px";
+  tip.style.top = (e.clientY + 12) + "px";
+});
+$("exp-panel").addEventListener("mousemove", (e) => {
+  if (_expTipEl && !_expTipEl.classList.contains("hidden")) {
+    _expTipEl.style.left = (e.clientX + 12) + "px";
+    _expTipEl.style.top = (e.clientY + 12) + "px";
+  }
+});
 ["exp-detail", "expmain-detail"].forEach((id) => {
   const el = $(id);
   if (!el) return;
@@ -4929,6 +5047,7 @@ $("eval-new-create").addEventListener("click", async () => {
   } catch (e) { toast("Failed to start eval: " + e.message); }
 });
 $("exp-edit-close").addEventListener("click", () => $("exp-edit-modal").classList.add("hidden"));
+$("exp-detail-close").addEventListener("click", () => $("exp-detail-modal").classList.add("hidden"));
 $("exp-edit-save").addEventListener("click", saveExpEdit);
 
 function setExpMetric(v) {

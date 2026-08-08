@@ -983,6 +983,9 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .run-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .exp-flash { animation: exp-flash 1.6s ease; }
 @keyframes exp-flash { 0%, 100% { box-shadow: none; } 40% { box-shadow: 0 0 0 2px var(--accent); } }
+.exp-chart-tip { position: fixed; z-index: 90; max-width: 320px; font-size: 11px; line-height: 1.5;
+  color: var(--text); background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; white-space: pre-line; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
 .run-id { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
 .run-label {
   font-family: var(--mono); font-size: 10.5px; color: var(--ok);
