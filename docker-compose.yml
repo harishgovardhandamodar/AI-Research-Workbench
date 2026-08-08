@@ -47,7 +47,7 @@ services:
     container_name: fox-code-server
     user: "0"
     ports:
-      - "${CODE_SERVER_BIND:-127.0.0.1}:8787:8080"
+      - "${CODE_SERVER_BIND:-0.0.0.0}:8787:8080"
     environment:
       PASSWORD: ${CODE_SERVER_PASSWORD:-fox-workspace}
     volumes:
