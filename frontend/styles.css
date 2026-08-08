@@ -945,6 +945,10 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 }
 .goal-chip .muted { font-size: 11px; }
 .goal-del { background: none; border: none; color: var(--text-dim); cursor: pointer; margin-left: auto; }
+.goal-progress { flex: 0 0 140px; height: 6px; border-radius: 3px; background: rgba(127,127,127,.2); overflow: hidden; }
+.goal-progress-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+.goal-progress-fill.reached { background: var(--ok, #7ee787); }
+.goal-chip .goal-stat { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 
 /* ---------- recent runs / reports ---------- */
 .exp-runs { margin-bottom: 12px; }
@@ -953,9 +957,26 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .exp-runs-head .spacer { flex: 1; }
 #runs-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .run-row {
-  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  font-size: 12px;
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  background: var(--bg-2);
 }
+.run-row.open { border-color: var(--accent); }
+.run-row-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.run-row-head .run-caret { color: var(--text-dim); font-size: 10px; transition: transform .15s ease; }
+.run-row.open .run-caret { transform: rotate(90deg); }
+.run-row-detail { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
+.run-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 12px; font-size: 11.5px; }
+.run-detail-grid .rd-k { color: var(--text-dim); }
+.run-detail-grid .rd-v { color: var(--text); }
+.run-detail-sec { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+.run-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.run-tool-chip { font-family: var(--mono); font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+.run-tool-chip.fail { color: var(--danger); border-color: var(--danger); }
+.run-prompt-full { font-size: 11.5px; color: var(--text-dim); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+.run-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.exp-flash { animation: exp-flash 1.6s ease; }
+@keyframes exp-flash { 0%, 100% { box-shadow: none; } 40% { box-shadow: 0 0 0 2px var(--accent); } }
 .run-id { font-family: var(--mono); color: var(--accent); white-space: nowrap; }
 .run-label {
   font-family: var(--mono); font-size: 10.5px; color: var(--ok);

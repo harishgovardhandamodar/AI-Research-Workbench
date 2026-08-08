@@ -2805,13 +2805,40 @@ async function loadCompareExperiments() {
       const pt = (row.to_target != null && row.best != null)
         ? (row.target != null ? Math.round((row.best / row.target) * 100) + "%" : "—")
         : "—";
-      h += `<tr${rank === 1 ? ' class="rank-top"' : ""}><td class="rank-pos">${rank}${rank === 1 ? " 🏆" : ""}</td>` +
+      h += `<tr${rank === 1 ? ' class="rank-top lb-row"' : ' class="lb-row"'} data-eid="${row.id}" title="Open this experiment">
+        <td class="rank-pos">${rank}${rank === 1 ? " 🏆" : ""}</td>` +
         `<td>${esc(row.name)}</td><td>${best}</td><td class="muted">${db}</td><td class="muted">${pt}</td>` +
         `<td><span class="exp-badge ${row.status === "active" ? "det" : row.status === "completed" ? "ok" : "warn"}">${esc(row.status)}</span></td></tr>`;
     });
     h += "</tbody></table>";
     el.innerHTML = h;
+    el.querySelectorAll(".lb-row").forEach((tr) =>
+      tr.addEventListener("click", () => revealExpCard(Number(tr.dataset.eid))));
   } catch (e) { el.innerHTML = '<div class="muted">Compare failed: ' + esc(e.message) + "</div>"; }
+}
+
+function revealExpCard(eid) {
+  // Clear any experiment search filter so the card is reachable, then expand +
+  // scroll to it with a flash.
+  if (state.expSearch) {
+    state.expSearch = "";
+    const s = $("exp-search");
+    if (s) s.value = "";
+  }
+  renderExpList();
+  const list = $("exp-list");
+  const card = list && list.querySelector(`.exp-card[data-id="${eid}"]`);
+  if (!card) { toast("Experiment not found in the list."); return; }
+  const detail = card.querySelector(".exp-card-detail");
+  if (detail && detail.classList.contains("hidden")) {
+    const btn = card.querySelector(".exp-details");
+    if (btn) btn.click();
+  }
+  const nav = $("exp-section-experiments");
+  if (nav) nav.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("exp-flash");
+  setTimeout(() => card.classList.remove("exp-flash"), 1800);
 }
 
 /* ============================ experiments overview (round 13) ============= */
@@ -2829,6 +2856,27 @@ function goalReachedLocal(g) {
     if (best === null || (higher ? n > best : n < best)) best = n;
   }
   return best !== null && (higher ? best >= target : best <= target);
+}
+
+function goalProgress(g) {
+  const metric = g && g.metric;
+  const target = g && g.target;
+  const higher = !!(g && g.higher_better);
+  const eid = g && g.experiment_id != null ? String(g.experiment_id) : null;
+  let best = null;
+  for (const r of (state.agentRuns || [])) {
+    if (eid && String(r.experiment_id) !== eid) continue;
+    const v = (r.metrics || {})[metric];
+    if (v == null || Number.isNaN(Number(v))) continue;
+    const n = Number(v);
+    if (best === null || (higher ? n > best : n < best)) best = n;
+  }
+  if (best == null || target == null) return { best, pct: 0, reached: false, delta: null };
+  const reached = higher ? best >= target : best <= target;
+  // pct of target for the progress bar; >100 clamped in the UI.
+  const pct = target ? (best / target) * 100 : 0;
+  const delta = higher ? target - best : best - target;
+  return { best, pct, reached, delta: _fmtNum(Math.abs(delta)) + (higher ? "↑" : "↓") };
 }
 
 function renderExpKpis() {
@@ -3410,7 +3458,6 @@ function renderRuns() {
   }
   el.innerHTML = "";
   for (const r of runs.slice().reverse()) {
-    const d = document.createElement("div");
     const rev = r.review || {};
     const nf = (rev.findings || []).length;
     const ns = (rev.suggestions || []).length;
@@ -3418,18 +3465,33 @@ function renderRuns() {
     if (r.metrics && Object.keys(r.metrics).length) meta.push(Object.keys(r.metrics).length + " metric(s)");
     if (nf) meta.push(nf + " finding(s)");
     if (ns) meta.push(ns + " suggestion(s)");
+    const d = document.createElement("div");
     d.className = "run-row";
+    d.dataset.id = r.id;
     const lbl = r.label ? `<span class="run-label">${esc(r.label)}</span> ` : "";
-    d.innerHTML = `<span class="run-id">#${r.id}</span>
-      <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
-      <span class="run-meta muted">${esc(meta.join(" · "))}</span>
-      ${r.git_commit ? `<span class="run-commit" title="Management-repo snapshot commit">${esc(String(r.git_commit).slice(0, 8))}</span>` : ""}
-      ${r.integrity_hash ? `<span class="run-commit" title="Content hash (integrity)">✓ ${esc(String(r.integrity_hash).slice(0, 8))}</span>` : ""}
-      <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
+    d.innerHTML = `<div class="run-row-head">
+        <span class="run-caret">▶</span>
+        <span class="run-id">#${r.id}</span>
+        <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
+        <span class="run-meta muted">${esc(meta.join(" · "))}</span>
+        ${r.git_commit ? `<span class="run-commit" title="Management-repo snapshot commit">${esc(String(r.git_commit).slice(0, 8))}</span>` : ""}
+        ${r.integrity_hash ? `<span class="run-commit" title="Content hash (integrity)">✓ ${esc(String(r.integrity_hash).slice(0, 8))}</span>` : ""}
+        <button class="btn subtle small run-report" data-id="${r.id}" title="Generate the lab-notebook report">Report</button>
+      </div>
+      <div class="run-row-detail hidden">${runDetailHtml(r)}</div>`;
     el.appendChild(d);
   }
+  el.querySelectorAll(".run-row-head").forEach((h) =>
+    h.addEventListener("click", () => {
+      const row = h.parentElement;
+      const det = row.querySelector(".run-row-detail");
+      if (!det) return;
+      const open = det.classList.toggle("hidden");
+      row.classList.toggle("open", !open);
+    }));
   el.querySelectorAll(".run-report").forEach((b) =>
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
       b.disabled = true;
       b.textContent = "…";
       try {
@@ -3440,6 +3502,61 @@ function renderRuns() {
       b.disabled = false;
       b.textContent = "Report";
     }));
+  el.querySelectorAll(".run-revert").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      sendChat("", "rerun_run", { run_id: b.dataset.rid });
+    }));
+  el.querySelectorAll(".run-improve-exp").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
+               "improve_loop", { experiment_id: b.dataset.eid });
+    }));
+}
+
+function runDetailHtml(r) {
+  const goalExp = (state.expList || []).find((e) => String(e.id) === String(r.experiment_id));
+  const goalMetric = goalExp && goalExp.goal_metric;
+  const mkeys = Object.keys(r.metrics || {});
+  let h = "";
+  if (mkeys.length) {
+    h += `<div class="run-detail-sec">Metrics</div><div class="run-detail-grid">`;
+    for (const k of mkeys) {
+      const isGoal = goalMetric === k;
+      h += `<span class="rd-k">${esc(k)}${isGoal ? " ★" : ""}</span><span class="rd-v">${_fmtNum(r.metrics[k])}</span>`;
+    }
+    h += `</div>`;
+  }
+  const cfg = r.config && typeof r.config === "object" && Object.keys(r.config).length;
+  if (cfg) {
+    h += `<div class="run-detail-sec">Config</div><div class="run-detail-grid">`;
+    for (const [k, v] of Object.entries(r.config)) {
+      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(String(v))}</span>`;
+    }
+    h += `</div>`;
+  }
+  const tools = r.tool_sequence || [];
+  if (tools.length) {
+    h += `<div class="run-detail-sec">Tool trail</div><div class="run-tools">`;
+    for (const t of tools.slice(0, 12)) {
+      const name = (t && t.name) || "?";
+      h += `<span class="run-tool-chip${t && t.ok === false ? " fail" : ""}">${esc(name)}${t && t.ok === false ? " ✗" : ""}</span>`;
+    }
+    h += `</div>`;
+  }
+  if (r.prompt) {
+    h += `<div class="run-detail-sec">Prompt</div><div class="run-prompt-full">${esc(r.prompt)}</div>`;
+  }
+  const acts = [];
+  if (r.kind !== "restore") acts.push(
+    `<button class="btn subtle small run-revert" data-rid="${r.id}" title="Re-run this run's prompt as a fresh turn">↶ revert</button>`);
+  if (r.experiment_id != null) {
+    const nm = expName(r.experiment_id);
+    acts.push(`<button class="btn subtle small run-improve-exp" data-eid="${r.experiment_id}" data-name="${esc(nm)}" title="Improve the owning experiment">🔁 improve</button>`);
+  }
+  if (acts.length) h += `<div class="run-actions">${acts.join("")}</div>`;
+  return h;
 }
 
 async function loadGoals() {
@@ -3469,8 +3586,19 @@ async function loadGoals() {
   for (const g of state.goals) {
     const d = document.createElement("div");
     d.className = "goal-chip";
+    const prog = goalProgress(g);
+    let progressHtml = "";
+    let statHtml = `<span class="goal-stat">${prog.best != null ? "best " + _fmtNum(prog.best) : "no data"}</span>`;
+    if (prog.best != null) {
+      const pct = Math.max(0, Math.min(100, prog.pct));
+      progressHtml = `<div class="goal-progress"><div class="goal-progress-fill${prog.reached ? " reached" : ""}" style="width:${pct}%"></div></div>`;
+      if (prog.reached) statHtml = `<span class="rank-reached">✓ reached</span>`;
+      else statHtml = `<span class="goal-stat">best ${_fmtNum(prog.best)} · ${prog.delta} to go</span>`;
+    }
     d.innerHTML = `<b>${esc(g.label || g.metric)}</b>
-      <span class="muted">${esc(g.metric)} ${g.higher_better ? "↑" : "↓"} target ${g.target} · ${esc(expName(g.experiment_id))}</span>
+      <span class="muted">${esc(g.metric)} ${g.higher_better ? "↑" : "↓"} target ${_fmtNum(g.target)} · ${esc(expName(g.experiment_id))}</span>
+      ${progressHtml}
+      ${statHtml}
       <button class="goal-del" data-metric="${esc(g.metric)}" data-eid="${g.experiment_id ?? ""}" title="remove">✕</button>`;
     el.appendChild(d);
   }
