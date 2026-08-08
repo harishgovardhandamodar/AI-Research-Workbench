@@ -4,6 +4,8 @@ The 🧪 **Experiments** tab is the tracking home. It is organized into sections
 with a sticky nav (Overview · Goals · Chart · Experiments · Campaigns ·
 Benchmarks · Runs).
 
+![Experiments overview](../assets/screenshots/experiments.png)
+
 ## Overview
 
 - **KPI cards** — experiments, runs, campaigns, benchmarks, learnings, open
@@ -26,12 +28,18 @@ The **Timeline** (run evolution) and **Graph** (similarity edges) SVG views:
   **Improve from here** and **Compare vs best**.
 - **Branches** opens the git-flow branch history overlay (parent→child lineage).
 
+![Experiment tracking cockpit](../assets/screenshots/experiment-tracking.png)
+![Experiment timeline](../assets/screenshots/experiment-timeline.png)
+![Experiment graph](../assets/screenshots/experiment-graph.png)
+
 ## Experiments
 
 Each card shows: name (click → **detail modal**), status badge, ✓ reached, run
 count, goal + best, and a progress bar. Actions: ★ focus, ✎ edit, status select,
 **🔁 Improve**, and **Details** (hypothesis, model pin, plan, learnings,
 leaderboard). Search + sort (recently active / best / name / runs).
+
+![Experiment detail](../assets/screenshots/experiment-detail.png)
 
 ## Campaigns & Benchmarks
 
@@ -43,6 +51,8 @@ status badges, and progress bars (see their dedicated pages).
 Every recorded turn, filterable by experiment and text. Click a run to expand:
 metrics (goal ★ highlighted), config, tool trail, full prompt, and actions
 (**Report**, **↶ revert**, **🔁 improve**).
+
+![Run detail](../assets/screenshots/run-detail.png)
 
 ## Run comparison
 

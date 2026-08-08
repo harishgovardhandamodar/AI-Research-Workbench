@@ -4,6 +4,8 @@ A **campaign** is a long-horizon autonomous research investigation: it *plans*
 a multi-step study, *executes* each step as its own experiment through the live
 agent, and *writes a synthesis report*.
 
+![Campaigns](../assets/screenshots/campaigns.png)
+
 ## Launch
 
 - **🧭 Campaign** quick-action, or `/campaign <research question>` in chat.

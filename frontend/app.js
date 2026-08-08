@@ -2589,6 +2589,10 @@ $("brand").addEventListener("click", () => {
 $("docs-btn").addEventListener("click", () => {
   window.open((window.FOX_BASE || "") + "/gitbook/", "_blank");
 });
+// The Settings-modal help link is a static anchor in index.html; make it
+// FOX_BASE-aware so it also works behind a path prefix (e.g. /fox in Jupyter).
+const settingsHelp = $("settings-help");
+if (settingsHelp) settingsHelp.href = (window.FOX_BASE || "") + "/gitbook/";
 $("side-toggle").addEventListener("click", () => {
   const collapsed = document.getElementById("app").classList.toggle("side-collapsed");
   try { localStorage.setItem("fox.sidePanel", collapsed ? "0" : "1"); } catch (e) {}

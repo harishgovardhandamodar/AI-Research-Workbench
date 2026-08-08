@@ -5,6 +5,8 @@ this task?". It runs the same task prompt under each model — each model pinned
 to its own experiment — collects the goal metric, and produces a ranked
 leaderboard.
 
+![Model benchmarks](../assets/screenshots/benchmarks.png)
+
 ## Launch
 
 In the **Benchmarks** panel: give it a name, a task prompt, a comma-separated

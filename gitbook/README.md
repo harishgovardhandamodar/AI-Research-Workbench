@@ -28,6 +28,57 @@ under `docs/` (per-round feature designs) and practical guides (`HOW-to-USE.md`,
 - **Documentation**: a comprehensive project report, next-research agenda, and
   a portable project export (zip).
 
+## Screenshots
+
+**Chat with Fox** — streaming agent turns with provenance labels.
+
+![Chat with Fox](assets/screenshots/chat.png)
+
+**Experiments overview** — KPIs, the cross-experiment leaderboard, and compact experiment cards.
+
+![Experiments overview](assets/screenshots/experiments.png)
+
+**Experiment detail** — leaderboard, learnings, and runs in one view.
+
+![Experiment detail](assets/screenshots/experiment-detail.png)
+
+**Experiment tracking cockpit** — timeline and similarity-graph views with goal lines, best-run highlight, and suggestions.
+
+![Experiment tracking](assets/screenshots/experiment-tracking.png)
+![Experiment timeline](assets/screenshots/experiment-timeline.png)
+![Experiment graph](assets/screenshots/experiment-graph.png)
+
+**Goals** — target metrics with progress bars and reached states.
+
+![Goals](assets/screenshots/goals.png)
+
+**Campaigns** — background research investigations.
+
+![Campaigns](assets/screenshots/campaigns.png)
+
+**Model benchmarks** — compare the workbench's LLMs on a task.
+
+![Model benchmarks](assets/screenshots/benchmarks.png)
+
+**Run detail** — expandable metrics, config, tool trail, and actions.
+
+![Run detail](assets/screenshots/run-detail.png)
+
+**Improve-loop lineage** — the git-flow branch graph.
+
+![Branch graph](assets/screenshots/branches.png)
+
+**Generated report** — the project write-up rendered in chat.
+
+![Project report](assets/screenshots/report.png)
+
+**Audit trail** — tamper-evident, hash-chained event timeline.
+
+![Audit trail](assets/screenshots/audit.png)
+
+> Screenshots are illustrative (a seeded "Demo" project); the audit view shows
+> real recorded events.
+
 ## Key concepts at a glance
 
 | Concept | Meaning |

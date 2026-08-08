@@ -16,6 +16,8 @@ tamper-evident) into SQLite + append-only JSONL per project.
 - **Deviations** — flags for novel tools, network destinations, and data classes,
   with a scan/review/false-positive workflow.
 
+![Audit trail](../assets/screenshots/audit.png)
+
 ## Per-run audit (round 8)
 
 Each run records the turn's message id (its audit `trace_id`). `GET

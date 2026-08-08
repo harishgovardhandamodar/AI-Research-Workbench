@@ -10,6 +10,8 @@ the Experiments tab). After every run, `goal_notices` reports progress: current
 value, target, distance to go, and **new best** highlights. A goal is
 "reached" when any run satisfies it (shown as ✓ and a filled progress bar).
 
+![Goals panel](../assets/screenshots/goals.png)
+
 Goals also appear in the agent's experiment context (as *additional goals*), so
 the agent optimizes for them — not just the experiment's own goal metric.
 

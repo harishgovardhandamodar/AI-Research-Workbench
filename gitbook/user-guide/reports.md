@@ -6,6 +6,8 @@ The workbench turns its recorded research into documents you can keep and share.
 
 **📄 Report** (Experiments header) generates a comprehensive markdown write-up:
 
+![Generated project report](../assets/screenshots/report.png)
+
 - **Executive summary** (LLM, best-effort)
 - **Experiments** — the cross-experiment leaderboard + per-experiment goals,
   plans, and best runs

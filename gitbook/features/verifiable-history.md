@@ -38,3 +38,5 @@ environment capture, content hashes, and a linked audit trail.
 Run rows show ✓ hash chips + git commit short hashes; branch detail has
 **🔒 Verify integrity** and **🛡 Audit trail**; the project report includes
 recent runs with integrity + commits.
+
+![Improve-loop lineage — the git-flow branch graph](../assets/screenshots/branches.png)

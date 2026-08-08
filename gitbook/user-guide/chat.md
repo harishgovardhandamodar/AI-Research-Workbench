@@ -5,6 +5,8 @@ the LLM calls tools (`run_python`, `run_r`, `run_shell`, `save_artifact`,
 `create_experiment`, `run_sweep`, `start_run`/`finish_run`, notebooks, editors,
 RKG, MCP), the results stream in, and the turn is recorded as a **run**.
 
+![Chat with Fox](../assets/screenshots/chat.png)
+
 ## Provenance labels
 
 Assistant bubbles read **Fox · model · MCP · action** (e.g.
