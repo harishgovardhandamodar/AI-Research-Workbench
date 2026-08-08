@@ -25,7 +25,9 @@ Progress is checked after every run.
 
 ## Chart (Evolution)
 
-The **Timeline** (run evolution) and **Graph** (similarity edges) SVG views:
+The **Timeline** (run evolution) and **Graph** (similarity edges) SVG views
+show **every recorded run** — the run count matches the experiment cards and the
+Runs list (no 50-run truncation):
 - Select a metric; filter by run **kind** (agent/sweep/campaign/notebook/eval/…)
   and by **time** (24h / 7 days / 30 days / all).
 - Drag to pan; use the **+ / − / ⊙** controls to zoom (scroll-zoom is disabled).

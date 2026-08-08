@@ -441,9 +441,13 @@ class ProjectStore:
             (experiment_id, json.dumps(config or {}), label or None, rid))
         self._conn.commit()
 
-    def list_runs(self, limit: int = 50) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    def list_runs(self, limit: int | None = 50) -> list[dict]:
+        sql = "SELECT * FROM runs ORDER BY id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            rows = self._conn.execute(sql, (limit,)).fetchall()
+        else:
+            rows = self._conn.execute(sql).fetchall()
         out = []
         for r in reversed(rows):
             out.append(self._row_run(r))

@@ -74,9 +74,10 @@ async def project_experiments_history(name: str, limit: int = 50):
 
 @router.get("/api/projects/{name}/experiments/graph")
 async def project_experiments_graph(name: str):
-    """Graph view: one node per run + similarity/overlap edges between runs."""
+    """Graph view: one node per run + similarity/overlap edges between runs.
+    No limit — the timeline/graph must reflect every recorded run."""
     rt = get_runtime(name)
-    return build_graph(rt.store.list_runs(), rt.artifacts)
+    return build_graph(rt.store.list_runs(limit=None), rt.artifacts)
 
 
 @router.get("/api/projects/{name}/experiments/branches")
@@ -86,7 +87,7 @@ async def project_experiments_branches(name: str):
     from ..experiments import build_branch_graph
 
     rt = get_runtime(name)
-    return build_branch_graph(rt.store.list_runs(),
+    return build_branch_graph(rt.store.list_runs(limit=None),
                               rt.store.list_experiments())
 
 

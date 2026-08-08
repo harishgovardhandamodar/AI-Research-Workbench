@@ -6347,8 +6347,8 @@ async function loadBranchGraphData() {
     const [g, exps, runs, hist] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(proj)}/experiments/graph`),
       api(`/api/projects/${encodeURIComponent(proj)}/experiments`),
-      api(`/api/projects/${encodeURIComponent(proj)}/runs`),
-      api(`/api/projects/${encodeURIComponent(proj)}/experiments/history`),
+      api(`/api/projects/${encodeURIComponent(proj)}/runs?limit=2000`),
+      api(`/api/projects/${encodeURIComponent(proj)}/experiments/history?limit=2000`),
     ]);
     state.expGraph = g;
     state.expList = exps.experiments || [];

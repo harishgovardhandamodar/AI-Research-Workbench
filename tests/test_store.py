@@ -48,6 +48,15 @@ class TestStore(unittest.TestCase):
         store2 = ProjectStore(self.tmp)
         self.assertEqual(store2.get_run(rid)["metrics"], {"acc": 0.9})
 
+    def test_list_runs_limit_and_unlimited(self):
+        for i in range(5):
+            self.store.add_run(f"p{i}", "r", "done", 1.0, 2.0)
+        self.assertEqual(len(self.store.list_runs(limit=2)), 2)
+        # default limit is 50, but everything up to it comes back
+        self.assertEqual(len(self.store.list_runs()), 5)
+        # limit=None returns every run (graph/timeline must not cap)
+        self.assertEqual(len(self.store.list_runs(limit=None)), 5)
+
     def test_run_dataset_tag(self):
         rid = self.store.add_run("p", "r", "done", 1.0, 2.0,
                                  metrics={"acc": 0.9}, dataset="synthetic")
