@@ -2885,15 +2885,22 @@ function renderExpKpis() {
   const learnings = Object.values(state.learnings || {}).reduce((n, a) => n + (a ? a.length : 0), 0);
   const openGoals = (state.goals || []).filter((g) => !goalReachedLocal(g)).length;
   const kpis = [
-    ["Experiments", (state.expList || []).length],
-    ["Runs", (state.agentRuns || []).length],
-    ["Campaigns", (state.campaigns || []).length],
-    ["Benchmarks", (state.evals || []).length],
-    ["Learnings", learnings],
-    ["Open goals", openGoals],
+    ["Experiments", (state.expList || []).length, "experiments"],
+    ["Runs", (state.agentRuns || []).length, "runs"],
+    ["Campaigns", (state.campaigns || []).length, "campaigns"],
+    ["Benchmarks", (state.evals || []).length, "benchmarks"],
+    ["Learnings", learnings, "experiments"],
+    ["Open goals", openGoals, "goals"],
   ];
-  el.innerHTML = kpis.map(([l, n]) =>
-    `<div class="exp-kpi"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
+  el.innerHTML = kpis.map(([l, n, target]) =>
+    `<div class="exp-kpi" data-target="${target}" title="Jump to ${target}"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
+  el.querySelectorAll(".exp-kpi").forEach((k) =>
+    k.addEventListener("click", () => {
+      const sec = $("exp-section-" + k.dataset.target);
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+      k.classList.add("exp-flash");
+      setTimeout(() => k.classList.remove("exp-flash"), 1200);
+    }));
 }
 
 function initExpSectionNav() {
@@ -2952,6 +2959,8 @@ function renderEvals() {
     const running = ev.status === "running";
     const done = ev.status === "done";
     const report = (ev.report || "").replace(/\s+/g, " ").slice(0, 600);
+    const models = (ev.models || []).slice(0, 6);
+    const prog = running ? "running" : (done ? "full" : "empty");
     const card = document.createElement("div");
     card.className = "exp-card";
     card.innerHTML = `<div class="exp-card-head">
@@ -2962,7 +2971,9 @@ function renderEvals() {
         ${running ? `<button class="btn subtle small eval-stop" data-id="${ev.id}">⏹ Stop</button>`
           : `<button class="btn subtle small eval-run" data-id="${ev.id}">▶ ${done ? "Rerun" : "Run"}</button>`}
       </div>
+      <div class="exp-card-progress ${prog}"></div>
       ${ev.prompt ? `<div class="exp-card-hyp muted">${esc(ev.prompt)}</div>` : ""}
+      ${models.length ? `<div class="run-tools">${models.map((m) => `<span class="run-tool-chip">${esc(m)}</span>`).join("")}</div>` : ""}
       ${ev.report ? `<details class="exp-plan"><summary>Leaderboard</summary><div class="exp-plan-body">${esc(report)}</div></details>` : ""}`;
     el.appendChild(card);
   }
@@ -3037,6 +3048,7 @@ function renderCampaigns() {
     const done = c.status === "done";
     const resumable = c.steps > 0 && !done;
     const report = (c.report || "").replace(/\s+/g, " ").slice(0, 600);
+    const prog = running ? "running" : (done ? "full" : "empty");
     const card = document.createElement("div");
     card.className = "exp-card";
     card.innerHTML = `<div class="exp-card-head">
@@ -3050,6 +3062,7 @@ function renderCampaigns() {
               ? `<button class="btn subtle small camp-run" data-id="${c.id}">▶ ${resumable ? "Resume" : "Run"}</button>`
               : "")}
       </div>
+      <div class="exp-card-progress ${prog}"></div>
       ${c.research_question ? `<div class="exp-card-hyp muted">${esc(c.research_question)}</div>` : ""}
       ${c.report ? `<details class="exp-plan"><summary>Report</summary><div class="exp-plan-body">${esc(report)}</div></details>` : ""}`;
     el.appendChild(card);
