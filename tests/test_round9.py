@@ -114,6 +114,34 @@ class EvalStoreTests(unittest.TestCase):
         self.assertIn("0.9", report)
 
 
+class CompareRouteOrderTests(unittest.TestCase):
+    """/experiments/compare must be declared before /experiments/{eid}."""
+
+    def test_compare_not_shadowed_by_eid(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from backend.project_runtime import ProjectRuntime
+        from backend.routers import runs
+
+        holder = {}
+
+        def make_rt():
+            rt = object.__new__(ProjectRuntime)
+            rt.store = ProjectStore(Path(tempfile.mkdtemp()))
+            rt.dir = Path(tempfile.mkdtemp())
+            rt.llm = None
+            return rt
+
+        runs.get_runtime = lambda name: holder.setdefault("rt", make_rt())
+        app = FastAPI()
+        app.include_router(runs.router)
+        c = TestClient(app)
+        r = c.get("/api/projects/p/experiments/compare")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("rows", r.json())
+
+
 class RunEvalTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

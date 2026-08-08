@@ -77,6 +77,13 @@ async def project_experiments_branches(name: str):
                               rt.store.list_experiments())
 
 
+@router.get("/api/projects/{name}/experiments/compare")
+async def project_experiments_compare(name: str):
+    """Leaderboard of experiments by their goal metric's best run."""
+    rt = get_runtime(name)
+    return compare_experiments(rt.store, rt.store.list_experiments())
+
+
 @router.post("/api/projects/{name}/experiments")
 async def create_project_experiment(name: str, body: dict):
     """Create an experiment (name + optional hypothesis/goal/plan) and return it."""
@@ -648,13 +655,6 @@ async def project_compare(name: str, run_a: str = "", run_b: str = "",
         raise HTTPException(status_code=404,
                             detail=f"could not resolve run ids: {run_a!r}, {run_b!r}")
     return {"comparison": compare_runs(ra, rb)}
-
-
-@router.get("/api/projects/{name}/experiments/compare")
-async def project_experiments_compare(name: str):
-    """Leaderboard of experiments by their goal metric's best run."""
-    rt = get_runtime(name)
-    return compare_experiments(rt.store, rt.store.list_experiments())
 
 
 @router.get("/api/projects/{name}/campaigns/compare")
