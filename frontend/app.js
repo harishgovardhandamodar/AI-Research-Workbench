@@ -3147,6 +3147,7 @@ function renderRuns() {
     d.innerHTML = `<span class="run-id">#${r.id}</span>
       <span class="run-prompt">${lbl}${esc((r.prompt || "").slice(0, 80))}</span>
       <span class="run-meta muted">${esc(meta.join(" · "))}</span>
+      ${r.git_commit ? `<span class="run-commit" title="Management-repo snapshot commit">${esc(String(r.git_commit).slice(0, 8))}</span>` : ""}
       <button class="btn subtle small run-report" data-id="${r.id}">Report</button>`;
     el.appendChild(d);
   }
@@ -5510,12 +5511,25 @@ function showBranchDetail(id) {
     ? `<div>${paramKeys.map((k) => `<span class="bd-param">${esc(k)}: ${esc(fmtVal(cfg[k]))}</span>`).join(" ")}</div>`
     : `<div class="muted">(none recorded)</div>`;
 
-  // Actions: diff against the parent, or revert (re-run this run's prompt).
+  // Actions: diff against the parent, revert, or restore from git.
   if (parentNode || true) {
     h += `<div class="bd-actions">` +
       (parentNode ? `<button class="btn subtle small bd-diff" data-rid="${n.id}">⇄ diff vs parent</button>` : "") +
-      `<button class="btn subtle small bd-revert" data-rid="${n.id}" title="Revert: rerun this run's prompt as a fresh turn">↶ revert to this run</button>` +
+      `<button class="btn subtle small bd-revert" data-rid="${n.id}" title="Revert: rerun this run's prompt as a fresh turn">↶ revert</button>` +
+      `<button class="btn subtle small bd-restore" data-rid="${n.id}" title="Restore this run's artifacts from its git commit">↩ restore</button>` +
       `</div><div class="bd-diff-host"></div>`;
+  }
+
+  // Provenance: snapshot commit + run-time environment.
+  if (n.git_commit || Object.keys(n.env || {}).length) {
+    h += `<h4>Reproducibility</h4>`;
+    if (n.git_commit) {
+      h += `<div class="bd-row"><span class="bd-k">commit</span><span class="bd-v">${esc(n.git_commit)}</span></div>`;
+    }
+    const envKeys = Object.keys(n.env || {});
+    if (envKeys.length) {
+      h += envKeys.map((k) => `<div class="bd-row"><span class="bd-k">${esc(k)}</span><span class="bd-v">${esc(fmtVal(n.env[k]))}</span></div>`).join("");
+    }
   }
 
   // Metrics.
@@ -5558,6 +5572,20 @@ function showBranchDetail(id) {
   const rbtn = el.querySelector(".bd-revert");
   if (rbtn) rbtn.addEventListener("click", () =>
     sendChat("", "rerun_run", { run_id: rbtn.dataset.rid }));
+  const rsbtn = el.querySelector(".bd-restore");
+  if (rsbtn) rsbtn.addEventListener("click", async () => {
+    const host = el.querySelector(".bd-diff-host");
+    host.innerHTML = '<div class="muted">Restoring from git…</div>';
+    try {
+      const r = await api(`/api/projects/${state.project}/runs/${rsbtn.dataset.rid}/restore`, {
+        method: "POST",
+      });
+      host.innerHTML = r.restored && r.restored.length
+        ? `<div class="muted">Restored ${r.restored.length} artifact(s) from commit ${esc(r.commit || "")} → new run #${r.run_id}.</div>`
+        : `<div class="muted">Run state restored from commit ${esc(r.commit || "")} → new run #${r.run_id}.</div>`;
+      loadBranches();
+    } catch (e) { host.innerHTML = '<div class="muted">Restore failed: ' + esc(e.message) + "</div>"; }
+  });
 }
 
 async function renderRunDiff(host, runId) {
@@ -5592,6 +5620,16 @@ async function renderRunDiff(host, runId) {
     }
     if (r.prompt && r.prompt.b) {
       h += `<div class="bd-diff-sec"><b>Objective changed</b><div class="bd-note">${esc(strip(r.prompt.b, 300))}</div></div>`;
+    }
+    const cds = (r.code || {}).diffs || [];
+    if (cds.length) {
+      h += `<div class="bd-diff-sec"><b>Code</b>`;
+      for (const cd of cds) {
+        h += `<div class="bd-diff-code">
+          <div class="bd-diff-code-head">${esc(cd.tool)} <span class="muted">+${cd.added} −${cd.removed}</span></div>
+          <pre>${esc(cd.patch)}</pre></div>`;
+      }
+      h += `</div>`;
     }
     host.innerHTML = h || '<div class="muted">No differences detected.</div>';
   } catch (e) { host.innerHTML = '<div class="muted">Diff failed: ' + esc(e.message) + "</div>"; }

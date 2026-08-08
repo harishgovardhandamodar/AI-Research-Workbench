@@ -167,6 +167,24 @@ class ProjectStore:
             c.execute("ALTER TABLE experiments ADD COLUMN model TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: round-4 provenance — the management-repo commit that
+        # snapshotted this run (git-backed lineage / restore).
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN git_commit TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: round-4 provenance — the full code executed per tool call
+        # (index-aligned with tool_sequence), so runs can be diffed/reproduced.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN code TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: round-4 provenance — the kernel environment snapshot
+        # (python/platform/package versions) captured at run time.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN env TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
@@ -289,7 +307,10 @@ class ProjectStore:
                 label: str | None = None,
                 kind: str = "agent_run",
                 parent_run_id: int | None = None,
-                model: str | None = None) -> int:
+                model: str | None = None,
+                git_commit: str | None = None,
+                code: dict | list | None = None,
+                env: dict | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
@@ -297,17 +318,22 @@ class ProjectStore:
         `parent_run_id` links a run to the run it was derived from (improve
         loops, reruns, branching) for the branch-history graph.
         `model` records which LLM produced the run, for the chat/timeline label.
+        `git_commit` links the run to its management-repo snapshot commit
+        (round-4 provenance); `code` is the full executed code per tool call;
+        `env` is the kernel environment snapshot at run time.
         """
         cur = self._conn.execute(
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
-            " label, kind, parent_run_id, model)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " label, kind, parent_run_id, model, git_commit, code, env)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(tool_sequence or []), json.dumps(artifact_ids or []),
              json.dumps(metrics or {}), json.dumps(review or {}),
              experiment_id, json.dumps(config or {}), label or None,
-             kind or "agent_run", parent_run_id, model or None))
+             kind or "agent_run", parent_run_id, model or None,
+             git_commit or None, json.dumps(code or []),
+             json.dumps(env or {})))
         if experiment_id is not None:
             # A fresh run means the experiment is active now: bump updated_at so
             # "most recently active" experiment selection reflects real activity.
@@ -316,6 +342,11 @@ class ProjectStore:
                 (time.time(), experiment_id))
         self._conn.commit()
         return cur.lastrowid
+
+    def set_run_git_commit(self, rid: int, commit: str | None):
+        self._conn.execute(
+            "UPDATE runs SET git_commit=? WHERE id=?", (commit or None, rid))
+        self._conn.commit()
 
     def set_run_experiment(self, rid: int, experiment_id: int | None,
                            config: dict | None = None, label: str | None = None):
@@ -336,10 +367,10 @@ class ProjectStore:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()
         return row["n"] if row else 0
 
-    def get_run(self, rid: int) -> dict | None:
+    def get_run(self, rid: int, include_code: bool = False) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
-        return self._row_run(row) if row else None
+        return self._row_run(row, include_code=include_code) if row else None
 
     def update_run_review(self, rid: int, review: dict):
         self._conn.execute(
@@ -439,20 +470,26 @@ class ProjectStore:
                 "improved": r["improved"], "created_at": r["created_at"],
                 "applied_at": r["applied_at"]}
 
-    def _row_run(self, r) -> dict:
-        return {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],
-                "status": r["status"], "started_at": r["started_at"],
-                "finished_at": r["finished_at"],
-                "tool_sequence": _jload(r["tool_sequence"], []),
-                "artifact_ids": _jload(r["artifact_ids"], []),
-                "metrics": _jload(r["metrics"], {}),
-                "review": _jload(r["review"], {}),
-                "experiment_id": r["experiment_id"],
-                "config": _jload(r["config"], {}),
-                "label": r["label"],
-                "kind": r["kind"] or "agent_run",
-                "parent_run_id": r["parent_run_id"],
-                "model": r["model"]}
+    def _row_run(self, r, include_code: bool = False) -> dict:
+        d = {"id": r["id"], "prompt": r["prompt"], "reply": r["reply"],
+             "status": r["status"], "started_at": r["started_at"],
+             "finished_at": r["finished_at"],
+             "tool_sequence": _jload(r["tool_sequence"], []),
+             "artifact_ids": _jload(r["artifact_ids"], []),
+             "metrics": _jload(r["metrics"], {}),
+             "review": _jload(r["review"], {}),
+             "experiment_id": r["experiment_id"],
+             "config": _jload(r["config"], {}),
+             "label": r["label"],
+             "kind": r["kind"] or "agent_run",
+             "parent_run_id": r["parent_run_id"],
+             "model": r["model"] or "",
+             "git_commit": r["git_commit"] or "",
+             "env": _jload(r["env"], {})}
+        # Full executed code is large; only the single-run / diff paths request it.
+        if include_code:
+            d["code"] = _jload(r["code"], [])
+        return d
 
     # -- experiments (a family of runs around one research goal) ------------
     def create_experiment(self, name: str, hypothesis: str = "",

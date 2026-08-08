@@ -399,6 +399,14 @@ async def build_run_report(rt, run: dict) -> str:
                   "| metric | value |", "|---|---|"]
         for k in sorted(metrics):
             lines.append(f"| {k} | {metrics[k]:.6g} |")
+    env = run.get("env") or {}
+    if env:
+        lines += ["", "## Environment", ""]
+        for k in sorted(env):
+            lines.append(f"- **{k}**: {env[k]}")
+    if run.get("git_commit"):
+        lines += ["", "## Provenance", "",
+                  f"- **Snapshot commit**: `{run['git_commit']}`"]
     seq = run.get("tool_sequence") or []
     if seq:
         lines += ["", "## Tool trace", ""]
@@ -473,11 +481,14 @@ async def project_run_report(name: str, rid: int):
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     report = await build_run_report(rt, run)
-    env = {}
-    try:
-        env = await rt.kernels.get_env()
-    except Exception:  # noqa: BLE001
-        pass
+    # Round-4: prefer the run's stored env (captured at run time); fall back to
+    # the live kernel env only for runs recorded before the feature existed.
+    env = run.get("env") or {}
+    if not env:
+        try:
+            env = await rt.kernels.get_env()
+        except Exception:  # noqa: BLE001
+            pass
     mid = rt.store.add_message("assistant", report,
                                {"tags": ["report", f"run #{rid}"]})
     art = Artifact(kind="text", name=f"run-{rid}-report",
@@ -564,11 +575,11 @@ async def project_compare(name: str, run_a: str = "", run_b: str = ""):
 async def project_run_diff(name: str, rid: int, run_b: int = 0):
     """What changed between run rid and another run (default: its parent)."""
     store = get_runtime(name).store
-    a = store.get_run(rid)
+    a = store.get_run(rid, include_code=True)
     if a is None:
         raise HTTPException(status_code=404, detail="run not found")
     bid = run_b or a.get("parent_run_id")
-    b = store.get_run(bid) if bid else None
+    b = store.get_run(bid, include_code=True) if bid else None
     if b is None:
         seq = a.get("tool_sequence") or []
         return {"a": a.get("label") or f"run {rid}", "b": None,
@@ -576,8 +587,44 @@ async def project_run_diff(name: str, rid: int, run_b: int = 0):
                 "metrics": {"rows": [], "summary": {}},
                 "tools": {"added": [], "removed": [], "failed": [],
                           "used": sorted({t.get("name") for t in seq})},
+                "code": {"diffs": [], "available": False},
                 "prompt": {"a": a.get("prompt") or "", "b": ""}}
     return run_diff(b, a)
+
+
+@router.get("/api/projects/{name}/runs/{rid}/commits")
+async def project_run_commits(name: str, rid: int):
+    """The management-repo commit(s) for a run (self-heals legacy runs via
+    `git log -- <snapshot path>` when the commit hash was never recorded)."""
+    rt = get_runtime(name)
+    run = rt.store.get_run(rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    try:
+        from ..experiment_repo import management_repo_dir, run_commit_info
+        repo = management_repo_dir()
+        if repo is None:
+            return {"run_id": rid, "commit": None, "message": "no management repo configured"}
+        info = run_commit_info(repo, name, rid, run.get("git_commit") or "")
+        if not info:
+            return {"run_id": rid, "commit": None, "message": "no commit found for this run"}
+        return {"run_id": rid, **info}
+    except Exception as e:  # noqa: BLE001
+        return {"run_id": rid, "commit": None, "message": f"{type(e).__name__}: {e}"}
+
+
+@router.post("/api/projects/{name}/runs/{rid}/restore")
+async def project_run_restore(name: str, rid: int):
+    """Restore a run's artifacts from its management-repo commit and fork a new
+    'restore' run (child of rid) so the branch graph shows the restoration."""
+    rt = get_runtime(name)
+    if rt.store.get_run(rid) is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    from ..experiment_repo import restore_run
+    result = await asyncio.to_thread(restore_run, rt, rid)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("message") or "restore failed")
+    return result
 
 
 REGEN_PROMPT = """\

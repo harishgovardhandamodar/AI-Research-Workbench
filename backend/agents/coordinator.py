@@ -186,6 +186,8 @@ class Coordinator:
         self._run_seq: list[dict] = []
         self._run_artifacts: list[str] = []
         self._run_metrics: dict = {}
+        self._run_code: list[dict] = []
+        self._run_env: dict = {}
         self._run_started = 0.0
         self.agent_name = "Fox"
         self.model_name = getattr(self.llm, "model", "") or ""
@@ -303,6 +305,8 @@ class Coordinator:
         self._run_seq = []
         self._run_artifacts = []
         self._run_metrics = {}
+        self._run_code = []
+        self._run_env = {}
         self._run_started = time.time()
         self.ctx.run_id = ""
         status = "done"
@@ -310,6 +314,11 @@ class Coordinator:
         model_override = self._pinned_model()
         if model_override:
             self.model_name = model_override
+        # Per-run environment snapshot (kernel env is cached per session — cheap).
+        try:
+            self._run_env = await self.ctx.kernels.get_env()
+        except Exception:  # noqa: BLE001
+            self._run_env = {}
         audit_meta = self._audit_meta()
         await self._audit_turn_event("turn_start", audit_meta)
         try:
@@ -469,6 +478,12 @@ class Coordinator:
             "args": _snippet(args, 200),
             "result": _snippet(result, 300),
         })
+        # Round-4 provenance: keep the FULL executed code per tool call
+        # (index-aligned with _run_seq) so runs are reproducible and diffable.
+        full_code = ""
+        if isinstance(args, dict):
+            full_code = str(args.get("code") or args.get("command") or "")
+        self._run_code.append({"name": name, "code": full_code})
         self._run_artifacts.extend(_artifact_ids(name, result))
         # Exact artifact linkage from the tool itself (figures, saved artifacts,
         # notebook outputs), not text scraping.
@@ -535,6 +550,8 @@ class Coordinator:
             "label": (variant.get("label") if variant else None),
             "parent_run_id": getattr(self.ctx, "parent_run_id", None),
             "model": self.model_name,
+            "code": self._run_code,
+            "env": self._run_env,
         })
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)

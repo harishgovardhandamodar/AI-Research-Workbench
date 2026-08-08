@@ -15,6 +15,7 @@ A unified run record looks like:
 
 from __future__ import annotations
 
+import difflib
 import json
 import threading
 from datetime import datetime, timezone
@@ -263,16 +264,23 @@ def compare_runs(a: dict, b: dict) -> dict:
 
 
 def run_diff(a: dict, b: dict) -> dict:
-    """What changed between two runs: config, metrics and tool usage.
+    """What changed between two runs: config, metrics, tool usage and code.
 
     Operates on raw run records (store.get_run / add_run output) which retain
-    full `config` / `tool_sequence`. Returns
+    full `config` / `tool_sequence` and (round 4) full `code` per tool. Returns
         {"a": label_a, "b": label_b,
          "config": {"added": [...], "removed": [...], "changed": [[key, va, vb]...]},
          "metrics": compare_runs(...) result,
          "tools": {"added": [...], "removed": [...], "failed": [...], "used": [...]},
+         "code": {"available": bool, "diffs": [{tool, added, removed, patch}]},
          "prompt": {"a": prompt_a, "b": prompt_b}}
     """
+    def label(run: dict) -> str:
+        lbl = run.get("label")
+        if lbl:
+            return str(lbl)
+        return f"run {run.get('id')}"
+
     def cfg(run: dict) -> dict:
         c = run.get("config")
         return dict(c) if isinstance(c, dict) else {}
@@ -292,11 +300,36 @@ def run_diff(a: dict, b: dict) -> dict:
     tool_removed = sorted(ta - tb)
     failed = sorted({t.get("name") for t in tools(a) + tools(b) if not t.get("ok")})
 
-    def label(run: dict) -> str:
-        lbl = run.get("label")
-        if lbl:
-            return str(lbl)
-        return f"run {run.get('id')}"
+    # Full-code diff (round 4): unified diff per tool name via difflib.
+    code_a = {c.get("name"): c.get("code") or "" for c in (a.get("code") or [])}
+    code_b = {c.get("name"): c.get("code") or "" for c in (b.get("code") or [])}
+    code_diffs = []
+    for tool in sorted(set(code_a) | set(code_b)):
+        src_a = (code_a.get(tool) or "").splitlines()
+        src_b = (code_b.get(tool) or "").splitlines()
+        if src_a == src_b:
+            continue
+        if tool in code_a and tool not in code_b:
+            patch = "\n".join([f"- {l}" for l in src_a]) or "- (empty)"
+            code_diffs.append({"tool": tool, "added": 0, "removed": len(src_a),
+                               "patch": patch})
+            continue
+        if tool not in code_a and tool in code_b:
+            patch = "\n".join([f"+ {l}" for l in src_b]) or "+ (empty)"
+            code_diffs.append({"tool": tool, "added": len(src_b), "removed": 0,
+                               "patch": patch})
+            continue
+        diff_lines = list(difflib.unified_diff(
+            src_a, src_b, fromfile=f"{tool}@{label(a)}", tofile=f"{tool}@{label(b)}",
+            lineterm=""))
+        added_n = removed_n = 0
+        for dl in diff_lines[2:]:
+            if dl.startswith("+"):
+                added_n += 1
+            elif dl.startswith("-"):
+                removed_n += 1
+        code_diffs.append({"tool": tool, "added": added_n, "removed": removed_n,
+                           "patch": "\n".join(diff_lines)})
 
     return {
         "a": label(a),
@@ -305,6 +338,8 @@ def run_diff(a: dict, b: dict) -> dict:
         "metrics": compare_runs(a, b),
         "tools": {"added": tool_added, "removed": tool_removed,
                   "failed": failed, "used": sorted(tb)},
+        "code": {"available": bool(code_a) or bool(code_b),
+                 "diffs": code_diffs},
         "prompt": {"a": a.get("prompt") or "", "b": b.get("prompt") or ""},
     }
 
@@ -404,6 +439,9 @@ def build_branch_graph(runs: list[dict], experiments: list[dict]) -> dict:
             "findings": findings[:20],
             "notes": [(s.get("title") or s.get("action") or "")
                       for s in (review.get("suggestions") or [])][:10],
+            # round-4 provenance: snapshot commit + run-time environment
+            "git_commit": r.get("git_commit") or "",
+            "env": r.get("env") or {},
         })
         by_id[r.get("id")] = r
 

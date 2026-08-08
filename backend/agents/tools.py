@@ -490,6 +490,13 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
             return f"{label_prefix}·{i}"
         return (cfg.get("label") or f"point {i}")
 
+    # Per-sweep environment snapshot (cached by the kernel manager — cheap).
+    env = {}
+    try:
+        env = await ctx.kernels.get_env()
+    except Exception:  # noqa: BLE001
+        pass
+
     kernels = []
     t0 = time.time()
     try:
@@ -499,14 +506,14 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
         if kernels:
             async def one(k, i, cfg):
                 return await _sweep_point(ctx, k, code, cfg, _label(i, cfg),
-                                          parent_id, eid, i)
+                                          parent_id, eid, i, env)
             rows = await asyncio.gather(
                 *[one(k, i, c) for i, (k, c) in enumerate(zip(kernels, configs), 1)])
         else:
             for i, cfg in enumerate(configs, 1):
                 rows.append(await _sweep_point(
                     ctx, ctx.kernels.python, code, cfg, _label(i, cfg),
-                    parent_id, eid, i))
+                    parent_id, eid, i, env))
     finally:
         if kernels:
             stop = getattr(ctx.kernels, "stop_pool", None)
@@ -532,9 +539,11 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
 
 
 async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
-                       label: str, parent_id, eid, index: int) -> dict:
+                       label: str, parent_id, eid, index: int,
+                       env: dict | None = None) -> dict:
     """Run one sweep point on `kernel`: inject `config`, run the code, record a
-    run with the returned metrics. Store writes stay on the event loop."""
+    run with the returned metrics + full code + env. Store writes stay on the
+    event loop."""
     started = time.time()
     try:
         await kernel.run_code("config = " + json.dumps(cfg))
@@ -552,7 +561,8 @@ async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
                 tool_sequence=[{"name": "run_sweep", "ok": not error,
                                 "args": {"config": cfg}, "result": error or "ok"}],
                 metrics=metrics, experiment_id=eid, config=cfg, label=label,
-                kind="sweep", parent_run_id=parent_id, model=getattr(ctx, "model", None))
+                kind="sweep", parent_run_id=parent_id, model=getattr(ctx, "model", None),
+                code=[{"name": "run_sweep", "code": code}], env=env or {})
     except Exception as e:  # noqa: BLE001
         return {"index": index, "label": label, "config": cfg,
                 "metrics": {}, "error": f"{type(e).__name__}: {e}"}

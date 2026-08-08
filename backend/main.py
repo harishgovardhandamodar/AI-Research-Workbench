@@ -995,7 +995,9 @@ async def ws_chat(ws: WebSocket, name: str):
             config=r.get("config"),
             label=r.get("label"),
             parent_run_id=r.get("parent_run_id") or None,
-            model=r.get("model") or None)
+            model=r.get("model") or None,
+            code=r.get("code"),
+            env=r.get("env"))
         # Auto-commit experiment artifacts to the management repo (best-effort,
         # off the event loop) when a run is part of an experiment.
         try:

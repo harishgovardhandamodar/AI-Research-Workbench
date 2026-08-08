@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -99,6 +100,112 @@ def _head_info(repo: Path) -> dict:
         "committed_at": (cdate or "").strip(),
         "commit_url": _commit_web_url(repo, (full or "").strip()),
     }
+
+
+def _path_commit_info(repo: Path, project: str, run_id) -> dict:
+    """The commit that last touched a run's snapshot path, via
+    `git log -1 -- fox/<project>/runs/<id>.json`. Returns {} when absent."""
+    path = f"fox/{project}/runs/{run_id}.json"
+    code, full = _git(repo, "log", "-1", "--format=%H", "--", path)
+    if code != 0 or not full.strip():
+        return {}
+    full = full.strip()
+    _, short = _git(repo, "rev-parse", "--short", full)
+    _, cdate = _git(repo, "log", "-1", "--format=%cI", full)
+    _, msg = _git(repo, "log", "-1", "--format=%s", full)
+    return {
+        "commit": (short or "").strip(),
+        "commit_full": full,
+        "committed_at": (cdate or "").strip(),
+        "commit_url": _commit_web_url(repo, full),
+        "message": (msg or "").strip(),
+    }
+
+
+def run_commit_info(repo: Path, project: str, run_id, stored_commit: str = "") -> dict:
+    """Per-run git lineage: the stored commit (if any) enriched with message +
+    changed files, falling back to the path-log lookup for legacy runs."""
+    info = {}
+    if stored_commit:
+        full = stored_commit
+        _, short = _git(repo, "rev-parse", "--short", full)
+        _, cdate = _git(repo, "log", "-1", "--format=%cI", full)
+        _, msg = _git(repo, "log", "-1", "--format=%s", full)
+        info = {"commit": (short or "").strip(), "commit_full": full,
+                "committed_at": (cdate or "").strip(),
+                "commit_url": _commit_web_url(repo, full),
+                "message": (msg or "").strip()}
+    else:
+        info = _path_commit_info(repo, project, run_id)
+    if info.get("commit_full"):
+        _, files = _git(repo, "show", "--name-only", "--format=",
+                        info["commit_full"], "--", f"fox/{project}")
+        info["files"] = [f for f in (files or "").splitlines() if f.strip()]
+    return info
+
+
+def restore_run(rt, rid: int) -> dict:
+    """Restore a run's artifacts from its management-repo commit.
+
+    The repo mirrors `fox/<project>/artifacts/`; this checks those files back out
+    into the project's artifact directory. Returns {"ok", commit, restored: [...]}.
+    """
+    try:
+        repo = management_repo_dir()
+        if repo is None:
+            return {"ok": False, "message": "no management repo configured"}
+        ok, msg = ensure_repo(repo)
+        if not ok:
+            return {"ok": False, "message": msg}
+        run = rt.store.get_run(rid)
+        if run is None:
+            return {"ok": False, "message": f"run #{rid} not found"}
+        info = run_commit_info(repo, rt.name, rid, run.get("git_commit") or "")
+        if not info.get("commit_full"):
+            return {"ok": False,
+                    "message": f"no commit found for run #{rid} (autocommit off?)"}
+        commit = info["commit_full"]
+        art_rel = f"fox/{rt.name}/artifacts"
+        # List artifact files present in the commit.
+        _, files_out = _git(repo, "ls-tree", "-r", "--name-only", commit, "--", art_rel)
+        rel_files = [f for f in (files_out or "").splitlines()
+                     if f.strip() and f.startswith(art_rel + "/")]
+        restored: list[str] = []
+        if rel_files:
+            # Extract them into the project's artifact dir. `git archive` emits
+            # paths like fox/<project>/artifacts/<rel>; --strip-components=3
+            # removes fox / <project> / artifacts so files land directly.
+            dest = rt.dir / "artifacts"
+            dest.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.Popen(
+                ["git", "-C", str(repo), "archive", commit, art_rel],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            tar = subprocess.Popen(["tar", "-x", "--strip-components=3",
+                                    "-C", str(dest)],
+                                   stdin=proc.stdout, stderr=subprocess.PIPE)
+            if proc.stdout:
+                proc.stdout.close()
+            _, terr = tar.communicate()
+            proc.wait()
+            if tar.returncode != 0:
+                return {"ok": False, "message": f"tar extract failed: {terr}"}
+            for f in rel_files:
+                rel = f[len(art_rel) + 1:]
+                restored.append(rel)
+        # Refork the run row as a fresh child so the branch graph shows the restore.
+        rid2 = rt.store.add_run(
+            prompt=run.get("prompt") or "", reply=run.get("reply") or "",
+            status="done", started_at=run.get("started_at", 0.0),
+            finished_at=time.time(),
+            tool_sequence=run.get("tool_sequence"), artifact_ids=run.get("artifact_ids"),
+            metrics=run.get("metrics"), review=run.get("review"),
+            experiment_id=run.get("experiment_id"),
+            config=run.get("config"), label=(run.get("label") or "") + " (restored)",
+            kind="restore", parent_run_id=rid, model=run.get("model"))
+        return {"ok": True, "commit": info.get("commit"), "restored": restored,
+                "run_id": rid2}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
 
 def ensure_remote(repo: Path) -> tuple[bool, str]:
@@ -337,7 +444,11 @@ def autocommit(rt, run: dict, experiments: list[dict] | None = None,
         if code not in (0, 1):
             return {"ok": False, "message": f"git commit failed: {out}"}
         if "nothing to commit" in out:
-            return {"ok": True, "message": "no changes to commit"}
+            # Resolve the existing commit for this run's snapshot path so the
+            # linkage is still recorded.
+            result = {"ok": True, "message": "no changes to commit"}
+            result.update(_path_commit_info(repo, rt.name, run.get("id")))
+            return result
         # Link the configured GitHub repo as `origin` (change management) and,
         # when enabled, push the auto-commit there.
         if github_remote_url():
@@ -350,7 +461,9 @@ def autocommit(rt, run: dict, experiments: list[dict] | None = None,
                 code, out = _git(repo, "push", "-u", "origin", "HEAD")
                 if code != 0:
                     return {"ok": False, "message": f"committed but push failed: {out}"}
-        return {"ok": True, "message": msg}
+        result = {"ok": True, "message": msg}
+        result.update(_head_info(repo))
+        return result
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
 
@@ -379,6 +492,16 @@ async def maybe_autocommit(rt, run: dict) -> None:
             import sys
             print(f"[experiment-repo] auto-commit failed for {rt.name}: "
                   f"{res.get('message')}", file=sys.stderr)
+        else:
+            # Round-4 lineage: record the snapshot commit on the run row so each
+            # run is traceable to (and restorable from) its git commit. Store
+            # writes stay on the event loop (never in the worker thread).
+            commit = res.get("commit_full") or res.get("commit") or ""
+            if commit:
+                try:
+                    rt.store.set_run_git_commit(run.get("id"), commit)
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001
         pass
     finally:
