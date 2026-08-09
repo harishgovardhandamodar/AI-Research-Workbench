@@ -16,7 +16,7 @@ WORKSPACE_ENV = "FOX_DK_LORA_WORKSPACE"
 DEFAULT_WORKSPACE = "~/.fox/dk-lora"
 
 _METRIC_RE = re.compile(r"\[dk-metric\]\s*(\w+)=([^\s]+)")
-_TQDM_RE = re.compile(r"(\d+)/(\d+)\s+\[(\d+):(\d+)<([0-9:]+)")
+_TQDM_RE = re.compile(r"(\d+)/(\d+)\s+\[[0-9:]+<[0-9:]+")
 _TRAINER_METRIC_RE = re.compile(r"'(\w+)':\s*'?([^',}]+)'?")
 
 # quai-lora pipeline stages, in order, as shown in the chat pipeline card.
