@@ -380,6 +380,21 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .pipe-step-tag.ok { color: var(--ok, #4cd08d); }
 .pipe-step-tag.fail { color: var(--danger, #e06c6c); }
 .pipe-step-phase { flex: 0 0 58px; text-align: right; font-size: 10px; color: var(--text-dim); }
+.pipe-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.pipe-actions .btn { padding: 1px 6px; font-size: 10.5px; }
+.pipe-step-dur { color: var(--text-dim); font-size: 10px; margin-left: 5px; white-space: nowrap; }
+.pipe-code { flex: 0 0 auto; padding: 0 6px; font-size: 10px; }
+.pipe-step-result { margin-top: 3px; font-size: 10.5px; }
+.pipe-step-result summary { cursor: pointer; color: var(--text-dim); }
+.pipe-step-result pre { font-size: 10.5px; font-family: var(--mono); white-space: pre-wrap; word-break: break-word;
+  margin: 2px 0 0; padding: 4px 6px; background: var(--bg-3); border-radius: 4px; max-height: 160px; overflow: auto; }
+.pipe-step-code-host { display: none; margin-top: 3px; }
+.pipe-step-code-host.open { display: block; }
+.pipe-step-code-host pre { font-size: 10.5px; font-family: var(--mono); white-space: pre-wrap; word-break: break-word;
+  margin: 0; padding: 4px 6px; background: var(--bg-3); border-radius: 4px; max-height: 200px; overflow: auto; }
+.pipe-diff-host { margin-top: 4px; }
+.pipe-art { cursor: pointer; background: transparent; }
+.pipe-art:hover { border-color: var(--accent, #a974ff); color: var(--accent, #a974ff); }
 .expd-pipe summary { display: flex; align-items: center; gap: 6px; }
 .expd-pipe .pipe-sum { margin-left: auto; color: var(--accent, #a974ff); font-size: 10.5px; font-weight: 700; }
 .expd-pipe summary .run-ds-chip { margin-left: 2px; }

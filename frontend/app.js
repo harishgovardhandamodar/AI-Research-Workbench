@@ -628,7 +628,8 @@ function pipelineStrategy(run) {
 }
 
 // The HTML pipeline for one run: experiment · strategy · data · steps · models ·
-// hyperparameters · metrics.
+// hyperparameters · metrics · artifacts · diff vs parent. Interactive bits
+// (code per step, compare vs parent, copy-as-markdown) are wired via delegation.
 function pipelineHtml(run, exp) {
   const steps = (run && run.tool_sequence) || [];
   const cfg = (run && run.config) || {};
@@ -636,12 +637,21 @@ function pipelineHtml(run, exp) {
   const expNameStr = exp && exp.name ? exp.name : expName(run && run.experiment_id);
   const goalMetric = exp && exp.goal_metric;
   const strategy = pipelineStrategy(run || {});
-  let h = `<div class="pipe">`;
+  const dur = runDuration(run);
+  const artifactNames = pipeArtifactNames(run && run.artifact_ids);
+  let h = `<div class="pipe" data-run-id="${run.id}">`;
   h += `<div class="pipe-head"><span class="pipe-title">🛠 Pipeline · run #${run.id}</span>`
     + (run.status ? `<span class="exp-badge ${run.status === "done" ? "ok" : "warn"}">${esc(run.status)}</span>` : "")
     + (run.model ? `<span class="run-ds-chip">🤖 ${esc(run.model)}</span>` : "")
     + (run.dataset ? `<span class="run-ds-chip">🧬 ${esc(run.dataset)}</span>` : "")
-    + `<span class="spacer"></span>${run.label ? `<span class="muted">${esc(run.label)}</span>` : ""}</div>`;
+    + (dur ? `<span class="run-ds-chip">⏱ ${esc(dur)}</span>` : "")
+    + `<span class="spacer"></span>${run.label ? `<span class="muted">${esc(run.label)}</span>` : ""}`
+    + `<span class="pipe-actions">`
+    + `<button class="pipe-copy btn subtle small" data-run-id="${run.id}" title="Copy this pipeline as markdown (reproducibility)">⧉ copy</button>`
+    + (run.parent_run_id != null
+        ? `<button class="pipe-diff btn subtle small" data-run-id="${run.id}" title="What changed vs the parent run">⇄ vs #${run.parent_run_id}</button>`
+        : "")
+    + `</span></div>`;
   h += `<div class="pipe-grid">`
     + (expNameStr ? `<div><span class="rd-k">Experiment</span><span class="rd-v">${esc(expNameStr)}</span></div>` : "")
     + (goalMetric ? `<div><span class="rd-k">Goal</span><span class="rd-v">${esc(goalMetric)} ${exp.higher_better !== false ? "↑" : "↓"}${exp.goal_target != null ? " → " + _fmtNum(exp.goal_target) : ""}</span></div>` : "")
@@ -658,11 +668,17 @@ function pipelineHtml(run, exp) {
     steps.forEach((s, i) => {
       const ph = pipelinePhase(s);
       const ok = s.ok !== false;
+      const sd = s.duration_ms != null ? fmtMs(s.duration_ms) : null;
       h += `<li class="pipe-step ${ok ? "" : "fail"}"><span class="pipe-step-idx">${i + 1}</span>`
         + `<span class="pipe-step-ico">${ph.ico}</span>`
         + `<div class="pipe-step-body"><span class="pipe-step-name">${esc(foxToolName(s.name || "?"))}</span>`
+        + (sd ? `<span class="pipe-step-dur" title="duration">${esc(sd)}</span>` : "")
         + (s.args ? `<span class="pipe-step-args" title="${esc(s.args)}">${esc(s.args)}</span>` : "")
-        + `</div><span class="pipe-step-tag ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>`
+        + (s.result ? `<details class="pipe-step-result"><summary>result</summary><pre>${esc(s.result)}</pre></details>` : "")
+        + `<div class="pipe-step-code-host"></div>`
+        + `</div>`
+        + `<button class="pipe-code btn subtle small" data-run-id="${run.id}" data-idx="${i}" title="Show the executed code for this step">⌨ code</button>`
+        + `<span class="pipe-step-tag ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>`
         + `<span class="pipe-step-phase">${esc(ph.label)}</span></li>`;
     });
     h += `</ol>`;
@@ -680,12 +696,59 @@ function pipelineHtml(run, exp) {
     h += `<div class="pipe-sec">Metrics</div><div class="run-detail-grid">`;
     for (const k of mkeys) {
       const isGoal = goalMetric === k;
-      h += `<span class="rd-k">${esc(k)}${isGoal ? " ★" : ""}</span><span class="rd-v">${_fmtNum(metrics[k])}</span>`;
+      h += `<span class="rd-k">${esc(k)}${isGoal ? " ★" : ""}</span><span class="rd-v">${_fmtNum(metrics[k])}${pipeGoalBadge(metrics[k], isGoal, exp)}</span>`;
     }
     h += `</div>`;
   }
+  if (artifactNames.length) {
+    h += `<div class="pipe-sec">Artifacts · ${artifactNames.length}</div><div class="pipe-tags">`
+      + artifactNames.map((a) => `<button class="run-tool-chip pipe-art" data-art-id="${esc(a.id)}" title="${esc(a.name)}">📄 ${esc(a.name)}</button>`).join("")
+      + `</div>`;
+  }
+  if (run.parent_run_id != null) {
+    h += `<div class="pipe-diff-host"></div>`;
+  }
   h += `</div>`;
   return h;
+}
+
+// Human-readable run duration (started_at → finished_at).
+function runDuration(run) {
+  const s = run && run.started_at;
+  const f = run && run.finished_at;
+  if (s == null || f == null) return "";
+  const secs = Math.max(0, Number(f) - Number(s));
+  if (!isFinite(secs) || secs <= 0) return "";
+  if (secs < 60) return Math.round(secs) + "s";
+  const m = Math.floor(secs / 60);
+  const r = Math.round(secs % 60);
+  if (m < 60) return m + "m " + r + "s";
+  const hh = Math.floor(m / 60);
+  return hh + "h " + (m % 60) + "m";
+}
+
+function fmtMs(ms) {
+  if (ms == null || !isFinite(ms)) return "";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  return (ms / 1000).toFixed(1) + "s";
+}
+
+// ✓/✗ when the goal metric meets the experiment's target.
+function pipeGoalBadge(value, isGoal, exp) {
+  if (!isGoal || value == null || !exp || exp.goal_target == null) return "";
+  const t = Number(exp.goal_target);
+  if (!isFinite(t)) return "";
+  const hit = (exp.higher_better !== false) ? Number(value) >= t : Number(value) <= t;
+  return hit ? ' <span class="rank-reached">✓</span>' : "";
+}
+
+// Resolve a run's artifact ids to names using the loaded artifact list.
+function pipeArtifactNames(ids) {
+  const arts = state.artifacts || [];
+  return (ids || []).map((aid) => {
+    const a = arts.find((x) => String(x.id) === String(aid));
+    return { id: aid, name: a ? a.name : aid };
+  });
 }
 
 // The run that belongs to a chat turn: matched by the turn's user-message id
@@ -749,6 +812,132 @@ function enhanceCodeBlocks(root) {
     pre.appendChild(btn);
   });
 }
+
+// ---- pipeline interactions (delegated: works in chat + experiment modal) ----
+
+const pipeCodeCache = {};  // run id -> {code: [{name, code}...]}
+
+async function pipeLoadCode(runId) {
+  if (pipeCodeCache[runId]) return pipeCodeCache[runId];
+  try {
+    const r = await api(`/api/projects/${state.project}/runs/${runId}?include_code=1`);
+    pipeCodeCache[runId] = (r.run && r.run.code) || [];
+  } catch (e) {
+    pipeCodeCache[runId] = [];
+  }
+  return pipeCodeCache[runId];
+}
+
+// Show the full executed code for one step (index-aligned with tool_sequence).
+async function pipeToggleCode(btn) {
+  const runId = btn.dataset.runId;
+  const idx = Number(btn.dataset.idx);
+  const host = btn.closest(".pipe-step") && btn.closest(".pipe-step").querySelector(".pipe-step-code-host");
+  if (!host) return;
+  if (host.dataset.loaded) { host.classList.toggle("open"); return; }
+  host.dataset.loaded = "1";
+  host.innerHTML = '<div class="muted">Loading code…</div>';
+  const code = await pipeLoadCode(runId);
+  const entry = code[idx] || {};
+  const text = entry.code || "";
+  host.classList.add("open");
+  if (text) {
+    host.innerHTML = `<pre><code>${esc(text)}</code></pre>`;
+    enhanceCodeBlocks(host);
+  } else {
+    host.innerHTML = '<div class="muted">No code recorded for this step.</div>';
+  }
+}
+
+// A pipeline's diff vs its parent run, lazily loaded into the pipeline body.
+async function pipeLoadDiff(btn) {
+  const runId = btn.dataset.runId;
+  const host = btn.closest(".pipe").querySelector(".pipe-diff-host");
+  if (!host) return;
+  if (host.dataset.loaded) return;
+  host.dataset.loaded = "1";
+  host.innerHTML = '<div class="muted">Comparing vs parent…</div>';
+  await renderRunDiff(host, Number(runId));
+}
+
+// Copy a whole pipeline as markdown (for notes / reports).
+async function pipeCopyMarkdown(btn) {
+  const runId = btn.dataset.runId;
+  let run = (state.agentRuns || []).find((r) => String(r.id) === String(runId)) || null;
+  if (!run) {
+    try {
+      const r = await api(`/api/projects/${state.project}/runs/${runId}?include_code=1`);
+      run = r.run || null;
+      if (run) pipeCodeCache[runId] = run.code || [];
+    } catch (e) { run = null; }
+  } else if (run.tool_sequence && run.tool_sequence.length && !pipeCodeCache[runId]) {
+    // Runs from the list omit code — pull it so the export is self-contained.
+    try {
+      const r = await api(`/api/projects/${state.project}/runs/${runId}?include_code=1`);
+      pipeCodeCache[runId] = (r.run && r.run.code) || [];
+    } catch (e) { /* best-effort */ }
+  }
+  if (!run) return;
+  const exp = expOf(run.experiment_id);
+  const md = await pipelineMarkdown(run, exp);
+  try { await copyText(md); toast("Pipeline copied as markdown"); }
+  catch (e) { toast("Copy failed"); }
+}
+
+async function pipelineMarkdown(run, exp) {
+  const steps = (run.tool_sequence) || [];
+  const cfg = (run.config) || {};
+  const metrics = (run.metrics) || {};
+  const goalMetric = exp && exp.goal_metric;
+  const strategy = pipelineStrategy(run);
+  const lines = [];
+  lines.push(`## Pipeline · run #${run.id}${run.label ? " (" + run.label + ")" : ""}`);
+  if (exp && exp.name) lines.push(`- **Experiment**: ${exp.name}`);
+  if (goalMetric) lines.push(`- **Goal**: ${goalMetric} ${exp.higher_better !== false ? "↑" : "↓"}${exp.goal_target != null ? " → " + exp.goal_target : ""}`);
+  lines.push(`- **Strategy**: ${strategy.text}`);
+  if (run.model) lines.push(`- **Model**: ${run.model}`);
+  if (run.dataset) lines.push(`- **Dataset**: ${run.dataset}`);
+  if (run.status) lines.push(`- **Status**: ${run.status}`);
+  const dur = runDuration(run);
+  if (dur) lines.push(`- **Duration**: ${dur}`);
+  const dataNames = [...new Set(steps.filter((s) => pipelinePhase(s).id === "data").map((s) => s.name || "?"))];
+  if (dataNames.length) lines.push(`- **Data**: ${dataNames.join(", ")}`);
+  lines.push("");
+  if (steps.length) {
+    lines.push(`### Steps (${steps.length})`);
+    steps.forEach((s, i) => {
+      const ph = pipelinePhase(s);
+      lines.push(`${i + 1}. \`${s.name || "?"}\` (${ph.label}) ${s.ok !== false ? "✓" : "✗"}${s.duration_ms != null ? " · " + fmtMs(s.duration_ms) : ""}`);
+      if (s.args) lines.push(`   args: \`${String(s.args).slice(0, 200)}\``);
+      const code = (pipeCodeCache[run.id] && pipeCodeCache[run.id][i] && pipeCodeCache[run.id][i].code) || "";
+      if (code) lines.push(`   \`\`\`\n${code}\n   \`\`\``);
+    });
+    lines.push("");
+  }
+  const cfgKeys = Object.keys(cfg).filter((k) => cfg[k] != null && !["findings", "fresh"].includes(k));
+  if (cfgKeys.length) {
+    lines.push("### Hyperparameters / model config");
+    for (const k of cfgKeys) lines.push(`- \`${k}\`: ${cfg[k]}`);
+    lines.push("");
+  }
+  const mkeys = Object.keys(metrics);
+  if (mkeys.length) {
+    lines.push("### Metrics");
+    for (const k of mkeys) lines.push(`- \`${k}\`${k === goalMetric ? " ★" : ""}: ${_fmtNum(metrics[k])}`);
+  }
+  return lines.join("\n");
+}
+
+document.addEventListener("click", (e) => {
+  const codeBtn = e.target.closest(".pipe-code");
+  if (codeBtn) { e.stopPropagation(); pipeToggleCode(codeBtn); return; }
+  const diffBtn = e.target.closest(".pipe-diff");
+  if (diffBtn) { e.stopPropagation(); pipeLoadDiff(diffBtn); return; }
+  const copyBtn = e.target.closest(".pipe-copy");
+  if (copyBtn) { e.stopPropagation(); pipeCopyMarkdown(copyBtn); return; }
+  const artBtn = e.target.closest(".pipe-art");
+  if (artBtn) { e.stopPropagation(); openArtifactById(artBtn.dataset.artId); return; }
+});
 
 /* ---- experiment repo: manual commit / push buttons on result messages ---- */
 

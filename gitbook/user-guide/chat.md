@@ -45,9 +45,16 @@ Each assistant reply that produced a run carries a 🛠 **Pipeline** block
   parameter sweep, improve-loop iteration, restore, …).
 - **Data** — the data-related steps and datasets touched.
 - **Steps** — the ordered tool actions with phase tags (🧬 Data · 🔍 Explore ·
-  🧠 Model · 📊 Evaluate · 💾 Persist) and the code/args snippet each ran.
+  🧠 Model · 📊 Evaluate · 💾 Persist), per-step duration, an expandable result
+  snippet, and a **⌨ code** button that reveals the exact code that step ran.
 - **Hyperparameters / model config** — the final variant's config (model,
-  epochs, lr, …) and the **metrics** the run reported (goal ★ highlighted).
+  epochs, lr, …) and the **metrics** the run reported (goal ★ highlighted, with
+  a ✓ when the goal target is reached).
+- **Artifacts** — chips for the figures/saves the run produced (click to open).
+- **⇄ vs parent** — for improve-loop iterations, one click shows what changed
+  against the parent run: config additions/removals, tool changes, and the
+  metric deltas.
+- **⧉ copy** — exports the whole pipeline as Markdown for your notes/report.
 
 The same per-run pipeline is available in the experiment **detail modal** — click
 any run there to expand its full pipeline. Pipelines are also re-attached to

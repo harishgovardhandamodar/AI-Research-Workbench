@@ -26,6 +26,7 @@ and a test file under `tests/`. The progression:
 | 24 | Show every run | The graph/timeline and branch endpoints no longer cap at the 50-run default (`list_runs(limit=None)`), so the chart, cards and runs list agree on the real run count (e.g. 93) instead of truncating to 50 |
 | 25 | Tool-step budget & continue | `agent.max_iters` (tool steps per turn) is editable in Settings and takes effect immediately; when a turn hits the limit the chat shows a one-click **Continue** button |
 | 26 | Pipeline view | Every assistant turn gets a 🛠 **Pipeline** block in the chat (and each run in the experiment detail modal) summarizing the whole run: experiment + goal, strategy, data steps, the ordered tool actions with code snippets, and finally the hyperparameters / model config + metrics — also re-attached to older messages after runs load |
+| 27 | Pipeline view — researcher deep-dive | The pipeline block now is a full researcher workbench per run: ⏱ run duration, per-step ⌨ code disclosure (lazy-loads the exact executed code, index-aligned with the tool trail), per-step duration + result disclosure, a ⇄ compare-vs-parent diff (config · tools · metrics) for improve loops, produced-artifact chips, ✓ goal-reached badge, and a ⧉ copy-pipeline-as-markdown export for reports; `include_code` flag on the single-run endpoint |
 | + | Tooling | VS Code extension (experiment tracking + documentation) |
 
 ## Design docs

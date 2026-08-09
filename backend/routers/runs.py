@@ -28,8 +28,10 @@ async def project_runs(name: str, limit: int = 50):
 
 
 @router.get("/api/projects/{name}/runs/{rid}")
-async def project_run(name: str, rid: int):
-    run = get_runtime(name).store.get_run(rid)
+async def project_run(name: str, rid: int, include_code: bool = False):
+    """One run. `include_code=true` also returns the full executed code per tool
+    (index-aligned with `tool_sequence`) for step-level inspection."""
+    run = get_runtime(name).store.get_run(rid, include_code=include_code)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     return {"run": run}

@@ -483,6 +483,7 @@ class Coordinator:
             "name": name, "ok": ok,
             "args": _snippet(args, 200),
             "result": _snippet(result, 300),
+            "duration_ms": round(duration_ms, 1),
         })
         # Round-4 provenance: keep the FULL executed code per tool call
         # (index-aligned with _run_seq) so runs are reproducible and diffable.
