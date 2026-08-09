@@ -38,6 +38,7 @@
   .storyline { padding-top:20px; }
   .storyline .lede { font-size:18px; line-height:1.65; max-width:900px; margin:0 0 20px; }
   .storyline .lede .hi { color:var(--teal); font-weight:600; }
+  .storyline .lede .hi2 { color:var(--violet); font-weight:600; }
   .story-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:6px 0 24px; }
   .story-col { background:var(--card); border:1px solid #232b3d; border-radius:14px; padding:18px 20px; }
   .story-col h3 { margin:0 0 8px; font-size:15px; }
@@ -45,6 +46,18 @@
   .story-col ul { margin:0; padding-left:18px; font-size:13px; color:var(--muted); }
   .story-col li { margin:3px 0; }
   .story-col b { color:var(--text); }
+  .chapters { margin:6px 0 8px; }
+  .chapter { display:flex; gap:16px; align-items:flex-start; padding:16px 18px; margin-bottom:12px;
+    background:var(--card); border:1px solid #232b3d; border-radius:14px; }
+  .chapter:hover { border-color:var(--teal); }
+  .chapter .num { flex:0 0 42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:17px; background:rgba(53,196,182,.12); color:var(--teal); }
+  .chapter .body { flex:1 1 auto; min-width:0; }
+  .chapter h4 { margin:2px 0 6px; font-size:16.5px; }
+  .chapter h4 .stage { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:800; margin-right:10px; }
+  .chapter p { margin:0 0 9px; font-size:13.5px; color:var(--muted); line-height:1.65; }
+  .chapter .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chapter .chips span { font-size:10.5px; padding:2px 9px; border-radius:12px; border:1px solid #2a3350; color:var(--muted); background:#0d1120; }
   .arc { display:flex; flex-wrap:wrap; align-items:stretch; gap:8px; margin:20px 0 6px;
     background:linear-gradient(120deg, rgba(53,196,182,.10), rgba(79,140,255,.08), rgba(169,116,255,.12));
     border:1px solid #232b3d; border-radius:14px; padding:18px; }
@@ -120,54 +133,170 @@
   <div class="sec-tag">The storyline</div>
   <h2>One workbench, from first baseline to fine-tuned model</h2>
 
-  <p class="lede">Every research program starts small — a dataset, a question, a first
-  fit. This workbench is where that journey plays out end-to-end, on your own
-  hardware. Open a session, drop in data, and ask Fox for a <span class="hi">baseline
-  regression</span>; it runs the code on a persistent kernel, records the run with its
-  exact code, environment, model and metrics, and a background reviewer suggests the
-  next move. Push further with <span class="hi">parameter sweeps</span>, <span class="hi">improve
-  loops</span> and <span class="hi">background campaigns</span> until you hit your target — then
-  keep climbing, through <span class="hi">model benchmarks</span> and <span class="hi">literature
-  grounding</span>, all the way to <span class="hi">fine-tuning an LLM</span> on your own data and
-  proving the adapter beats the base model. Every step is tracked, verifiable, and
-  audit-able. And nothing leaves your machine unless you explicitly approve it.</p>
+  <p class="lede">Every research program starts the same way: a dataset, a question, and a
+  first guess. This workbench is the single place that journey plays out from beginning to
+  end — entirely on your own hardware, with your own models. It is a <span class="hi">chat-driven
+  agent</span> wrapped in a <span class="hi">scientific experiment tracker</span>, wrapped in a
+  <span class="hi">verifiable audit trail</span> — and it grows with you, all the way from a first
+  linear fit to <span class="hi2">fine-tuning an LLM on your own data</span>.</p>
+
+  <p class="lede">Open a session, drop in a CSV, and ask Fox for a baseline regression. It runs
+  the code on a persistent kernel, records the run with its exact code, environment, model and
+  metrics, and a background reviewer tells you what to try next. Accept the suggestion, rerun,
+  and the regression check says ✓ improved — and that outcome is remembered as a learning for
+  every future experiment. Keep climbing through <span class="hi">parameter sweeps</span>,
+  <span class="hi">improve loops</span> and <span class="hi">background campaigns</span>, measure
+  against <span class="hi">leaderboards</span> and <span class="hi">model benchmarks</span>, ground
+  your choices in the <span class="hi">literature</span> — then push all the way to
+  <span class="hi2">LoRA/QLoRA fine-tuning</span> and a base-vs-adapter verification report. Every
+  step is tracked, hash-verified, and audit-able. And nothing leaves your machine unless you
+  explicitly approve it.</p>
 
   <div class="story-cols">
     <div class="story-col">
       <h3>🎯 What is it used for?</h3>
       <p>Agentic, chat-driven data science and machine learning — with every run
-      captured and comparable.</p>
+      captured, compared, and reproduced.</p>
       <ul>
-        <li><b>Run experiments</b> by talking: load data, fit models, tune parameters, report metrics.</li>
+        <li><b>Run experiments by talking</b> — load data, fit models, tune parameters, report metrics.</li>
         <li><b>Track everything</b> as experiments with goal metrics, targets, and leaderboards.</li>
-        <li><b>Improve autonomously</b> via reviewer-driven loops, sweeps, campaigns and benchmarks.</li>
+        <li><b>Improve autonomously</b> — reviewer loops, parallel sweeps, campaigns, benchmarks.</li>
         <li><b>Fine-tune LLMs</b> (LoRA/QLoRA) on local GPUs and verify base-vs-adapter.</li>
-        <li><b>Stay private</b> — local models, local kernels, your data never leaves home.</li>
+        <li><b>Stay private</b> — local models, local kernels; your data never leaves home.</li>
       </ul>
     </div>
     <div class="story-col">
       <h3>🏁 What it accomplishes</h3>
-      <p>It turns a conversation into a reproducible research program and closes the
-      loop between running, reviewing, and learning.</p>
+      <p>A conversation becomes a reproducible research program, and the loop between
+      running, reviewing, and learning closes itself.</p>
       <ul>
         <li><b>A run is a record</b> — code, env, metrics, model, integrity hash, git commit.</li>
         <li><b>A result becomes a learning</b> — measured outcomes feed back into the agent's context.</li>
-        <li><b>A hypothesis becomes a verdict</b> — regression checks say ✓ improved / ✗ no gain.</li>
-        <li><b>A project becomes a report</b> — generated write-up, next-research agenda, zip export.</li>
+        <li><b>A hypothesis becomes a verdict</b> — regression checks: ✓ improved / ✗ no gain.</li>
+        <li><b>A project becomes a report</b> — write-up, next-research agenda, zip export.</li>
         <li><b>A model becomes an adapter</b> — trained, exported, and validated against its base.</li>
       </ul>
     </div>
     <div class="story-col">
       <h3>🚀 What it is capable of</h3>
-      <p>A full local AI research stack in one browser tab, with an open MCP toolbox.</p>
+      <p>A full local AI research stack in one browser tab, with an open, extensible
+      MCP toolbox.</p>
       <ul>
         <li><b>Agent + kernels</b> — chat-driven Python/R, Jupyter notebooks, in-browser VS Code.</li>
-        <li><b>Autonomy</b> — improve loops, parallel parameter sweeps, background campaigns, benchmarks.</li>
-        <li><b>MCP servers</b> — science, privacy, robustness, arXiv replication, GraphRAG, EDA — plus <b>dk-lora</b> (training) and <b>ft-validate</b> (RAG verification).</li>
+        <li><b>Autonomy</b> — improve loops, parameter sweeps, background campaigns, benchmarks.</li>
+        <li><b>MCP servers</b> — science, privacy, robustness, arXiv replication, GraphRAG, EDA, <b>dk-lora</b> (training), <b>ft-validate</b> (verification).</li>
         <li><b>Live finetune monitoring</b> — pipeline card + streaming debug log in the chat.</li>
         <li><b>Trust</b> — tamper-evident audit trail, run restore, integrity verification.</li>
       </ul>
     </div>
+  </div>
+
+  <div class="sec-tag">The journey</div>
+  <h2>Six chapters, one arc</h2>
+
+  <div class="chapters">
+
+    <div class="chapter">
+      <div class="num">1</div>
+      <div class="body">
+        <h4><span class="stage">Baseline</span>Analyze — from raw data to a first signal</h4>
+        <p>Everything begins with understanding. Fox inspects your files, profiles the data, runs
+        EDA, and fits a first baseline — a linear regression, a classifier, a clustering — on the
+        persistent Python/R kernel. Figures become tracked artifacts, code is captured in full, and
+        the run lands in the experiment timeline. The 🛠 <b>pipeline view</b> breaks down exactly what
+        the agent did: strategy, data steps, ordered tool calls with code, and the model config +
+        metrics that resulted.</p>
+        <div class="chips">
+          <span>💬 chat + agent loop</span><span>🐍 Python/R kernels</span><span>📓 Jupyter notebooks</span>
+          <span>🛠 pipeline view</span><span>🖼 artifacts</span><span>🧪 experiment tracking</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chapter">
+      <div class="num">2</div>
+      <div class="body">
+        <h4><span class="stage">Iterate</span>Experiment — goal-first, suggestion-driven iteration</h4>
+        <p>State a hypothesis and a goal metric with a target. Every run is recorded against that
+        goal, and the 🧭 <b>research advisor</b> proposes improvements grouped by type (hyperparameter,
+        data, model, method, finetune, eval). Fire a <b>parameter sweep</b> across a config grid on
+        parallel kernels — one run per point, real process-level parallelism. Or run the 🔁
+        <b>improve loop</b>: run → review (up to 3 suggestions) → apply &amp; rerun → regression check.
+        Each outcome is de-duplicated and turns into a <b>learning</b> the agent carries forward.</p>
+        <div class="chips">
+          <span>🎯 goal-first steering</span><span>🧭 research advisor</span><span>⚡ parameter sweeps</span>
+          <span>🔁 improve loop</span><span>🧠 learnings</span><span>🗺 experiment planning</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chapter">
+      <div class="num">3</div>
+      <div class="body">
+        <h4><span class="stage">Measure</span>Compare — decide with evidence, not vibes</h4>
+        <p>Cross-experiment and campaign <b>leaderboards</b> rank approaches by goal metric; N-run
+        side-by-side tables and <b>run diffs</b> show exactly what changed (config, tools, code,
+        metrics). Trend sparklines, Δ-vs-best deltas, and dataset comparisons make the history
+        scannable. Goals, focus, and learnings panels keep the whole program aligned, and branch
+        history visualizes evolution run-by-run like a git flow.</p>
+        <div class="chips">
+          <span>🏆 leaderboards</span><span>📊 N-run compare</span><span>⇄ run diffs</span>
+          <span>📈 trend sparklines</span><span>🧬 dataset comparison</span><span>🎛 branch history</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chapter">
+      <div class="num">4</div>
+      <div class="body">
+        <h4><span class="stage">Scale</span>Automate — run the program while you watch</h4>
+        <p>Plan a multi-step 🧭 <b>research campaign</b>; each step executes as an experiment in the
+        background, streams live progress to every open window, survives restarts with a durable
+        resume point, and ends in a synthesis report. <b>Model benchmarks</b> run the same task under
+        many local LLMs with per-experiment model pinning and produce a ranked leaderboard. The
+        📋 <b>next-research agenda</b> proposes open threads — below-target experiments, no-gain
+        learnings, unmet goals — and suggests a follow-up campaign.</p>
+        <div class="chips">
+          <span>🧭 background campaigns</span><span>⚖ model benchmarks</span><span>📋 next-research agenda</span>
+          <span>▶ resume/stop</span><span>⚡ god mode</span><span>🔄 autoresearch loop</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chapter">
+      <div class="num">5</div>
+      <div class="body">
+        <h4><span class="stage">Trust</span>Verify — reproducible and tamper-evident by default</h4>
+        <p>Every run is snapshotted to a git-backed management repo with its commit hash stored on
+        the run, hashed with SHA-256 integrity, and tied to a redacted, hash-chained 🛡 <b>audit
+        trail</b> of every tool call, permission decision, and network access. Runs can be restored
+        from their commits, diffs audited, and deviations flagged. Knowledge-graph RAG grounds
+        planning, review, and reports in the literature with arXiv citations.</p>
+        <div class="chips">
+          <span>🔒 git lineage</span><span>🔑 integrity hashes</span><span>🛡 audit trail</span>
+          <span>↩ restore-to-run</span><span>📖 literature grounding</span><span>🕸 RKG</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chapter">
+      <div class="num">6</div>
+      <div class="body">
+        <h4><span class="stage">Climb</span>Fine-tune — train an LLM on your own data</h4>
+        <p>Move beyond classical ML. The <b>dk-lora</b> MCP server runs LoRA/QLoRA fine-tuning of any
+        HuggingFace base model on your data — job store, dataset prep, unsloth or plain-Trainer
+        backends. A 🔧 <b>pipeline card</b> streams into the chat (ingest → dataset → train → verify)
+        with a live <b>debug log</b>, and a compact session history replays after refresh. When
+        training finishes, <b>ft-validate</b> builds a RAG index over the corpus, samples an eval
+        set, and scores the adapter against the base model — a report that proves the fine-tune is
+        actually better.</p>
+        <div class="chips">
+          <span>🔧 dk-lora training</span><span>⚖ ft-validate</span><span>📈 live pipeline card</span>
+          <span>🖥 debug log</span><span>🎓 LoRA/QLoRA</span><span>🔍 base vs adapter</span>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <div class="arc">
