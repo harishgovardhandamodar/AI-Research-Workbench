@@ -61,6 +61,18 @@ a finetune-readiness checklist. See
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)
 
+## Sweep & Finetune
+
+A dedicated section to launch experiment work from the UI instead of chat:
+
+- **Parameter sweep** — a composer that builds a config **grid** (or explicit
+  JSON points) + code that reads `config` and calls `report_metric`, then runs a
+  deterministic sweep (parallel kernels, one recorded run per point) and streams
+  the summary into chat. See [Parameter sweeps](../features/parameter-sweeps.md).
+- **Finetune launch** — base model, dataset file, epochs / lr / batch / LoRA
+  rank → records a `kind="finetune"` run with a generated HuggingFace training
+  script, ready to run. See [Finetune launch](../features/finetune-launch.md).
+
 ## Campaigns & Benchmarks
 
 Background research campaigns and model benchmarks with create/run/resume/stop,

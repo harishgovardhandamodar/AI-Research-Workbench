@@ -934,6 +934,98 @@ def _msg_created_at(rt: ProjectRuntime, mid: int) -> float | None:
     return (row or {}).get("created_at")
 
 
+async def _launch_experiment_job(rt, coordinator, emit, text, intent,
+                                 experiment_id, msg_extra, user_tags):
+    """Run a UI-launched experiment job (parameter sweep or finetune setup).
+
+    Both are deterministic — no LLM round-trip. The job resolves the experiment,
+    records a user message, runs the coordinator tool, and emits the assistant
+    reply + done, so the chat window and pipeline view capture the whole launch.
+    """
+    from .sweep import (expand_sweep_grid, sweep_label_prefix,
+                        validate_sweep_request)
+    from .finetune import finetune_summary, normalize_finetune_config
+
+    eid = _resolve_experiment_id(rt, text, experiment_id)
+    if eid is None:
+        await emit("error", {"message":
+            "No experiment found. Create one first (chat or the Experiments tab)."})
+        await emit("done", {})
+        return
+    coordinator.ctx.experiment_id = str(eid)
+    # A launched variant derives from the experiment's best run (branch lineage).
+    best_id = _best_run_id(rt.store, eid)
+    coordinator.ctx.parent_run_id = best_id
+
+    mid = rt.store.add_message("user", text or intent,
+                               {"tags": user_tags, "experiment_id": eid})
+    await emit("user_message", {"id": mid, "content": text or intent,
+                                "tags": user_tags, "created_at": _msg_created_at(rt, mid)})
+    try:
+        if intent == "run_sweep":
+            sweep = dict(msg_extra.get("sweep") or {})
+            code = str(sweep.get("code") or "").strip()
+            grid = sweep.get("grid") or {}
+            configs = sweep.get("configs") or None
+            points = expand_sweep_grid(grid, configs)
+            warn = validate_sweep_request(code, points)
+            if warn:
+                await emit("status", {"message": warn})
+            await emit("status", {"message":
+                f"Running parameter sweep · {len(points)} point(s)…"})
+            result = await coordinator.tools["run_sweep"](
+                code, points, sweep_label_prefix(
+                    sweep.get("label_prefix") or "", len(points)))
+        else:  # finetune
+            fcfg = normalize_finetune_config(dict(msg_extra.get("finetune") or {}))
+            await emit("status", {"message":
+                f"Setting up finetune of {fcfg.get('base_model') or '?'}…"})
+            result = await coordinator.tools["run_finetune"](
+                base_model=fcfg["base_model"], dataset=fcfg["dataset"],
+                epochs=fcfg["epochs"], learning_rate=fcfg["learning_rate"],
+                batch_size=fcfg["batch_size"], lora_r=fcfg["lora_r"],
+                task=fcfg.get("task") or "classification")
+    except Exception as e:  # noqa: BLE001
+        await emit("status", {"message": ""})
+        await emit("error", {"message": f"{type(e).__name__}: {e}"})
+        await emit("done", {})
+        return
+    await emit("status", {"message": ""})
+    amid = rt.store.add_message(
+        "assistant", result or "(no output)",
+        {"tags": message_tags("assistant", result or "")})
+    await emit("assistant_message", {"id": amid, "content": result or "(no output)",
+                                     "tags": message_tags("assistant", result or ""),
+                                     "created_at": _msg_created_at(rt, amid)})
+    # Refresh the experiments tab (runs were recorded under the experiment).
+    await emit("done", {})
+
+
+def _best_run_id(store, eid: int) -> int | None:
+    """The experiment's best run id (by its goal metric) — the parent for
+    launched sweep/finetune variants."""
+    exp = store.get_experiment(eid)
+    if exp is None:
+        return None
+    metric = (exp.get("goal_metric") or "").strip()
+    higher = bool(exp.get("higher_better", True))
+    best, best_id = None, None
+    for r in store.experiment_runs(eid):
+        m = (r.get("metrics") or {}).get(metric) if metric else None
+        if m is None:
+            continue
+        try:
+            m = float(m)
+        except (TypeError, ValueError):
+            continue
+        if best is None or (m > best if higher else m < best):
+            best, best_id = m, r.get("id")
+    if best_id is not None:
+        return best_id
+    runs = store.experiment_runs(eid)
+    return runs[-1]["id"] if runs else None
+
+
 def _resolve_experiment_id(rt: ProjectRuntime, text: str, experiment_id: str = "") -> int | None:
     """Resolve an experiment id for the improve loop.
 
@@ -1082,6 +1174,16 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "eval":
                     # Round-9: benchmark the workbench's LLMs on a task.
                     user_tags = ["eval"]
+                elif intent == "run_sweep":
+                    # Round-29: UI-launched parameter sweep. Configs come from
+                    # msg_extra.sweep {code, grid|configs, label_prefix}; the
+                    # code reads `config` and reports metrics via report_metric.
+                    user_tags = ["parameter sweep"]
+                elif intent == "finetune":
+                    # Round-29: UI-launched finetune setup. msg_extra.finetune
+                    # carries base_model/dataset/hyperparameters; records a
+                    # kind=finetune run with a generated training script.
+                    user_tags = ["finetune"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1169,6 +1271,11 @@ async def ws_chat(ws: WebSocket, name: str):
                     else:
                         await emit("error", {"message": msg})
                     await emit("done", {})
+                    return
+                if intent == "run_sweep" or intent == "finetune":
+                    await _launch_experiment_job(
+                        rt, coordinator, emit, text, intent, experiment_id,
+                        msg_extra, user_tags)
                     return
                 if intent == "retry_stage":
                     await emit("status", {"message": "Retrying workflow stage…"})

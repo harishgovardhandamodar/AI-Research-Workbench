@@ -108,6 +108,7 @@
         <button class="exp-nav-chip" data-target="chart">Chart</button>
         <button class="exp-nav-chip" data-target="experiments">Experiments</button>
         <button class="exp-nav-chip" data-target="campaigns">Campaigns</button>
+        <button class="exp-nav-chip" data-target="sweeps">Sweep & Finetune</button>
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
         <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
@@ -216,6 +217,68 @@
             </div>
           </div>
           <div id="campaign-list"></div>
+        </div>
+      </section>
+
+      <section id="exp-section-sweeps" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Parameter sweep <span class="muted exp-hint">grid-search a config space in parallel kernels — one recorded run per point</span></span>
+          <span class="spacer"></span>
+          <button id="sweep-toggle" class="btn subtle small">+ Launch sweep</button>
+        </div>
+        <div id="sweep-form" class="exp-new-form hidden">
+          <div class="exp-new-row">
+            <select id="sweep-exp" class="exp-search" title="experiment to attach runs to"><option value="">(no experiment)</option></select>
+            <input id="sweep-label" placeholder="label prefix (optional, e.g. lr-grid)" class="exp-search" />
+          </div>
+          <textarea id="sweep-code" rows="4" spellcheck="false" placeholder="Python code that reads `config` and reports metrics, e.g.:
+from sklearn.ensemble import RandomForestClassifier
+clf = RandomForestClassifier(n_estimators=config['n_estimators'], max_depth=config['max_depth'])
+clf.fit(X_train, y_train)
+report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
+          <div class="sweep-mode-row">
+            <span class="muted">Config space:</span>
+            <button id="sweep-mode-grid" class="btn subtle small active" title="Sweep every combination of the parameter values below">Grid (cartesian)</button>
+            <button id="sweep-mode-json" class="btn subtle small" title="Explicit list of config dicts">JSON points</button>
+          </div>
+          <div id="sweep-grid-editor">
+            <div id="sweep-grid-rows"></div>
+            <button id="sweep-grid-add" class="btn subtle small">+ parameter</button>
+          </div>
+          <div id="sweep-json-editor" class="hidden">
+            <textarea id="sweep-json" rows="3" spellcheck="false" placeholder='[{"n_estimators": 100, "max_depth": 3}, {"n_estimators": 200, "max_depth": 5}]'></textarea>
+          </div>
+          <div id="sweep-preview" class="sweep-preview muted"></div>
+          <div class="exp-new-row">
+            <span class="spacer"></span>
+            <button id="sweep-run" class="btn subtle small">Run sweep</button>
+          </div>
+        </div>
+
+        <div class="exp-runs-head" style="margin-top:14px">
+          <span class="exp-runs-title">Finetune launch <span class="muted exp-hint">set up a finetune run (config + generated training script) for the active experiment</span></span>
+          <span class="spacer"></span>
+          <button id="finetune-toggle" class="btn subtle small">+ Launch finetune</button>
+        </div>
+        <div id="finetune-form" class="exp-new-form hidden">
+          <div class="exp-new-row">
+            <select id="finetune-exp" class="exp-search" title="experiment to attach the finetune run to"><option value="">(no experiment)</option></select>
+            <input id="finetune-model" placeholder="base model, e.g. distilbert-base-uncased" list="model-list" class="exp-search" />
+          </div>
+          <div class="exp-new-row">
+            <input id="finetune-dataset" placeholder="dataset file, e.g. data/train.csv" list="finetune-files" class="exp-search" />
+            <datalist id="finetune-files"></datalist>
+          </div>
+          <div class="exp-new-row sweep-hp-row">
+            <input id="finetune-epochs" type="number" min="1" step="1" value="3" title="epochs" placeholder="epochs" />
+            <input id="finetune-lr" type="number" min="0" step="any" value="0.00002" title="learning rate" placeholder="lr" />
+            <input id="finetune-bs" type="number" min="1" step="1" value="8" title="batch size" placeholder="batch size" />
+            <input id="finetune-lora" type="number" min="0" step="1" value="0" title="LoRA rank (0 = full finetune)" placeholder="LoRA r (0=full)" />
+          </div>
+          <div class="exp-new-row">
+            <span class="spacer"></span>
+            <button id="finetune-run" class="btn subtle small">Launch finetune setup</button>
+          </div>
         </div>
       </section>
 
@@ -890,7 +953,7 @@
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v109";
+  window.FOX_VER = "v110";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

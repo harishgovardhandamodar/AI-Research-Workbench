@@ -103,6 +103,36 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "run_finetune",
+            "description": (
+                "Set up a finetune launch for the active experiment: build the "
+                "finetune config (base model, dataset, hyperparameters) and record "
+                "a kind=finetune run with a generated training script, so the "
+                "pipeline and advisor track it. The script is not executed — "
+                "run it afterwards with run_python to actually train."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "base_model": {"type": "string",
+                                   "description": "HuggingFace base model id to finetune from (e.g. distilbert-base-uncased)"},
+                    "dataset": {"type": "string",
+                                "description": "Path to the training dataset file (CSV readable by pandas)"},
+                    "epochs": {"type": "integer", "description": "Number of training epochs (default 3)"},
+                    "learning_rate": {"type": "number", "description": "Learning rate (default 2e-5)"},
+                    "batch_size": {"type": "integer", "description": "Per-device batch size (default 8)"},
+                    "lora_r": {"type": "integer",
+                               "description": "LoRA rank; 0 (default) = full finetune, >0 = LoRA adapter"},
+                    "task": {"type": "string",
+                             "description": "Task type, e.g. classification (default)"},
+                },
+                "required": ["base_model", "dataset"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_r",
             "description": "Execute R code. Requires Rscript to be installed.",
             "parameters": {
@@ -572,6 +602,51 @@ async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
             "metrics": metrics, "error": error or "", "run_id": rid}
 
 
+async def _run_finetune(ctx: ToolContext, base_model: str, dataset: str,
+                        epochs: int = 3, learning_rate: float = 2e-5,
+                        batch_size: int = 8, lora_r: int = 0,
+                        task: str = "classification") -> str:
+    """Set up a finetune launch for the active experiment.
+
+    Builds the finetune config from the inputs, records a `kind="finetune"` run
+    under the active experiment with the generated training script as its code
+    (so the pipeline shows the full setup), and returns a human summary. The
+    script itself is not executed here — run it via run_python to actually train.
+    """
+    from ..finetune import (finetune_script, finetune_summary,
+                            normalize_finetune_config, validate_finetune)
+    cfg = normalize_finetune_config({
+        "base_model": base_model, "dataset": dataset, "epochs": epochs,
+        "learning_rate": learning_rate, "batch_size": batch_size,
+        "lora_r": lora_r, "task": task,
+    })
+    err = validate_finetune(cfg)
+    if err:
+        return f"[error] {err}"
+    eid = int(ctx.experiment_id) if str(ctx.experiment_id).isdigit() else None
+    script = finetune_script(cfg)
+    started = time.time()
+    env = {}
+    try:
+        env = await ctx.kernels.get_env()
+    except Exception:  # noqa: BLE001
+        pass
+    if ctx.store is not None:
+        ctx.store.add_run(
+            prompt=f"finetune {cfg['base_model']} on {cfg['dataset']}",
+            reply=finetune_summary(cfg), status="done",
+            started_at=started, finished_at=time.time(),
+            tool_sequence=[{"name": "run_finetune", "ok": True,
+                            "args": {"config": cfg}, "result": "setup recorded"}],
+            metrics={}, experiment_id=eid, config=cfg, label="finetune",
+            kind="finetune", parent_run_id=ctx.parent_run_id,
+            model=getattr(ctx, "model", None),
+            code=[{"name": "run_finetune", "code": script}], env=env or {},
+            dataset=cfg["dataset"] or None)
+    return finetune_summary(cfg) + \
+        "\n\nTraining script:\n```python\n" + script + "\n```"
+
+
 async def _run_r(ctx: ToolContext, code: str) -> str:
     from ..kernels.r_kernel import RUnavailableError
     try:
@@ -997,6 +1072,10 @@ def build_tools(ctx: ToolContext) -> dict[str, ToolFn]:
         "run_python": lambda code: _run_python(ctx, code),
         "run_sweep": lambda code, configs, label_prefix="":
             _run_sweep(ctx, code, configs, label_prefix),
+        "run_finetune": lambda base_model, dataset, epochs=3,
+            learning_rate=2e-5, batch_size=8, lora_r=0, task="classification":
+            _run_finetune(ctx, base_model, dataset, epochs, learning_rate,
+                          batch_size, lora_r, task),
         "run_r": lambda code: _run_r(ctx, code),
         "run_shell": lambda command, timeout=30: _run_shell(ctx, command, timeout),
         "save_artifact": lambda name, description, content, kind="text":

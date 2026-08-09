@@ -1798,6 +1798,8 @@ async function refreshState() {
 }
 
 function renderFiles(files) {
+  state.files = files;
+  if (typeof finetuneFileOptions === "function") finetuneFileOptions();
   const c = $("file-list");
   if (!c) return;
   c.innerHTML = "";
@@ -3139,6 +3141,8 @@ async function loadExperiments() {
   renderRuns();
   renderDatasetAnalysis();
   attachPipelinesToMessages();
+  if (typeof sweepExpOptions === "function") sweepExpOptions();
+  if (typeof finetuneExpOptions === "function") finetuneExpOptions();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -6307,6 +6311,171 @@ $("campaign-new-create").addEventListener("click", async () => {
     toast("Campaign started in the background.");
   } catch (e) { toast("Failed to start campaign: " + e.message); }
 });
+
+/* ---------- parameter sweep + finetune launch (round 29) ---------- */
+
+let sweepMode = "grid";   // grid | json
+let sweepGrid = [];       // [{param, values: string}]
+let sweepHp = { epochs: 3, lr: "0.00002", bs: 8, lora: 0 };
+
+function sweepExpOptions() {
+  const cur = $("sweep-exp").value;
+  const opts = (state.expList || []).map((e) =>
+    `<option value="${e.id}"${String(e.id) === String(cur) ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  $("sweep-exp").innerHTML = '<option value="">(no experiment)</option>' + opts;
+}
+
+function finetuneExpOptions() {
+  const cur = $("finetune-exp").value;
+  const opts = (state.expList || []).map((e) =>
+    `<option value="${e.id}"${String(e.id) === String(cur) ? " selected" : ""}>${esc(e.name)}</option>`).join("");
+  $("finetune-exp").innerHTML = '<option value="">(no experiment)</option>' + opts;
+}
+
+function finetuneFileOptions() {
+  const files = (state.files || []).map((f) => f.name);
+  $("finetune-files").innerHTML = files.map((f) => `<option value="${esc(f)}"></option>`).join("");
+}
+
+function renderSweepGridRows() {
+  const host = $("sweep-grid-rows");
+  host.innerHTML = sweepGrid.map((row, i) =>
+    `<div class="sweep-grid-row">
+       <input class="sweep-grid-param" value="${esc(row.param)}" placeholder="param" title="parameter name, e.g. n_estimators" data-i="${i}" />
+       <input class="sweep-grid-values" value="${esc(row.values)}" placeholder="comma-separated values, e.g. 100,200,300" data-i="${i}" />
+       <button class="btn subtle small sweep-grid-del" data-i="${i}" title="Remove">✕</button>
+     </div>`).join("");
+  host.querySelectorAll(".sweep-grid-param").forEach((inp) =>
+    inp.addEventListener("input", () => {
+      sweepGrid[Number(inp.dataset.i)].param = inp.value;
+      updateSweepPreview();
+    }));
+  host.querySelectorAll(".sweep-grid-values").forEach((inp) =>
+    inp.addEventListener("input", () => {
+      sweepGrid[Number(inp.dataset.i)].values = inp.value;
+      updateSweepPreview();
+    }));
+  host.querySelectorAll(".sweep-grid-del").forEach((b) =>
+    b.addEventListener("click", () => {
+      sweepGrid.splice(Number(b.dataset.i), 1);
+      renderSweepGridRows();
+      updateSweepPreview();
+    }));
+}
+
+function sweepGridConfigs() {
+  const grid = {};
+  for (const row of sweepGrid) {
+    const param = row.param.trim();
+    const vals = String(row.values).split(",").map((v) => v.trim())
+      .filter((v) => v !== "").map(coerceValue);
+    if (param && vals.length) grid[param] = vals;
+  }
+  return grid;
+}
+
+function coerceValue(v) {
+  if (v === "true") return true;
+  if (v === "false") return false;
+  const n = Number(v);
+  return (!Number.isNaN(n) && String(v).trim() !== "") ? n : v;
+}
+
+function updateSweepPreview() {
+  const el = $("sweep-preview");
+  let n = 0;
+  let points = [];
+  if (sweepMode === "grid") {
+    const grid = sweepGridConfigs();
+    const keys = Object.keys(grid);
+    if (keys.length) {
+      n = keys.reduce((acc, k) => acc * grid[k].length, 1);
+      const first = grid[keys[0]];
+      points = [first.map((v) => ({ [keys[0]]: v }))[0]];
+    }
+  } else {
+    try {
+      const cfg = JSON.parse($("sweep-json").value || "[]");
+      if (Array.isArray(cfg)) { n = cfg.length; points = cfg.slice(0, 1); }
+    } catch (e) { el.innerHTML = '<span class="kaggle-err">Invalid JSON</span>'; return; }
+  }
+  const px = points.length ? JSON.stringify(points[0]) : "—";
+  el.innerHTML = n
+    ? `⇥ <b>${n} config point(s)</b> · e.g. <code>${esc(px)}</code>`
+    : "Add at least one parameter with values to build the sweep.";
+}
+
+function launchSweep() {
+  const eid = $("sweep-exp").value;
+  const code = $("sweep-code").value.trim();
+  if (!code) { toast("Sweep code is required"); return; }
+  const label = $("sweep-label").value.trim();
+  let grid = null, configs = null;
+  if (sweepMode === "grid") {
+    grid = sweepGridConfigs();
+    if (!Object.keys(grid).length) { toast("Add at least one parameter with values"); return; }
+  } else {
+    try {
+      configs = JSON.parse($("sweep-json").value || "[]");
+      if (!Array.isArray(configs) || !configs.length) throw new Error("empty");
+    } catch (e) { toast("Config points must be a non-empty JSON array"); return; }
+  }
+  sendChat("", "run_sweep", {
+    experiment_id: eid,
+    sweep: { code, grid, configs, label_prefix: label },
+  });
+  $("sweep-form").classList.add("hidden");
+}
+
+function launchFinetune() {
+  const eid = $("finetune-exp").value;
+  const model = $("finetune-model").value.trim();
+  const dataset = $("finetune-dataset").value.trim();
+  if (!model) { toast("Base model is required"); return; }
+  if (!dataset) { toast("Dataset file is required"); return; }
+  sendChat("", "finetune", {
+    experiment_id: eid,
+    finetune: {
+      base_model: model, dataset,
+      epochs: Number($("finetune-epochs").value) || sweepHp.epochs,
+      learning_rate: parseFloat($("finetune-lr").value) || 2e-5,
+      batch_size: Number($("finetune-bs").value) || sweepHp.bs,
+      lora_r: Number($("finetune-lora").value) || 0,
+    },
+  });
+  $("finetune-form").classList.add("hidden");
+}
+
+$("sweep-toggle").addEventListener("click", () => $("sweep-form").classList.toggle("hidden"));
+$("finetune-toggle").addEventListener("click", () => $("finetune-form").classList.toggle("hidden"));
+$("sweep-mode-grid").addEventListener("click", () => {
+  sweepMode = "grid";
+  $("sweep-mode-grid").classList.add("active");
+  $("sweep-mode-json").classList.remove("active");
+  $("sweep-grid-editor").classList.remove("hidden");
+  $("sweep-json-editor").classList.add("hidden");
+  updateSweepPreview();
+});
+$("sweep-mode-json").addEventListener("click", () => {
+  sweepMode = "json";
+  $("sweep-mode-json").classList.add("active");
+  $("sweep-mode-grid").classList.remove("active");
+  $("sweep-json-editor").classList.remove("hidden");
+  $("sweep-grid-editor").classList.add("hidden");
+  updateSweepPreview();
+});
+$("sweep-json").addEventListener("input", updateSweepPreview);
+$("sweep-grid-add").addEventListener("click", () => {
+  sweepGrid.push({ param: "", values: "" });
+  renderSweepGridRows();
+  updateSweepPreview();
+});
+$("sweep-run").addEventListener("click", launchSweep);
+$("finetune-run").addEventListener("click", launchFinetune);
+// Seed the grid with one empty row.
+sweepGrid.push({ param: "", values: "" });
+renderSweepGridRows();
+updateSweepPreview();
 $("exp-compare-refresh").addEventListener("click", loadCompareExperiments);
 $("exp-next").addEventListener("click", async () => {
   try {

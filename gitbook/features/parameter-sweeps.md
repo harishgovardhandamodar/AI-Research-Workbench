@@ -16,6 +16,21 @@ kernels** and records one run per config — preferred over hand-rolling
   code** and **environment snapshot**, and an explicit `parent_run_id` (the
   experiment's best run), so the branch graph shows the sweep as one step.
 
+## Sweep composer (UI)
+
+The Experiments tab has a **Sweep & Finetune** section with a visual sweep
+composer — no need to write a chat prompt:
+
+1. Pick the experiment the runs attach to, and an optional label prefix.
+2. Write the Python that reads `config` and reports metrics.
+3. Define the config space either as a **grid** (parameter → comma-separated
+   values → cartesian product, live preview of the point count) or as explicit
+   **JSON points**.
+4. **Run sweep** launches a deterministic `run_sweep` intent (no LLM
+   round-trip): the backend expands the grid, reuses the parallel-kernel
+   machinery, records one run per point, and streams the summary table into
+   chat — so the pipeline view shows the whole launch.
+
 ## Output
 
 A markdown summary table: `point · label · config · metric columns` (best
