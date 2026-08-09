@@ -34,6 +34,35 @@
   .hero .back { position:absolute; left:24px; top:22px; font-size:13px; color:var(--muted); }
   .hero .back:hover { color:var(--text); }
 
+  /* ---------- storyline ---------- */
+  .storyline { padding-top:20px; }
+  .storyline .lede { font-size:18px; line-height:1.65; max-width:900px; margin:0 0 20px; }
+  .storyline .lede .hi { color:var(--teal); font-weight:600; }
+  .story-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:6px 0 24px; }
+  .story-col { background:var(--card); border:1px solid #232b3d; border-radius:14px; padding:18px 20px; }
+  .story-col h3 { margin:0 0 8px; font-size:15px; }
+  .story-col p { margin:0 0 10px; font-size:13.5px; color:var(--muted); }
+  .story-col ul { margin:0; padding-left:18px; font-size:13px; color:var(--muted); }
+  .story-col li { margin:3px 0; }
+  .story-col b { color:var(--text); }
+  .arc { display:flex; flex-wrap:wrap; align-items:stretch; gap:8px; margin:20px 0 6px;
+    background:linear-gradient(120deg, rgba(53,196,182,.10), rgba(79,140,255,.08), rgba(169,116,255,.12));
+    border:1px solid #232b3d; border-radius:14px; padding:18px; }
+  .arc .point { flex:1 1 120px; min-width:120px; text-align:center; background:rgba(10,14,24,.55);
+    border:1px solid #232b3d; border-radius:12px; padding:12px 10px; }
+  .arc .point .a { font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:800; }
+  .arc .point h4 { margin:5px 0 0; font-size:14px; }
+  .arc .point p { margin:4px 0 0; font-size:11.5px; color:var(--muted); }
+  .arc .arrow { align-self:center; color:var(--teal); font-size:18px; font-weight:800; }
+  .tagline { margin:26px 0 0; text-align:center; padding:22px 18px; border-radius:16px;
+    border:1px solid var(--teal); background:linear-gradient(120deg, rgba(53,196,182,.14), rgba(169,116,255,.14)); }
+  .tagline .from { font-size:15px; color:var(--muted); }
+  .tagline .big { font-size:clamp(20px,3.4vw,32px); font-weight:800; margin:8px 0;
+    background:linear-gradient(90deg,var(--teal),var(--indigo),var(--violet),var(--pink));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .tagline .words { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; }
+  .tagline .w { padding:4px 14px; border-radius:18px; border:1px solid var(--teal); color:var(--teal); font-size:12.5px; }
+
   /* ---------- sections ---------- */
   section { padding:54px 0 10px; }
   .sec-tag { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--teal); font-weight:700; }
@@ -86,6 +115,86 @@
   <p class="sub">Experimentation Workbench — every feature and workflow in one colorful tour.</p>
   <div class="pill">fully local · your data stays home · local LLMs (Ollama)</div>
 </div>
+
+<section class="wrap storyline">
+  <div class="sec-tag">The storyline</div>
+  <h2>One workbench, from first baseline to fine-tuned model</h2>
+
+  <p class="lede">Every research program starts small — a dataset, a question, a first
+  fit. This workbench is where that journey plays out end-to-end, on your own
+  hardware. Open a session, drop in data, and ask Fox for a <span class="hi">baseline
+  regression</span>; it runs the code on a persistent kernel, records the run with its
+  exact code, environment, model and metrics, and a background reviewer suggests the
+  next move. Push further with <span class="hi">parameter sweeps</span>, <span class="hi">improve
+  loops</span> and <span class="hi">background campaigns</span> until you hit your target — then
+  keep climbing, through <span class="hi">model benchmarks</span> and <span class="hi">literature
+  grounding</span>, all the way to <span class="hi">fine-tuning an LLM</span> on your own data and
+  proving the adapter beats the base model. Every step is tracked, verifiable, and
+  audit-able. And nothing leaves your machine unless you explicitly approve it.</p>
+
+  <div class="story-cols">
+    <div class="story-col">
+      <h3>🎯 What is it used for?</h3>
+      <p>Agentic, chat-driven data science and machine learning — with every run
+      captured and comparable.</p>
+      <ul>
+        <li><b>Run experiments</b> by talking: load data, fit models, tune parameters, report metrics.</li>
+        <li><b>Track everything</b> as experiments with goal metrics, targets, and leaderboards.</li>
+        <li><b>Improve autonomously</b> via reviewer-driven loops, sweeps, campaigns and benchmarks.</li>
+        <li><b>Fine-tune LLMs</b> (LoRA/QLoRA) on local GPUs and verify base-vs-adapter.</li>
+        <li><b>Stay private</b> — local models, local kernels, your data never leaves home.</li>
+      </ul>
+    </div>
+    <div class="story-col">
+      <h3>🏁 What it accomplishes</h3>
+      <p>It turns a conversation into a reproducible research program and closes the
+      loop between running, reviewing, and learning.</p>
+      <ul>
+        <li><b>A run is a record</b> — code, env, metrics, model, integrity hash, git commit.</li>
+        <li><b>A result becomes a learning</b> — measured outcomes feed back into the agent's context.</li>
+        <li><b>A hypothesis becomes a verdict</b> — regression checks say ✓ improved / ✗ no gain.</li>
+        <li><b>A project becomes a report</b> — generated write-up, next-research agenda, zip export.</li>
+        <li><b>A model becomes an adapter</b> — trained, exported, and validated against its base.</li>
+      </ul>
+    </div>
+    <div class="story-col">
+      <h3>🚀 What it is capable of</h3>
+      <p>A full local AI research stack in one browser tab, with an open MCP toolbox.</p>
+      <ul>
+        <li><b>Agent + kernels</b> — chat-driven Python/R, Jupyter notebooks, in-browser VS Code.</li>
+        <li><b>Autonomy</b> — improve loops, parallel parameter sweeps, background campaigns, benchmarks.</li>
+        <li><b>MCP servers</b> — science, privacy, robustness, arXiv replication, GraphRAG, EDA — plus <b>dk-lora</b> (training) and <b>ft-validate</b> (RAG verification).</li>
+        <li><b>Live finetune monitoring</b> — pipeline card + streaming debug log in the chat.</li>
+        <li><b>Trust</b> — tamper-evident audit trail, run restore, integrity verification.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="arc">
+    <div class="point"><div class="a">Baseline</div><h4>Analyze</h4><p>load data · EDA · a first linear fit</p></div>
+    <div class="arrow">→</div>
+    <div class="point"><div class="a">Iterate</div><h4>Experiment</h4><p>goal-first variants · sweeps · improve loop</p></div>
+    <div class="arrow">→</div>
+    <div class="point"><div class="a">Measure</div><h4>Compare</h4><p>leaderboards · learnings · run diffs</p></div>
+    <div class="arrow">→</div>
+    <div class="point"><div class="a">Scale</div><h4>Automate</h4><p>campaigns · benchmarks · proactive agenda</p></div>
+    <div class="arrow">→</div>
+    <div class="point"><div class="a">Trust</div><h4>Verify</h4><p>git lineage · integrity hashes · audit trail</p></div>
+    <div class="arrow">→</div>
+    <div class="point"><div class="a">Climb</div><h4>Fine-tune</h4><p>LoRA/QLoRA on your data · base vs adapter</p></div>
+  </div>
+
+  <div class="tagline">
+    <div class="from">from simple linear regression to fine-tuning an LLM —</div>
+    <div class="big">Local · Private · Open · Agentic</div>
+    <div class="words">
+      <span class="w">🔒 fully local</span>
+      <span class="w">🕶 private by default</span>
+      <span class="w">📦 open toolbox</span>
+      <span class="w">🤖 agent-driven</span>
+    </div>
+  </div>
+</section>
 
 <section class="wrap">
   <div class="sec-tag">The stack</div>
