@@ -109,6 +109,7 @@
         <button class="exp-nav-chip" data-target="experiments">Experiments</button>
         <button class="exp-nav-chip" data-target="campaigns">Campaigns</button>
         <button class="exp-nav-chip" data-target="sweeps">Sweep & Finetune</button>
+        <button class="exp-nav-chip" data-target="finetune">Finetune status</button>
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
         <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
@@ -280,6 +281,22 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
             <button id="finetune-run" class="btn subtle small">Launch finetune setup</button>
           </div>
         </div>
+      </section>
+
+      <section id="exp-section-finetune" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Finetune status <span class="muted exp-hint">live LoRA training jobs from the dk-lora workspace</span></span>
+          <span class="spacer"></span>
+          <button id="finetune-status-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div class="exp-new-form" id="finetune-ws-form">
+          <div class="exp-new-row">
+            <input id="finetune-ws-path" placeholder="dk-lora workspace directory (e.g. ~/.../data/workspace)" class="exp-search" />
+            <span class="spacer"></span>
+            <button id="finetune-ws-set" class="btn subtle small">Set workspace</button>
+          </div>
+        </div>
+        <div id="finetune-jobs" class="finetune-jobs"></div>
       </section>
 
       <section id="exp-section-benchmarks" class="exp-section">

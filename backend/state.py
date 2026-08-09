@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     },
     "agent": {"max_iters": 20, "reviewer_enabled": True},
     "mcp": {"servers": DEFAULT_SERVERS},
+    "finetune": {"workspace": ""},
     "editor": editor_cfg.editor_config(),
     "kaggle": {"username": "", "key": ""},
     "management": {"repo_dir": "", "github_repo": "", "auto_commit": True, "auto_push": False},
@@ -41,6 +42,7 @@ def load_config() -> dict:
             cfg["editor"].update(saved.get("editor", {}))
             cfg["kaggle"].update(saved.get("kaggle", {}))
             cfg["management"].update(saved.get("management", {}))
+            cfg["finetune"].update(saved.get("finetune", {}))
             if "servers" in saved.get("mcp", {}):
                 # Keep user's servers but always surface the bundled default
                 # servers (e.g. newly-added "privacy") unless overridden by name.

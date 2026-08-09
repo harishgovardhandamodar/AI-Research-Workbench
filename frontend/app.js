@@ -3152,6 +3152,7 @@ async function loadExperiments() {
   attachPipelinesToMessages();
   if (typeof sweepExpOptions === "function") sweepExpOptions();
   if (typeof finetuneExpOptions === "function") finetuneExpOptions();
+  if (typeof loadFinetuneStatus === "function") loadFinetuneStatus();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -6586,6 +6587,110 @@ $("finetune-run").addEventListener("click", launchFinetune);
 sweepGrid.push({ param: "", values: "" });
 renderSweepGridRows();
 updateSweepPreview();
+
+/* ---------- finetune status panel (dk-lora training jobs) ---------- */
+
+let finetunePollTimer = null;
+
+function finetuneStatusBadge(status) {
+  const cls = status === "running" ? "det" : status === "done" ? "ok"
+    : status === "failed" ? "danger" : "warn";
+  return `<span class="exp-badge ${cls}">${esc(status || "unknown")}</span>`;
+}
+
+function fmtAge(ts) {
+  if (!ts) return "—";
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return s + "s ago";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + "m ago";
+  return Math.round(m / 60) + "h ago";
+}
+
+function renderFinetuneJobs(data) {
+  const host = $("finetune-jobs");
+  const wsPath = $("finetune-ws-path");
+  if (!host) return;
+  if (wsPath && !wsPath.dataset.init && data.workspace) {
+    wsPath.value = data.workspace;
+    wsPath.dataset.init = "1";
+  }
+  if (!data.workspace_ok) {
+    host.innerHTML = `<div class="exp-empty">Workspace <code>${esc(data.workspace)}</code> not found.
+      Enter the dk-lora workspace path above and click <b>Set workspace</b>.</div>`;
+    return;
+  }
+  const jobs = data.jobs || [];
+  if (!jobs.length) {
+    host.innerHTML = '<div class="exp-empty">No training jobs in this workspace yet.</div>';
+    return;
+  }
+  let h = "";
+  for (const j of jobs) {
+    const pct = (j.total && j.step != null)
+      ? Math.min(100, Math.round((j.step / j.total) * 100)) : null;
+    const cfg = j.config || {};
+    const metrics = j.last_loss != null
+      ? `loss <b>${esc(String(j.last_loss))}</b>${j.last_epoch != null ? ` · epoch <b>${esc(String(j.last_epoch))}</b>` : ""}`
+      : (j.step != null ? `step <b>${j.step}/${j.total}</b>` : "no metrics yet");
+    h += `<div class="finetune-job" data-id="${esc(j.id)}">
+      <div class="finetune-job-head">
+        <span class="finetune-job-id">${esc(j.id)}</span>
+        ${finetuneStatusBadge(j.status)}
+        <span class="spacer"></span>
+        <span class="muted">${esc(String(cfg.backend || "—"))} · ${esc(String(cfg.dataset_id || "—"))}</span>
+        <button class="btn subtle small finetune-job-toggle" data-id="${esc(j.id)}" title="toggle log">▾</button>
+      </div>
+      <div class="finetune-job-body">
+        <div class="finetune-job-row"><span class="muted">created</span> ${fmtAge(j.created_at)}
+          ${j.step != null && j.total != null ? `<span class="muted" style="margin-left:12px">progress</span> <b>${j.step}/${j.total}</b> (${pct}%)` : ""}
+          <span class="muted" style="margin-left:12px">metrics</span> ${metrics}</div>
+        ${j.error ? `<div class="finetune-job-error">${esc(String(j.error).slice(-600))}</div>` : ""}
+        ${j.output_dir ? `<div class="finetune-job-row muted">${esc(j.output_dir)}</div>` : ""}
+        ${pct != null ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${pct}%"></div></div>` : ""}
+        <pre class="finetune-log hidden"></pre>
+      </div>
+    </div>`;
+  }
+  host.innerHTML = h;
+  host.querySelectorAll(".finetune-job-toggle").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const body = b.closest(".finetune-job").querySelector(".finetune-log");
+      const show = body.classList.toggle("hidden");
+      b.textContent = show ? "▾" : "▸";
+      if (show && !body.textContent.trim()) {
+        try {
+          const r = await api(`/api/finetune/jobs/${b.dataset.id}`);
+          body.textContent = r.log_tail || "(empty log)";
+        } catch (e) { body.textContent = "failed to load log: " + e.message; }
+      }
+    }));
+}
+
+async function loadFinetuneStatus() {
+  try {
+    const data = await api("/api/finetune/status");
+    renderFinetuneJobs(data);
+    const running = (data.jobs || []).some((j) => j.status === "running");
+    if (running && !finetunePollTimer) {
+      finetunePollTimer = setInterval(loadFinetuneStatus, 5000);
+    } else if (!running && finetunePollTimer) {
+      clearInterval(finetunePollTimer);
+      finetunePollTimer = null;
+    }
+  } catch (e) { /* silent */ }
+}
+
+$("finetune-status-refresh").addEventListener("click", loadFinetuneStatus);
+$("finetune-ws-set").addEventListener("click", async () => {
+  const ws = $("finetune-ws-path").value.trim();
+  if (!ws) { toast("Workspace path is required"); return; }
+  try {
+    await api("/api/finetune/workspace", { method: "POST", body: JSON.stringify({ workspace: ws }) });
+    toast("Workspace set");
+    await loadFinetuneStatus();
+  } catch (e) { toast("Failed to set workspace: " + e.message); }
+});
 $("exp-compare-refresh").addEventListener("click", loadCompareExperiments);
 $("exp-next").addEventListener("click", async () => {
   try {

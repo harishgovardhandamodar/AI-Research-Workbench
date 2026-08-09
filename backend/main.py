@@ -32,7 +32,7 @@ from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import AllowAllPermissionManager
 from .project_runtime import ProjectRuntime
-from .routers import artifacts, notebooks, projects, runs, system
+from .routers import artifacts, finetune, notebooks, projects, runs, system
 from .state import (CONFIG, allowed_origins, get_runtime, mcp_registry,
                     origin_allowed, runtimes)
 
@@ -82,6 +82,7 @@ if allowed_origins():
 
 app.include_router(system.router)
 app.include_router(projects.router)
+app.include_router(finetune.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
 app.include_router(notebooks.router)

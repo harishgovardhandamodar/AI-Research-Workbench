@@ -960,6 +960,22 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .sweep-preview { font-size: 11.5px; }
 .sweep-preview code { font-family: var(--mono); background: rgba(127,127,127,.12); padding: 0 4px; border-radius: 3px; }
 .sweep-hp-row input { flex: 1; min-width: 90px; }
+.exp-badge.danger { color: #ff7b7b; border-color: #ff7b7b; }
+
+/* ---------- finetune status panel (dk-lora training jobs) ---------- */
+.finetune-jobs { display: flex; flex-direction: column; gap: 8px; }
+.finetune-job { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.finetune-job-head { display: flex; align-items: center; gap: 8px; }
+.finetune-job-id { font-family: var(--mono); font-size: 11.5px; }
+.finetune-job-body { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.finetune-job-row { font-size: 11.5px; }
+.finetune-progress { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+.finetune-progress-bar { height: 100%; background: var(--accent-2, #4d9fff); transition: width .5s; }
+.finetune-log { font-family: var(--mono); font-size: 10.5px; background: rgba(0,0,0,.35);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px; margin: 4px 0 0;
+  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.finetune-job-error { font-family: var(--mono); font-size: 10.5px; color: var(--danger, #e06c6c);
+  background: rgba(224,108,108,.08); border-radius: 4px; padding: 4px 6px; white-space: pre-wrap; }
 .exp-card { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
   display: flex; flex-direction: column; gap: 2px; }
 .exp-focus { color: var(--text-dim); }
