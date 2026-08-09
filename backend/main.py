@@ -1598,6 +1598,22 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("pong", {})
                 elif mtype == "stop":
                     abort_event.set()
+                elif mtype == "finetune_stage":
+                    # Trigger a quai-lora pipeline stage from the chat window.
+                    try:
+                        from . import finetune_status as fs
+                        stage = int((msg.get("stage") or 0))
+                        req = fs.submit_stage(
+                            stage, job_id=msg.get("job_id") or "",
+                            options=msg.get("options") or {},
+                            label=msg.get("label") or "")
+                        await emit("notice", {"message": (
+                            f"Queued finetune stage {stage} ({req['label']}) — "
+                            "the host worker will run it; progress streams here.")})
+                        await emit("finetune_pipeline", {
+                            "pipeline": fs.pipeline_snapshot()})
+                    except Exception as e:  # noqa: BLE001
+                        await emit("error", {"message": f"Stage trigger failed: {e}"})
                 else:
                     await incoming.put(msg)
         except WebSocketDisconnect:
