@@ -26,6 +26,13 @@ _IDLE_TICK = 8.0            # poll interval when no job is active
 _PROGRESS_EVERY = 100       # persist a progress message every N steps
 _BURST_MAX = 400            # max log lines pushed per socket message
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_BASE_MODEL_RE = re.compile(r'"base_model"\s*:\s*"([^"]+)"')
+
+
+def _find_base_model(script_text: str) -> str:
+    """Best-effort: pull base_model out of the generated training script."""
+    m = _BASE_MODEL_RE.search(script_text or "")
+    return m.group(1).strip() if m else ""
 
 
 def _clean_line(line: str) -> str:
@@ -133,6 +140,12 @@ class FinetuneMonitor:
     async def _persist_transitions(self, jobs: list[dict]) -> None:
         for job in jobs:
             st = job["status"]
+            # The job JSON can lag the log (launcher watcher died): a running
+            # job whose log says TRAINING_DONE is actually done.
+            if st == "running" and job.get("finished"):
+                fs.reconcile_job_status(job)
+                job["status"] = "done"
+                st = "done"
             if st == "running":
                 await self._persist_start_or_progress(job)
             elif st in ("done", "failed"):
@@ -140,6 +153,86 @@ class FinetuneMonitor:
                     await self._persist_terminal(job)
                     self._persisted_terminal.add(job["id"])
                     self._offsets.pop(job["id"], None)
+            # Keep the Experiments-tab record in sync with the training log.
+            self._record_run(job)
+
+    def _record_run(self, job: dict) -> None:
+        """Create/update a kind=finetune run in the project store so the
+        training metrics (loss / grad_norm / learning_rate / epoch) show up in
+        the Experiments tab and render as charts from the metric series.
+
+        The run is attached to a project experiment derived from the training
+        config (created on demand); its `config.metric_series` carries the full
+        numeric history for charting while `metrics` holds the summary scalars
+        used by leaderboards.
+        """
+        try:
+            store = self.rt.store
+            rid = store.find_finetune_run(job["id"])
+            raw = fs.read_json(fs.jobs_dir() / f"{job['id']}.json") or {}
+            cfg = raw.get("config") or {}
+            try:
+                script_path = fs.jobs_dir() / f"{job['id']}.py"
+                script_text = script_path.read_text(encoding="utf-8", errors="replace")
+                base_model = _find_base_model(script_text)
+            except Exception:  # noqa: BLE001
+                base_model = ""
+            exp_name = cfg.get("config_id") or "LoRA finetune"
+            if base_model:
+                exp_name = f"{exp_name} · {base_model}"
+            # Find or create the finetune experiment (goal: minimize loss).
+            exp_id = None
+            for e in store.list_experiments():
+                if (e.get("name") or "").strip().lower() == exp_name.lower():
+                    exp_id = e["id"]
+                    break
+            if exp_id is None:
+                exp_id = store.create_experiment(
+                    name=exp_name, goal_metric="loss", higher_better=False)
+
+            series = job.get("series") or []
+            last = series[-1] if series else {}
+            # HF's final summary line uses train_loss instead of loss.
+            if "loss" not in last and "train_loss" in last:
+                last = dict(last); last["loss"] = last["train_loss"]
+            # Metrics are summary scalars (numeric) for leaderboards.
+            metrics = {}
+            for k in ("loss", "grad_norm", "learning_rate", "epoch"):
+                v = last.get(k)
+                if v is not None:
+                    metrics[k] = float(v)
+            if job.get("step") is not None:
+                metrics["step"] = int(job["step"])
+            metrics["dataset"] = cfg.get("dataset_id") or ""
+            config = {
+                "job_id": job["id"],
+                "config_id": cfg.get("config_id") or "",
+                "dataset_id": cfg.get("dataset_id") or "",
+                "base_model": base_model,
+                "backend": cfg.get("backend") or "",
+                "metric_series": series,
+            }
+            now = job.get("updated_at") or job.get("created_at") or time.time()
+            if rid is None:
+                # First time: create the run with the current snapshot.
+                store.add_run(
+                    prompt=("LoRA/QLoRA fine-tuning "
+                            + (f"of {base_model} " if base_model else "")
+                            + f"on dataset {cfg.get('dataset_id') or '?'}"),
+                    reply=(f"Finetune job `{job['id']}` — "
+                           + f"loss {metrics.get('loss', '—')} · "
+                           + f"epoch {metrics.get('epoch', '—')}"),
+                    status=job["status"], started_at=now, finished_at=now,
+                    metrics=metrics, experiment_id=exp_id, config=config,
+                    label=f"dk-lora:{job['id']}", kind="finetune",
+                    model=base_model or None,
+                    dataset=cfg.get("dataset_id") or None)
+            else:
+                store.set_run_metrics(
+                    rid, metrics, config=config, status=job["status"],
+                    finished_at=(now if job["status"] in ("done", "failed") else None))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _persist(self, content: str, finetune_meta: dict) -> None:
         try:

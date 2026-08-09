@@ -494,6 +494,34 @@ class ProjectStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def set_run_metrics(self, rid: int, metrics: dict,
+                        config: dict | None = None, status: str | None = None,
+                        finished_at: float | None = None) -> None:
+        """Live-update a run's metrics/config/status (e.g. a finetune training
+        job whose metric history grows as training progresses)."""
+        fields = ["metrics=?"]
+        vals: list = [json.dumps(metrics or {})]
+        if config is not None:
+            fields.append("config=?")
+            vals.append(json.dumps(config))
+        if status is not None:
+            fields.append("status=?")
+            vals.append(status)
+        if finished_at is not None:
+            fields.append("finished_at=?")
+            vals.append(finished_at)
+        vals.append(rid)
+        self._conn.execute(
+            f"UPDATE runs SET {', '.join(fields)} WHERE id=?", vals)
+        self._conn.commit()
+
+    def find_finetune_run(self, job_id: str) -> int | None:
+        """The run id recorded for a dk-lora training job (by label), if any."""
+        row = self._conn.execute(
+            "SELECT id FROM runs WHERE kind='finetune' AND label=?",
+            (f"dk-lora:{job_id}",)).fetchone()
+        return row["id"] if row else None
+
     # -- suggestions (first-class reviewer suggestion records) ---------------
     def add_suggestions(self, experiment_id: int | None, source_run_id: int | None,
                         review: dict) -> list[int]:

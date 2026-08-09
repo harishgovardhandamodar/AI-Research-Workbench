@@ -3990,11 +3990,13 @@ function renderExpDetailBody(eid, meta, exp) {
       if (!hasPipe) {
         return `<div class="learning-row"><span class="run-id">#${r.id}</span><span>${esc((r.label || "").slice(0, 30))} · ${esc(mstr.slice(0, 140))}</span></div>`;
       }
+      const ftSeries = (r.config && r.config.metric_series) || null;
       return `<details class="pipe-wrap expd-pipe"><summary><span class="run-id">#${r.id}</span>`
         + `<span>${esc((r.label || "").slice(0, 30))}</span>`
         + (r.model ? `<span class="run-ds-chip">🤖 ${esc(r.model)}</span>` : "")
         + (r.dataset ? `<span class="run-ds-chip">🧬 ${esc(r.dataset)}</span>` : "")
         + `<span class="muted">${esc(mstr.slice(0, 90))}</span><span class="pipe-sum">🛠 pipeline</span></summary>`
+        + (ftSeries && ftSeries.length ? ftMetricChartBlock(ftSeries, r.id) : "")
         + pipelineHtml(r, meta) + `</details>`;
     }).join("");
   } else {
@@ -6614,6 +6616,38 @@ function fmtAge(ts) {
   return Math.round(m / 60) + "h ago";
 }
 
+// Inline SVG line chart for a finetune metric series (loss / grad_norm /
+// learning_rate / epoch over training steps).
+function ftMetricChart(series, key, label, color, w, h) {
+  w = w || 240; h = h || 60;
+  const pts = (series || []).map((p) => Number(p[key])).filter((v) => isFinite(v));
+  if (pts.length < 2) return `<div class="ft-chart-empty muted">no ${esc(key)} history yet</div>`;
+  const step0 = (series[0] && series[0].step) || 0;
+  const stepN = (series[series.length - 1] && series[series.length - 1].step) || pts.length - 1;
+  const lo = Math.min(...pts), hi = Math.max(...pts);
+  const range = (hi - lo) || 1;
+  const pad = 4;
+  const X = (i) => pad + (stepN === step0 ? 0 : ((series[i].step - step0) / (stepN - step0)) * (w - pad * 2));
+  const Y = (v) => h - pad - ((v - lo) / range) * (h - pad * 2);
+  const line = pts.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
+  return `<svg class="ft-chart" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.6" opacity="0.95"/>
+    <circle cx="${X(pts.length - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="2.4" fill="${color}"/>
+  </svg>`;
+}
+
+function ftMetricChartBlock(series, jobId) {
+  if (!series || series.length < 2) return "";
+  const cfg = (jobId ? series : series);
+  return `<div class="ft-charts">
+    <div class="ft-chart-cell">${ftMetricChart(series, "loss", "loss", "#e05b5b")}<div class="ft-chart-label muted">loss</div></div>
+    <div class="ft-chart-cell">${ftMetricChart(series, "grad_norm", "grad_norm", "#4f8cff")}<div class="ft-chart-label muted">grad_norm</div></div>
+    <div class="ft-chart-cell">${ftMetricChart(series, "learning_rate", "learning_rate", "#f0b429")}<div class="ft-chart-label muted">learning_rate</div></div>
+    <div class="ft-chart-cell">${ftMetricChart(series, "epoch", "epoch", "#a974ff")}<div class="ft-chart-label muted">epoch</div></div>
+  </div>`;
+}
+
 function renderFinetuneJobs(data) {
   const host = $("finetune-jobs");
   const wsPath = $("finetune-ws-path");
@@ -6659,6 +6693,7 @@ function renderFinetuneJobs(data) {
         ${j.error ? `<div class="finetune-job-error">${esc(String(j.error).slice(-600))}</div>` : ""}
         ${j.output_dir ? `<div class="finetune-job-row muted">${esc(j.output_dir)}</div>` : ""}
         ${pct != null ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${pct}%"></div></div>` : ""}
+        ${ftMetricChartBlock(j.series, j.id)}
         <pre class="finetune-log hidden"></pre>
       </div>
     </div>`;

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from .state import CONFIG
@@ -80,9 +81,10 @@ def read_json(path: Path) -> dict | None:
 
 def parse_log(path: Path, n_chars: int = 3000) -> dict:
     """Extract tail + last metrics/progress from a training log."""
-    out: dict = {"log_tail": "", "metrics": [], "step": None, "total": None,
+    out: dict = {"log_tail": "", "metrics": [], "series": [],
+                 "step": None, "total": None,
                  "last_loss": None, "last_epoch": None,
-                 "eta_secs": None, "rate": None}
+                 "eta_secs": None, "rate": None, "finished": False}
     if not path.exists():
         return out
     try:
@@ -90,14 +92,20 @@ def parse_log(path: Path, n_chars: int = 3000) -> dict:
     except Exception:  # noqa: BLE001
         return out
     out["log_tail"] = text[-n_chars:]
+    # dk-lora scripts print TRAINING_DONE when training finished; the job JSON
+    # status can lag (launcher watcher died) so the log is the source of truth.
+    out["finished"] = "TRAINING_DONE" in text
     metric_lines = []
+    cur_step = None
+    series: list[dict] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
         m = _TQDM_RE.search(line)
         if m:
-            out["step"] = int(m.group(1))
+            cur_step = int(m.group(1))
+            out["step"] = cur_step
             out["total"] = int(m.group(2))
         e = _TQDM_ETA_RE.search(line)
         if e:
@@ -110,15 +118,29 @@ def parse_log(path: Path, n_chars: int = 3000) -> dict:
         if line.startswith("[dk-metric]"):
             metric_lines.append(dict(_METRIC_RE.findall(line)))
         elif line.startswith("{"):
-            metric_lines.append(dict(_TRAINER_METRIC_RE.findall(line)))
+            d = dict(_TRAINER_METRIC_RE.findall(line))
+            metric_lines.append(d)
+            # Numeric snapshot with the current step for charting.
+            snap = {}
+            if cur_step is not None:
+                snap["step"] = cur_step
+            for k, v in d.items():
+                try:
+                    snap[k] = float(v)
+                except (TypeError, ValueError):
+                    snap[k] = v
+            if snap and (not series or series[-1] != snap):
+                series.append(snap)
     seen: list[dict] = []
     for d in metric_lines:
         if d and (not seen or seen[-1] != d):
             seen.append(d)
     out["metrics"] = seen[-20:]
+    # Keep the chart series bounded but complete enough to render curves.
+    out["series"] = series[-4000:]
     if seen:
         last = seen[-1]
-        out["last_loss"] = last.get("loss")
+        out["last_loss"] = last.get("loss") or last.get("train_loss")
         out["last_epoch"] = last.get("epoch")
     return out
 
@@ -153,6 +175,8 @@ def job_summary(raw: dict, parsed: dict | None = None) -> dict:
         "eta_secs": parsed.get("eta_secs"),
         "rate": parsed.get("rate"),
         "eta": fmt_eta(parsed.get("eta_secs")),
+        "finished": bool(parsed.get("finished")),
+        "series": parsed.get("series", []),
         "metrics": parsed.get("metrics", []),
     }
 
@@ -167,6 +191,27 @@ def list_jobs() -> list[dict]:
                 continue
             jobs.append(job_summary(raw))
     return jobs
+
+
+def reconcile_job_status(job: dict) -> None:
+    """Persist a 'done' status onto the job JSON when the log says TRAINING_DONE
+    but the record still says running (the dk-lora watcher thread can die with
+    its launcher). Idempotent; only writes when it changes something."""
+    if job.get("status") == "done" or not job.get("finished"):
+        return
+    path = jobs_dir() / f"{job['id']}.json"
+    raw = read_json(path)
+    if raw is None or raw.get("status") == "done":
+        return
+    raw["status"] = "done"
+    raw.setdefault("result", {})
+    raw["result"]["returncode"] = 0
+    raw["result"]["completed"] = True
+    raw["updated_at"] = time.time()
+    try:
+        path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_job(job_id: str) -> dict | None:
@@ -222,6 +267,9 @@ def pipeline_snapshot() -> dict:
             if meta:
                 datasets.append({"id": p.name[:-len(".meta.json")],
                                  "count": meta.get("count", 0)})
+    jobs = list_jobs()
+    for job in jobs:
+        reconcile_job_status(job)
     jobs = list_jobs()
     train = next((j for j in jobs if j["kind"] == "training"), None)
     validate_dir = _validate_store_dir()
