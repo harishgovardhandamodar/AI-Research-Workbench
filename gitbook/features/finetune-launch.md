@@ -33,3 +33,11 @@ has a first-class `run_finetune` tool it can call mid-conversation.
 The research advisor's **Finetune setup** checklist surfaces what a launch
 needs (pinned base model, training data, evaluation metric, baseline run), so
 you know before you launch whether the experiment is ready to finetune.
+
+## Watching a running job
+
+Once a training job is running (launched here or via a pipeline script), the
+**Finetune status** panel in the Experiments tab and the 🔧 **LoRA finetune**
+live pipeline card + debug log in the chat stream its progress — see
+[Finetune status & monitoring](finetune-status.md).
+

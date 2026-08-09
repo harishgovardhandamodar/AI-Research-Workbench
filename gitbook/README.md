@@ -19,6 +19,10 @@ under `docs/` (per-round feature designs) and practical guides (`HOW-to-USE.md`,
   comparison and diffs.
 - **Autonomous research**: reviewer-driven improve loops, parameter sweeps,
   multi-step research campaigns (background, resumable), and model benchmarks.
+- **LoRA/QLoRA fine-tuning**: a `dk_lora` MCP server trains adapters on any
+  HuggingFace base model, and a `ft_validate` server verifies the adapter
+  against its base — with live training progress and a debug-log pipeline card
+  streamed into the chat and the Experiments tab.
 - **Knowledge memory**: every measured outcome becomes a *learning* that feeds
   back into the agent's context, the reviewer, and the campaign planner.
 - **Verifiability**: git-backed run lineage, per-run content hashes (integrity),

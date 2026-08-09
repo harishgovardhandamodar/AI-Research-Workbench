@@ -166,6 +166,16 @@ strongly weights shape the layout (0 = uniform, 200 = amplified).
 dropdowns and chart labels are now readable in light mode (no more white-on-
 white).
 
+**🔧 LoRA/QLoRA fine-tuning with live monitoring** — two new MCP servers:
+`dk_lora` (LoRA/QLoRA training: workspace job store, dataset prep, unsloth or
+plain-Trainer backends) and `ft_validate` (RAG-index verification that scores
+the base model against the trained adapter). The GUI surfaces training live:
+a **Finetune status** panel in the Experiments tab (per-job progress, step/
+total, loss/epoch, log tail) and a 🔧 **LoRA finetune** pipeline card in the
+chat that streams a **debug-log console** (ingest → dataset → train → verify
+stages) plus a persisted finetune session history. Jobs launched from the CLI
+stream into the GUI too.
+
 Also in this release: `.env` is now gitignored, and the audit CLI ships via the
 `audit` extras (`pip install -e ".[audit]"`).
 
@@ -423,6 +433,16 @@ Claude, Cursor or VS Code could use.
   `eda_report` — that profile, analyse, visualise and report on any dataset
   (shared `dataset_id` workspace, plots + Markdown/HTML/PDF reports). See
   `mcp_servers/eda_mcp/README.md`.
+- A built-in **`mcp_servers/dk_lora/`** server (`dk_lora__*` tools) runs
+  **LoRA/QLoRA training** on any HuggingFace base model + dataset: jobs live in
+  a workspace (`jobs/<id>.{json,log,py}`), with dataset prep, unsloth or
+  plain-Trainer backends, and `[dk-metric]` log lines. The workbench GUI shows
+  live progress (Experiments → Finetune status, and a 🔧 pipeline card + debug
+  log in the chat) — see `gitbook/features/finetune-status.md`.
+- A built-in **`mcp_servers/ft_validate/`** server (`ft_validate__*` tools)
+  **verifies a trained adapter** vs its base model: builds a RAG index over the
+  evaluation corpus, samples an eval set, scores base-vs-adapter responses, and
+  writes a comparison report — see `gitbook/features/finetune-status.md`.
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may

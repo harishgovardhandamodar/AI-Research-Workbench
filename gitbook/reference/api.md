@@ -102,6 +102,18 @@ Unless noted, JSON in/out. A project-scoped path uses `/api/projects/{name}`.
 | POST | `/api/projects/{name}/kernel/reset` | Reset the kernel |
 | POST | `/api/projects/{name}/kaggle/import` | Import a Kaggle dataset |
 
+## Finetune (dk-lora)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/finetune/status` | All dk-lora training jobs with live progress + last metrics |
+| GET | `/api/finetune/jobs/{job_id}` | One job: record + log tail + metric history |
+| GET | `/api/finetune/pipeline` | Pipeline snapshot (stages 1–4) for the chat card |
+| POST | `/api/finetune/workspace` | Set the dk-lora workspace directory |
+
+See [Finetune status](../features/finetune-status.md) for the full story.
+
+
 ## Audit
 
 `/api/projects/{name}/audit/*` — `summary`, `events`, `event/{id}`, `timeline`,

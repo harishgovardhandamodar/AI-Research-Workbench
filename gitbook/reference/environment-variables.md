@@ -38,6 +38,7 @@ The most commonly used environment variables (Docker overrides live in
 |---|---|---|
 | `FOX_GPU_DEVICES` | `void` | `all` exposes the GPU to nvidia-smi / RKG |
 | `FOX_GPU_CAPABILITIES` | `compute,utility` | NVIDIA driver capabilities |
+| `FOX_DK_LORA_WORKSPACE` | `~/.fox/dk-lora` | dk-lora workspace the finetune status UI/monitor reads (overrides the config `finetune.workspace`) |
 | `FOX_GPU_COUNT` | `1` | GPU reservation count |
 
 ## LLM retries (round 12)
