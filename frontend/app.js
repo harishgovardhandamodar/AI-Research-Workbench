@@ -6640,6 +6640,9 @@ function renderFinetuneJobs(data) {
     const metrics = j.last_loss != null
       ? `loss <b>${esc(String(j.last_loss))}</b>${j.last_epoch != null ? ` · epoch <b>${esc(String(j.last_epoch))}</b>` : ""}`
       : (j.step != null ? `step <b>${j.step}/${j.total}</b>` : "no metrics yet");
+    const etaBits = [];
+    if (j.eta) etaBits.push(`ETA <b>${esc(j.eta)}</b>`);
+    if (j.rate != null) etaBits.push(`<b>${esc(String(j.rate))}</b>s/it`);
     h += `<div class="finetune-job" data-id="${esc(j.id)}">
       <div class="finetune-job-head">
         <span class="finetune-job-id">${esc(j.id)}</span>
@@ -6651,7 +6654,8 @@ function renderFinetuneJobs(data) {
       <div class="finetune-job-body">
         <div class="finetune-job-row"><span class="muted">created</span> ${fmtAge(j.created_at)}
           ${j.step != null && j.total != null ? `<span class="muted" style="margin-left:12px">progress</span> <b>${j.step}/${j.total}</b> (${pct}%)` : ""}
-          <span class="muted" style="margin-left:12px">metrics</span> ${metrics}</div>
+          <span class="muted" style="margin-left:12px">metrics</span> ${metrics}
+          ${etaBits.length ? `<span class="muted" style="margin-left:12px">eta</span> ${etaBits.join(" · ")}` : ""}</div>
         ${j.error ? `<div class="finetune-job-error">${esc(String(j.error).slice(-600))}</div>` : ""}
         ${j.output_dir ? `<div class="finetune-job-row muted">${esc(j.output_dir)}</div>` : ""}
         ${pct != null ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${pct}%"></div></div>` : ""}
@@ -6703,11 +6707,14 @@ const FT_STAGES_META = {
 
 function ftStageHtml(s) {
   const meta = FT_STAGES_META[s.state] || FT_STAGES_META.pending;
+  const bits = [esc(s.detail || meta.cls)];
+  if (s.rate) bits.push(`<span class="ft-rate">${esc(s.rate)}</span>`);
+  if (s.eta) bits.push(`<span class="ft-eta">⏱ ${esc(s.eta)}</span>`);
   return `<div class="ft-stage ${meta.cls}">
     <span class="ft-ico">${meta.ico}</span>
     <div class="ft-stage-body">
       <div class="ft-label">${esc(s.label)}</div>
-      <div class="ft-detail muted">${esc(s.detail || meta.cls)}</div>
+      <div class="ft-detail muted">${bits.join(" · ")}</div>
     </div>
   </div>`;
 }
@@ -6733,6 +6740,7 @@ function ensureFtPipeCard() {
     <summary>
       <span class="ft-pipe-title">🔧 LoRA finetune</span>
       <span class="ft-badge"></span>
+      <span class="ft-eta muted"></span>
       <span class="spacer"></span>
       <span class="ft-pct muted"></span>
     </summary>
@@ -6760,6 +6768,7 @@ function renderFinetunePipelineCard(snap) {
   const card = ensureFtPipeCard();
   card.querySelector(".ft-badge").innerHTML = ftBadge(snap.status);
   card.querySelector(".ft-pct").textContent = (snap.pct != null ? snap.pct : 0) + "%";
+  card.querySelector(".ft-eta").textContent = snap.eta ? "ETA " + snap.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(snap);
   card.querySelector(".ft-pipe-fill").style.width = (snap.pct || 0) + "%";
   if (snap.job_id) {
@@ -6800,6 +6809,7 @@ function restoreFinetuneLiveCard() {
   const card = ensureFtPipeCard();
   card.querySelector(".ft-badge").innerHTML = ftBadge(state._ftSnapshot.status);
   card.querySelector(".ft-pct").textContent = (state._ftSnapshot.pct || 0) + "%";
+  card.querySelector(".ft-eta").textContent = state._ftSnapshot.eta ? "ETA " + state._ftSnapshot.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(state._ftSnapshot);
   card.querySelector(".ft-pipe-fill").style.width = (state._ftSnapshot.pct || 0) + "%";
   if (state._ftSnapshot.job_id) {

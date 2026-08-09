@@ -16,8 +16,39 @@ WORKSPACE_ENV = "FOX_DK_LORA_WORKSPACE"
 DEFAULT_WORKSPACE = "~/.fox/dk-lora"
 
 _METRIC_RE = re.compile(r"\[dk-metric\]\s*(\w+)=([^\s]+)")
-_TQDM_RE = re.compile(r"(\d+)/(\d+)\s+\[[0-9:]+<[0-9:]+")
+_TQDM_RE = re.compile(r"(\d+)/(\d+)\s+\[([0-9:]+)<([0-9:]+)")
 _TRAINER_METRIC_RE = re.compile(r"'(\w+)':\s*'?([^',}]+)'?")
+
+# tqdm "NNN/TTT [elapsed<remaining, X.XXs/it]" — remaining/rate feed the ETA.
+_TQDM_ETA_RE = re.compile(r"(\d+)/(\d+)\s+\[([0-9:]+)<([0-9:]+),\s*([0-9.]+)s/it")
+_PENDING_VERIFY_ETA = 15 * 60  # rough ft-validate budget when nothing known yet
+
+
+def _time_to_secs(txt: str) -> int | None:
+    """Parse tqdm's MM:SS / H:MM:SS / HH:MM:SS elapsed-or-remaining text."""
+    try:
+        parts = [int(x) for x in txt.split(":")]
+    except (ValueError, AttributeError):
+        return None
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+
+def fmt_eta(secs: int | None) -> str:
+    """Human ETA, e.g. 90 -> '1m 30s', 5326 -> '1h 28m'."""
+    if secs is None:
+        return ""
+    secs = max(0, int(secs))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60:02d}s"
+    return f"{secs // 3600}h {(secs % 3600) // 60:02d}m"
 
 # quai-lora pipeline stages, in order, as shown in the chat pipeline card.
 PIPELINE_STAGES = [
@@ -50,7 +81,8 @@ def read_json(path: Path) -> dict | None:
 def parse_log(path: Path, n_chars: int = 3000) -> dict:
     """Extract tail + last metrics/progress from a training log."""
     out: dict = {"log_tail": "", "metrics": [], "step": None, "total": None,
-                 "last_loss": None, "last_epoch": None}
+                 "last_loss": None, "last_epoch": None,
+                 "eta_secs": None, "rate": None}
     if not path.exists():
         return out
     try:
@@ -67,6 +99,14 @@ def parse_log(path: Path, n_chars: int = 3000) -> dict:
         if m:
             out["step"] = int(m.group(1))
             out["total"] = int(m.group(2))
+        e = _TQDM_ETA_RE.search(line)
+        if e:
+            # remaining = m.group(4); rate = m.group(5) seconds/it.
+            out["eta_secs"] = _time_to_secs(e.group(4))
+            try:
+                out["rate"] = float(e.group(5))
+            except (TypeError, ValueError):
+                out["rate"] = None
         if line.startswith("[dk-metric]"):
             metric_lines.append(dict(_METRIC_RE.findall(line)))
         elif line.startswith("{"):
@@ -110,6 +150,9 @@ def job_summary(raw: dict, parsed: dict | None = None) -> dict:
         "total": parsed.get("total"),
         "last_loss": parsed.get("last_loss"),
         "last_epoch": parsed.get("last_epoch"),
+        "eta_secs": parsed.get("eta_secs"),
+        "rate": parsed.get("rate"),
+        "eta": fmt_eta(parsed.get("eta_secs")),
         "metrics": parsed.get("metrics", []),
     }
 
@@ -206,11 +249,22 @@ def pipeline_snapshot() -> dict:
         if train["last_loss"] is not None:
             d += f" · loss {train['last_loss']}"
         stages.append(_stage_state(True, running=True, detail=d))
+        if train["total"] and train["step"] is not None:
+            # Carry the real step progress so the headline % tracks the log bar.
+            stages[-1]["pct"] = min(100, round(train["step"] / train["total"] * 100))
+            # Per-stage ETA straight from tqdm's remaining timer.
+            if train.get("eta_secs") is not None:
+                stages[-1]["eta_secs"] = train["eta_secs"]
+                stages[-1]["eta"] = f"~{fmt_eta(train['eta_secs'])} left"
+            if train.get("rate") is not None:
+                stages[-1]["rate"] = f"{train['rate']:.1f}s/it"
     elif train["status"] == "done":
         d = f"{train['id']}"
         if train["last_loss"] is not None:
             d += f" · final loss {train['last_loss']}"
         stages.append(_stage_state(True, detail=d))
+        stages[-1]["eta"] = "done"
+        stages[-1]["eta_secs"] = 0
     else:
         stages.append(_stage_state(True, failed=True, detail=f"{train['id']} · {train['status']}"))
     # 4. verify
@@ -219,17 +273,36 @@ def pipeline_snapshot() -> dict:
         st = last.get("status", "pending")
         if st in ("done", "completed"):
             stages.append(_stage_state(True, detail=f"{len(vruns)} verification run(s)"))
+            stages[-1]["eta"] = "done"
+            stages[-1]["eta_secs"] = 0
         elif st == "failed":
             stages.append(_stage_state(True, failed=True, detail="verification failed"))
         else:
             stages.append(_stage_state(True, running=True, detail="verification running"))
+            stages[-1]["eta_secs"] = _PENDING_VERIFY_ETA
+            stages[-1]["eta"] = f"~{fmt_eta(_PENDING_VERIFY_ETA)}"
     else:
         stages.append(_stage_state(False, detail="not run yet"))
+        # ft-validate hasn't run: only show an estimate once training is done.
+        stages[-1]["eta_secs"] = _PENDING_VERIFY_ETA if train and train["status"] == "done" else None
+        if stages[-1]["eta_secs"] is not None:
+            stages[-1]["eta"] = f"~{fmt_eta(_PENDING_VERIFY_ETA)}"
+
+    # Total ETA: running stage's tqdm remaining + any queued/estimated stages.
+    known = [s.get("eta_secs") for s in stages if s.get("eta_secs") is not None]
+    total_eta = sum(known) if known else None
 
     done = sum(1 for s in stages if s["state"] == "done")
     active = any(s["state"] == "running" for s in stages)
     failed = any(s["state"] == "failed" for s in stages)
-    pct = round((done / len(stages)) * 100)
+    # Overall progress: while a stage is running, the headline % tracks that
+    # stage's real progress (e.g. training step/total), so the finetune card
+    # matches the live log bar instead of just "2 of 4 stages done". When the
+    # pipeline is idle/complete, fall back to the fraction of finished stages.
+    if active:
+        pct = max((s["pct"] for s in stages if s["state"] == "running"), default=0)
+    else:
+        pct = round((done / len(stages)) * 100)
     if active:
         status = "running"
         message = f"{active and 'Training/verification in progress' or ''}".strip() or "pipeline active"
@@ -245,11 +318,17 @@ def pipeline_snapshot() -> dict:
     return {
         "workspace": str(ws),
         "stages": [{"id": PIPELINE_STAGES[i]["id"],
-                    "label": PIPELINE_STAGES[i]["label"], **stages[i]}
+                    "label": PIPELINE_STAGES[i]["label"],
+                    "eta": stages[i].get("eta", ""),
+                    "eta_secs": stages[i].get("eta_secs"),
+                    "rate": stages[i].get("rate"),
+                    **stages[i]}
                    for i in range(len(PIPELINE_STAGES))],
         "status": status,
         "message": message,
         "pct": pct,
+        "eta": fmt_eta(total_eta),
+        "eta_secs": total_eta,
         "job_id": train["id"] if train else None,
         "job_status": train["status"] if train else None,
     }

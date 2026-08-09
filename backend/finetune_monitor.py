@@ -165,6 +165,8 @@ class FinetuneMonitor:
                 detail.append(f"loss={job['last_loss']}")
             if job.get("last_epoch") is not None:
                 detail.append(f"epoch={job['last_epoch']}")
+            if job.get("eta"):
+                detail.append(f"eta={job['eta']}")
             suffix = f" · {' · '.join(detail)}" if detail else ""
             self._persist(
                 f"**Finetune · {head}**{suffix}\n\n"

@@ -1001,6 +1001,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .ft-stage-body { flex: 1 1 auto; min-width: 0; }
 .ft-label { font-size: 12px; }
 .ft-detail { font-size: 10.5px; }
+.ft-eta { font-size: 10.5px; color: var(--accent-2, #4d9fff); white-space: nowrap; }
+.ft-rate { font-size: 10.5px; color: var(--gold, #f0b429); white-space: nowrap; }
 .ft-pipe-bar { height: 5px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--border);
   overflow: hidden; margin-top: 8px; }
 .ft-pipe-fill { height: 100%; background: linear-gradient(90deg, var(--accent-2, #4d9fff), var(--accent));
