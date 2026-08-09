@@ -69,6 +69,8 @@ class ProjectRuntime:
         self.recover_campaigns()
         # Round-9: same for model benchmarks.
         self.recover_evals()
+        # Finetune chat monitor (started on first chat connect).
+        self._finetune_monitor: "FinetuneMonitor | None" = None
 
     # ---------------------------------------------------- event bus (round 6)
     def subscribe_events(self, fn) -> None:
@@ -278,6 +280,22 @@ class ProjectRuntime:
                                 "a server restart — use Run to continue.")
         except Exception:  # noqa: BLE001
             pass
+
+    # --------------------------------------------------- finetune chat monitor
+    def start_finetune_monitor(self) -> None:
+        """Ensure the finetune monitor task is running for this project. It
+        tails dk-lora job logs and broadcasts live debug lines + pipeline
+        snapshots to every subscribed chat window. Idempotent."""
+        if self._finetune_monitor is None:
+            from .finetune_monitor import FinetuneMonitor
+            self._finetune_monitor = FinetuneMonitor(self)
+        if not self._finetune_monitor.running:
+            self._finetune_monitor.start()
+
+    def stop_finetune_monitor(self) -> None:
+        if self._finetune_monitor is not None:
+            self._finetune_monitor.stop()
+            self._finetune_monitor = None
 
     def _on_kernel_event(self, event: str, payload: dict):
         if event not in ("busy", "idle", "output", "reset"):

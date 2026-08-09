@@ -276,6 +276,8 @@ function handleEvent(type, p) {
     case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p); break;
     case "workflow": renderWorkflow(p); loadCampaigns(); break;
+    case "finetune_pipeline": renderFinetunePipelineCard(p.pipeline || p); break;
+    case "finetune_log": appendFinetuneLog(p); break;
     case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); loadCampaigns(); break;
     case "error": onError(p.message); break;
   }
@@ -1781,6 +1783,8 @@ async function switchProject(name) {
   state.expDetail = {};
   state.expRanking = {};
   state.activeExperiment = null;
+  state._ftSnapshot = null;
+  state._ftLogLines = [];
   await refreshState();
   connect();
   startKernelPolling();
@@ -1789,10 +1793,11 @@ async function switchProject(name) {
 async function refreshState() {
   try {
     const r = await api(`/api/projects/${state.project}/state`);
-    state.artifacts = r.artifacts || [];
-    state.mgmtActivity = r.management_activity || null;
-    renderMessages(r.messages || []);
-    renderArtifacts();
+  state.artifacts = r.artifacts || [];
+  state.mgmtActivity = r.management_activity || null;
+  renderMessages(r.messages || []);
+  restoreFinetuneLiveCard();
+  renderArtifacts();
     renderKernel(r.variables, r.env);
     renderReview(state._lastFindings || [], state._lastSuggestions || []);
     renderGrants(r.grants || []);
@@ -2514,6 +2519,7 @@ function renderMessagesFlat(msgs, wrap) {
       maybeAttachContinueBtn(el);
       maybeAttachPipeline(el, m.meta && m.meta.tools, m.meta && m.meta.model,
                           m.meta && m.meta.experiment_id);
+      attachFinetuneHistory(el, m.meta && m.meta.finetune);
       tagMessageExperiment(el, m.meta && m.meta.experiment_id);
       const next = msgs[i + 1];
       if ((!next || next.role === "user") && turnUser) attachTurnArtifacts(turnUser, el.div);
@@ -2587,6 +2593,7 @@ function renderMessages(msgs) {
         maybeAttachContinueBtn(el);
         maybeAttachPipeline(el, m.meta && m.meta.tools, m.meta && m.meta.model,
                             m.meta && m.meta.experiment_id);
+        attachFinetuneHistory(el, m.meta && m.meta.finetune);
         tagMessageExperiment(el, m.meta && m.meta.experiment_id);
         // Re-attach figures produced during this turn to the final assistant
         // reply of the turn, so charts survive refreshState() re-renders.
@@ -6679,6 +6686,146 @@ async function loadFinetuneStatus() {
       finetunePollTimer = null;
     }
   } catch (e) { /* silent */ }
+}
+
+/* ---------- finetune live pipeline card + debug log in the chat ---------- */
+
+// Live snapshot + buffered log lines survive chat re-renders (refreshState).
+state._ftSnapshot = null;
+state._ftLogLines = [];
+
+const FT_STAGES_META = {
+  pending: { ico: "○", cls: "pending" },
+  running: { ico: "◔", cls: "running" },
+  done:    { ico: "✓", cls: "done" },
+  failed:  { ico: "✗", cls: "failed" },
+};
+
+function ftStageHtml(s) {
+  const meta = FT_STAGES_META[s.state] || FT_STAGES_META.pending;
+  return `<div class="ft-stage ${meta.cls}">
+    <span class="ft-ico">${meta.ico}</span>
+    <div class="ft-stage-body">
+      <div class="ft-label">${esc(s.label)}</div>
+      <div class="ft-detail muted">${esc(s.detail || meta.cls)}</div>
+    </div>
+  </div>`;
+}
+
+function ftStagesHtml(snap) {
+  return (snap.stages || []).map(ftStageHtml).join("");
+}
+
+function ftBadge(status) {
+  const cls = status === "running" ? "det" : status === "done" ? "ok"
+    : status === "failed" ? "danger" : "warn";
+  return `<span class="exp-badge ${cls}">${esc(status || "idle")}</span>`;
+}
+
+function ensureFtPipeCard() {
+  let card = $("ft-pipe-card");
+  if (card && document.body.contains(card)) return card;
+  card = document.createElement("details");
+  card.id = "ft-pipe-card";
+  card.className = "ft-pipe-card";
+  card.open = true;
+  card.innerHTML = `
+    <summary>
+      <span class="ft-pipe-title">🔧 LoRA finetune</span>
+      <span class="ft-badge"></span>
+      <span class="spacer"></span>
+      <span class="ft-pct muted"></span>
+    </summary>
+    <div class="ft-stages"></div>
+    <div class="ft-pipe-bar"><div class="ft-pipe-fill"></div></div>
+    <div class="ft-log-head">
+      <span class="ft-log-label">debug log</span>
+      <span class="ft-log-job muted"></span>
+      <span class="spacer"></span>
+      <button class="btn subtle small ft-log-clear" type="button">clear</button>
+    </div>
+    <pre class="ft-log"></pre>`;
+  card.querySelector(".ft-log-clear").addEventListener("click", (e) => {
+    e.stopPropagation();
+    state._ftLogLines = [];
+    card.querySelector(".ft-log").textContent = "";
+  });
+  $("messages").appendChild(card);
+  return card;
+}
+
+function renderFinetunePipelineCard(snap) {
+  if (!snap) return;
+  state._ftSnapshot = snap;
+  const card = ensureFtPipeCard();
+  card.querySelector(".ft-badge").innerHTML = ftBadge(snap.status);
+  card.querySelector(".ft-pct").textContent = (snap.pct != null ? snap.pct : 0) + "%";
+  card.querySelector(".ft-stages").innerHTML = ftStagesHtml(snap);
+  card.querySelector(".ft-pipe-fill").style.width = (snap.pct || 0) + "%";
+  if (snap.job_id) {
+    const job = card.querySelector(".ft-log-job");
+    job.textContent = snap.job_id + (snap.job_status ? " · " + snap.job_status : "");
+  }
+  if (snap.status === "idle" && !(snap.job_id)) {
+    card.querySelector("summary").title = snap.message || "no finetune activity";
+  }
+  scrollBottom();
+}
+
+function appendFinetuneLog(p) {
+  const lines = (p.lines || []).filter(Boolean);
+  if (!lines.length) return;
+  const card = ensureFtPipeCard();
+  const log = card.querySelector(".ft-log");
+  const job = p.job || {};
+  if (job.id) {
+    const j = card.querySelector(".ft-log-job");
+    let label = job.id;
+    if (job.step != null && job.total) label += ` · ${job.step}/${job.total}`;
+    if (job.last_loss != null) label += ` · loss ${job.last_loss}`;
+    j.textContent = label;
+    if (job.step != null && job.total) {
+      const fill = card.querySelector(".ft-pipe-fill");
+      fill.style.width = Math.min(100, Math.round(job.step / job.total * 100)) + "%";
+    }
+  }
+  state._ftLogLines = state._ftLogLines.concat(lines).slice(-600);
+  log.textContent = state._ftLogLines.join("\n");
+  log.scrollTop = log.scrollHeight;
+}
+
+// Re-attach the live pipeline card after a chat re-render (refreshState).
+function restoreFinetuneLiveCard() {
+  if (!state._ftSnapshot) return;
+  const card = ensureFtPipeCard();
+  card.querySelector(".ft-badge").innerHTML = ftBadge(state._ftSnapshot.status);
+  card.querySelector(".ft-pct").textContent = (state._ftSnapshot.pct || 0) + "%";
+  card.querySelector(".ft-stages").innerHTML = ftStagesHtml(state._ftSnapshot);
+  card.querySelector(".ft-pipe-fill").style.width = (state._ftSnapshot.pct || 0) + "%";
+  if (state._ftSnapshot.job_id) {
+    const job = card.querySelector(".ft-log-job");
+    job.textContent = state._ftSnapshot.job_id +
+      (state._ftSnapshot.job_status ? " · " + state._ftSnapshot.job_status : "");
+  }
+  const log = card.querySelector(".ft-log");
+  log.textContent = state._ftLogLines.join("\n");
+  log.scrollTop = log.scrollHeight;
+}
+
+// Attach a compact pipeline view to a persisted finetune history message.
+function attachFinetuneHistory(el, ft) {
+  if (!el || !el.div || !ft || !ft.pipeline) return;
+  if (el.div.querySelector(".ft-history")) return;
+  const snap = ft.pipeline;
+  const div = document.createElement("details");
+  div.className = "ft-history";
+  div.open = ft.kind === "progress" || ft.kind === "start";
+  const kind = ft.kind === "done" ? "done" : ft.kind === "failed" ? "failed"
+    : ft.kind === "start" ? "started" : "progress";
+  div.innerHTML = `<summary>${ftBadge(kind)} <span class="ft-history-msg">${esc(snap.message || "")}</span>
+      <span class="spacer"></span><span class="muted">${snap.pct != null ? snap.pct + "%" : ""}</span></summary>
+    <div class="ft-stages">${ftStagesHtml(snap)}</div>`;
+  el.div.appendChild(div);
 }
 
 $("finetune-status-refresh").addEventListener("click", loadFinetuneStatus);
