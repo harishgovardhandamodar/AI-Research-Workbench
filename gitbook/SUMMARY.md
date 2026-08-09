@@ -27,6 +27,7 @@
 * [Goal-first experimentation](features/goal-first-experimentation.md)
 * [The improve loop](features/improve-loop.md)
 * [Parameter sweeps](features/parameter-sweeps.md)
+* [Research advisor](features/research-advisor.md)
 * [Background campaigns](features/background-campaigns.md)
 * [Model benchmarks](features/model-benchmarks.md)
 * [Learnings & knowledge memory](features/learnings.md)

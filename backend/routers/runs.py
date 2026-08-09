@@ -385,6 +385,22 @@ async def link_run_to_experiment(name: str, eid: int, body: dict):
     return {"run": store.get_run(int(rid))}
 
 
+@router.get("/api/projects/{name}/experiments/{eid}/advisor")
+async def project_experiment_advisor(name: str, eid: int):
+    """Deterministic research advisor for one experiment: goal proposal +
+    alignment, missing elements, typed improvement suggestions, suggested
+    hyperparameters, data pipeline, model selection and finetune readiness."""
+    rt = get_runtime(name)
+    store = rt.store
+    if store.get_experiment(eid) is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    from ..advisor import experiment_advisor
+    try:
+        return experiment_advisor(store, eid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="experiment not found")
+
+
 @router.get("/api/projects/{name}/experiments/{eid}/ranking")
 async def project_experiment_ranking(name: str, eid: int,
                                      metric: str = "", limit: int = 50):

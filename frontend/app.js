@@ -1328,7 +1328,11 @@ function renderReview(findings, suggestions) {
       const action = (typeof s === "object" && s && s.action)
         ? s.action : "";
       const st = suggestionStatus(s);
-      d.innerHTML = `<span class="sev">→</span><span class="sug-body">${esc(title)}` +
+      const cat = (typeof s === "object" && s && s.category) ? s.category : "";
+      const cm = sugCatMeta(cat);
+      d.innerHTML = `<span class="sev">→</span><span class="sug-body">` +
+        (cat ? `<span class="sug-cat" title="${esc(cm.label)}">${cm.ico}</span>` : "") +
+        `${esc(title)}` +
         (action && action !== title ? `<span class="sug-action">${esc(action)}</span>` : "") +
         `</span>`;
       if (st.badge) {
@@ -3870,6 +3874,7 @@ async function openExpDetail(eid) {
   body.innerHTML = '<div class="exp-loading">Loading…</div>';
   const exp = await loadExpDetail(eid);
   body.innerHTML = renderExpDetailBody(eid, meta, exp);
+  loadExpAdvisor(eid);
   body.querySelectorAll(".expd-close").forEach((b) =>
     b.addEventListener("click", () => $("exp-detail-modal").classList.add("hidden")));
   body.querySelectorAll(".expd-improve").forEach((b) =>
@@ -3894,6 +3899,19 @@ async function openExpDetail(eid) {
         await loadExperiments();
         toast(fid ? "Experiment focused." : "Focus cleared.");
       } catch (e) { toast("Failed to set focus: " + e.message); }
+    }));
+  body.querySelectorAll(".advisor-setgoal").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const fid = Number(b.dataset.eid);
+      const proposed = (b.dataset.metric || "").trim();
+      if (!proposed) return;
+      try {
+        await api(`/api/projects/${state.project}/experiments/${fid}`, {
+          method: "PATCH", body: JSON.stringify({ goal_metric: proposed }),
+        });
+        await loadExperiments();
+        toast("Goal metric set to " + proposed + ".");
+      } catch (err) { toast("Failed to set goal: " + err.message); }
     }));
   $("exp-detail-modal").classList.remove("hidden");
 }
@@ -3921,7 +3939,8 @@ function renderExpDetailBody(eid, meta, exp) {
       <button class="btn subtle small expd-edit" data-eid="${eid}">✎ Edit</button>
       <button class="btn subtle small expd-focus" data-eid="${eid}">${state.focusExperiment === eid ? "☆ Unfocus" : "★ Focus"}</button>
       <button class="btn subtle small expd-close">Close</button>
-    </div>`;
+    </div>
+    <div class="advisor-host" data-eid="${eid}"><div class="muted">Loading advisor…</div></div>`;
   if (rank && (rank.rows || []).length) {
     h += `<div class="run-detail-sec">Leaderboard (${esc(rank.metric || "metric")})</div>` +
       `<table class="exp-rank-table"><thead><tr><th>#</th><th>run</th><th>${esc(rank.metric || "metric")}</th><th>Δ best</th></tr></thead><tbody>`;
@@ -3958,6 +3977,139 @@ function renderExpDetailBody(eid, meta, exp) {
   } else {
     h += `<div class="exp-empty">No runs yet — improve this experiment or run variants in chat.</div>`;
   }
+  return h;
+}
+
+// ---------- experiment advisor (round 28: goal proposal, gaps, next steps) --
+
+const SUG_CAT_META = {
+  hyperparameter: { ico: "🔧", label: "Hyperparameter" },
+  data: { ico: "🧬", label: "Data" },
+  model: { ico: "🧠", label: "Model" },
+  method: { ico: "🧪", label: "Method" },
+  finetune: { ico: "🎓", label: "Finetune" },
+  eval: { ico: "📊", label: "Eval" },
+  reproducibility: { ico: "🔒", label: "Reproducibility" },
+  other: { ico: "💡", label: "Other" },
+};
+
+function sugCatMeta(cat) {
+  return SUG_CAT_META[cat] || SUG_CAT_META.other;
+}
+
+async function loadExpAdvisor(eid) {
+  const host = $("exp-detail-body") && $("exp-detail-body").querySelector(`.advisor-host[data-eid="${eid}"]`);
+  if (!host || host.dataset.loaded) return;
+  host.dataset.loaded = "1";
+  try {
+    const a = await api(`/api/projects/${state.project}/experiments/${eid}/advisor`);
+    host.innerHTML = renderAdvisor(a, eid);
+  } catch (e) {
+    host.innerHTML = '<div class="muted">Advisor unavailable.</div>';
+  }
+}
+
+function renderAdvisor(a, eid) {
+  const g = a.goal || {};
+  const miss = a.missing || [];
+  const imp = a.improvements || {};
+  const hp = a.hyperparameters || {};
+  const data = a.data || {};
+  const model = a.model || {};
+  const ft = a.finetune || {};
+  let h = `<div class="advisor">`;
+  h += `<div class="advisor-head">🧭 Research advisor <span class="muted">· deterministic analysis of runs · configs · suggestions</span></div>`;
+
+  // Goal proposal + alignment.
+  h += `<div class="advisor-sec"><div class="advisor-sec-title">🎯 Goal</div>`;
+  if (g.metric) {
+    const dirn = g.higher_better ? "↑" : "↓";
+    h += `<div class="advisor-goal"><span class="advisor-goal-metric">${esc(g.metric)} ${dirn}</span>`;
+    h += g.target != null ? `<span class="muted">target ${_fmtNum(g.target)}</span>` : `<span class="advisor-badge warn">no target</span>`;
+    if (g.best != null) {
+      h += `<span class="muted">best ${_fmtNum(g.best)}</span>`;
+      if (g.reached) h += `<span class="sug-badge ok">✓ target reached</span>`;
+      else if (g.pct_target != null) h += `<span class="advisor-badge warn">${_fmtNum(g.pct_target)}% of target</span>`;
+    }
+    h += `</div>`;
+    if (g.target != null && g.best != null) {
+      const pct = Math.max(0, Math.min(100, g.pct_target || 0));
+      h += `<div class="advisor-progress"><div class="advisor-progress-fill" style="width:${pct}%"></div></div>`;
+    }
+    if (g.proposed) {
+      h += `<div class="advisor-tip">💡 No goal metric set — the data suggests <b>${esc(g.proposed)}</b> as your goal. <button class="btn subtle small advisor-setgoal" data-eid="${eid}" data-metric="${esc(g.proposed)}">Use as goal</button></div>`;
+    }
+  } else {
+    h += `<div class="advisor-tip">No goal metric yet — run a baseline or edit the experiment to set one.</div>`;
+  }
+  h += `</div>`;
+
+  // Missing elements checklist.
+  if (miss.length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🧩 Missing elements</div>`;
+    h += miss.map((m) => `<div class="advisor-check ${m.ok ? "ok" : "warn"}">${m.ok ? "✓" : "✗"} <b>${esc(m.label)}</b>${m.hint ? `<span class="muted"> — ${esc(m.hint)}</span>` : ""}</div>`).join("");
+    h += `</div>`;
+  }
+
+  // Areas of improvement: pending suggestions grouped by category.
+  const cats = Object.keys(imp.by_category || {}).sort();
+  if (cats.length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🔬 Areas of improvement</div>`;
+    for (const c of cats) {
+      const cm = sugCatMeta(c);
+      h += `<div class="advisor-cat"><span class="advisor-cat-ico">${cm.ico}</span><span class="advisor-cat-name">${esc(cm.label)}</span></div>`;
+      for (const s of imp.by_category[c]) {
+        h += `<div class="advisor-sug"><span class="sug-badge muted">${esc(s.status || "pending")}</span><span>${esc(s.title || s.action || s.prompt || "")}</span></div>`;
+      }
+    }
+    if (imp.no_gain_count) {
+      h += `<div class="advisor-tip warn-tip">⚠ ${imp.no_gain_count} suggestion(s) produced no gain — reviewed by the improve loop.</div>`;
+    }
+    h += `</div>`;
+  } else if ((imp.pending || []).length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🔬 Areas of improvement</div>`;
+    h += imp.pending.map((s) => `<div class="advisor-sug"><span>${esc(s.title || s.action || "")}</span></div>`).join("");
+    h += `</div>`;
+  }
+
+  // Suggested hyperparameters.
+  const cfgKeys = Object.keys(hp.best_config || {}).filter((k) => hp.best_config[k] != null && !["findings", "fresh"].includes(k));
+  if (cfgKeys.length || (hp.suggestions || []).length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🔧 Suggested hyperparameters</div>`;
+    if (cfgKeys.length) {
+      h += `<div class="advisor-tags">` + cfgKeys.map((k) => `<span class="run-tool-chip">${esc(k)}=${esc(String(hp.best_config[k]))}</span>`).join("") + `</div>`;
+    }
+    for (const s of (hp.suggestions || [])) {
+      h += `<div class="advisor-sug"><span class="sug-badge muted">hyperparameter</span><span>${esc(s.title || s.action || "")}</span></div>`;
+    }
+    h += `</div>`;
+  }
+
+  // Data pipeline.
+  if (data.datasets.length || data.tools.length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🧬 Data pipeline</div>`;
+    if (data.datasets.length) h += `<div class="advisor-tags">` + data.datasets.map((d) => `<span class="run-tool-chip">🧬 ${esc(d)}</span>`).join("") + `</div>`;
+    if (data.tools.length) h += `<div class="muted">tools: ${esc(data.tools.join(", "))}</div>`;
+    h += `</div>`;
+  }
+
+  // Model selection.
+  if (model.pinned || model.used.length) {
+    h += `<div class="advisor-sec"><div class="advisor-sec-title">🤖 Model selection</div>`;
+    if (model.pinned) h += `<div class="advisor-tags"><span class="run-tool-chip">📌 pinned: ${esc(model.pinned)}</span></div>`;
+    if (model.used.length) h += `<div class="muted">used: ${esc(model.used.join(", "))}</div>`;
+    h += `</div>`;
+  }
+
+  // Finetune readiness.
+  h += `<div class="advisor-sec"><div class="advisor-sec-title">🎓 Finetune setup</div>`;
+  h += `<div class="advisor-check ${ft.ready ? "ok" : "warn"}">${ft.ready ? "✓" : "✗"} <b>${ft.ready ? "Ready to finetune" : "Not ready yet"}</b></div>`;
+  for (const it of (ft.checklist || [])) {
+    h += `<div class="advisor-check ${it.ok ? "ok" : "warn"}">${it.ok ? "✓" : "✗"} ${esc(it.label)}</div>`;
+  }
+  h += `</div>`;
+
+  h += `</div>`;
   return h;
 }
 
@@ -4106,6 +4258,27 @@ async function renderExpContext() {
   }
   ctx.classList.remove("hidden");
   updateComposerCtx(exp, best);
+  // Round-28 advisor strip: quick health summary for the active experiment.
+  const av = $("ec-advisor");
+  if (av) {
+    const pendingSugs = (Object.values(state.suggestions || {})).filter((s) =>
+      s.experiment_id != null && String(s.experiment_id) === String(eid)
+      && (s.status === "pending" || s.status === "applied"));
+    const missingCount = (!exp.hypothesis ? 1 : 0) + (!exp.goal_metric ? 1 : 0)
+      + (exp.goal_metric && exp.goal_target == null ? 1 : 0) + (!exp.plan ? 1 : 0)
+      + (!exp.model ? 1 : 0);
+    const bits = [];
+    if (missingCount) bits.push(`🧩 ${missingCount} gap${missingCount > 1 ? "s" : ""}`);
+    if (pendingSugs.length) bits.push(`🔬 ${pendingSugs.length} next-step${pendingSugs.length > 1 ? "s" : ""}`);
+    if (best && exp.goal_metric) {
+      const pct = exp.goal_target != null ? Math.round(ecProgress(exp, best)) : null;
+      const reached = exp.goal_target != null && pct >= 100;
+      bits.push(reached ? `🎯 target reached` : (pct != null ? `🎯 ${pct}% of target` : `🎯 best ${_fmtNum(best.v)}`));
+    }
+    av.innerHTML = bits.length
+      ? `<button class="ec-advisor-btn" data-eid="${eid}" title="Open the research advisor">${bits.join(" · ")} →</button>`
+      : "";
+  }
   // Persisted last commit/push (survives page refresh).
   const mgmtEl = $("ec-mgmt-msg");
   if (mgmtEl) mgmtEl.innerHTML = mgmtActivityHtml(state.mgmtActivity);
@@ -4240,6 +4413,12 @@ $("ec-improve").addEventListener("click", () => {
 });
 $("ec-commit").addEventListener("click", () => ecManagementAction("commit"));
 $("ec-push").addEventListener("click", () => ecManagementAction("push"));
+$("ec-advisor").addEventListener("click", (e) => {
+  const btn = e.target.closest(".ec-advisor-btn");
+  if (!btn) return;
+  const eid = Number(btn.dataset.eid);
+  if (eid) openExpDetail(eid);
+});
 
 function renderRuns() {
   const el = $("runs-list");
@@ -4592,6 +4771,12 @@ function renderExpList() {
     if (e.plan) {
       planHtml = `<details class="exp-plan"><summary>Plan</summary><div class="exp-plan-body">${esc(e.plan)}</div></details>`;
     }
+    const pendingSugs = (Object.values(state.suggestions || {}))
+      .filter((s) => s.experiment_id != null && String(s.experiment_id) === String(e.id)
+        && (s.status === "pending" || s.status === "applied"));
+    const advisorHint = pendingSugs.length
+      ? `<span class="advisor-hint" title="Open details for the research advisor">🔬 ${pendingSugs.length} next-step${pendingSugs.length > 1 ? "s" : ""}</span>`
+      : "";
     const status = e.status || "active";
     const active = status === "active";
     const badgeCls = active ? "det" : (status === "completed" ? "ok" : "warn");
@@ -4614,6 +4799,7 @@ function renderExpList() {
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
       ${goalLine ? `<div class="exp-card-sum muted">${goalLine}</div>` : ""}
+      ${advisorHint ? `<div class="exp-card-row">${advisorHint}</div>` : ""}
       ${(series.length >= 2 || deltaBest != null || trend) ? `<div class="exp-card-row">${sparklineSvg(series, 110, 26, expColor(e.id))}${trendChipHtml(trend)}${deltaBestChip(deltaBest)}</div>` : ""}
       ${(best != null && target) ? `<div class="exp-goal-bar"><div class="exp-goal-fill ${reached ? "reached" : ""}" style="width:${pct}%"></div></div>` : ""}
       <div class="exp-card-detail hidden">

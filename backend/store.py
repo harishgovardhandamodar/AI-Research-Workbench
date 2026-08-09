@@ -111,6 +111,7 @@ class ProjectStore:
                 experiment_id INTEGER, source_run_id INTEGER, run_id INTEGER,
                 title TEXT, action TEXT, prompt TEXT,
                 status TEXT DEFAULT 'pending',
+                category TEXT,
                 baseline_value REAL, outcome_value REAL, delta REAL,
                 improved INTEGER, created_at REAL, applied_at REAL)"""
         )
@@ -234,6 +235,14 @@ class ProjectStore:
         # and compared across datasets (e.g. real vs synthetic).
         try:
             c.execute("ALTER TABLE runs ADD COLUMN dataset TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: round-28 — typed suggestions. A category tag
+        # (hyperparameter / data / model / method / finetune / eval /
+        # reproducibility / other) lets the advisor and UI group next-steps by
+        # what kind of change they propose.
+        try:
+            c.execute("ALTER TABLE suggestions ADD COLUMN category TEXT")
         except sqlite3.OperationalError:
             pass
         c.commit()
@@ -486,13 +495,15 @@ class ProjectStore:
             title = str(s.get("title") or "") if isinstance(s, dict) else ""
             action = str(s.get("action") or "") if isinstance(s, dict) else str(s)
             prompt = str(s.get("prompt") or "") if isinstance(s, dict) else str(s)
+            category = str(s.get("category") or "") if isinstance(s, dict) else ""
             if not title and not prompt:
                 continue
             cur = self._conn.execute(
                 "INSERT INTO suggestions (experiment_id, source_run_id, title,"
-                " action, prompt, status, created_at)"
-                " VALUES (?,?,?,?,?,'pending',?)",
-                (experiment_id, source_run_id, title, action, prompt, time.time()))
+                " action, prompt, status, category, created_at)"
+                " VALUES (?,?,?,?,?,'pending',?,?)",
+                (experiment_id, source_run_id, title, action, prompt,
+                 category or None, time.time()))
             ids.append(cur.lastrowid)
         self._conn.commit()
         return ids
@@ -563,7 +574,8 @@ class ProjectStore:
         return {"id": r["id"], "experiment_id": r["experiment_id"],
                 "source_run_id": r["source_run_id"], "run_id": r["run_id"],
                 "title": r["title"], "action": r["action"], "prompt": r["prompt"],
-                "status": r["status"], "baseline_value": r["baseline_value"],
+                "status": r["status"], "category": r["category"],
+                "baseline_value": r["baseline_value"],
                 "outcome_value": r["outcome_value"], "delta": r["delta"],
                 "improved": r["improved"], "created_at": r["created_at"],
                 "applied_at": r["applied_at"]}

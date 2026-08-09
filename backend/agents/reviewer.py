@@ -27,10 +27,21 @@ Then give up to 3 concrete, actionable next-step suggestions to improve the expe
 better hyperparameters, more data, a different method, a follow-up comparison, etc.
 Suggestions must be specific to what was actually run.
 
+Each suggestion must carry a `category` classifying what kind of change it is:
+- "hyperparameter": tune a model/algorithm parameter (learning rate, epochs, n_estimators, eps, k, …)
+- "data": acquire/clean/augment data, fix a missing column, handle imbalance, split properly
+- "model": try a different model/architecture or a follow-up comparison
+- "method": change the experimental method, evaluation protocol, or preprocessing approach
+- "finetune": finetune/pre-train a model on the project's data (setup or configuration)
+- "eval": add/improve evaluation, metrics, cross-validation, or a benchmark
+- "reproducibility": fix provenance, saves, seeds, or reproducibility issues
+- "other": anything that fits none of the above
+
 Reply with JSON only, an object:
 {"findings": [{"severity": "critical"|"warning"|"info", "message": "short description"}],
  "suggestions": [{"title": "short action title, e.g. 'Try eps=1.0'",
                   "action": "one-sentence description of the change to make",
+                  "category": "hyperparameter"|"data"|"model"|"method"|"finetune"|"eval"|"reproducibility"|"other",
                   "prompt": "A complete user prompt that, sent to the assistant, would
                              perform this suggested change and rerun. Start with a verb,
                              reference the experiment, and state the exact new
@@ -186,15 +197,56 @@ def _parse_review(text: str) -> dict:
     return {"findings": [], "suggestions": []}
 
 
-def _normalize_suggestion(raw) -> dict | None:
-    """Coerce a reviewer suggestion into a structured {title, action, prompt} form.
+SUGGESTION_CATEGORIES = (
+    "hyperparameter", "data", "model", "method", "finetune", "eval",
+    "reproducibility", "other",
+)
 
-    Accepts dict suggestions (title/action/prompt) as well as legacy plain strings.
+# Keyword hints used to classify a suggestion when the LLM didn't emit a clean
+# category (legacy reviews, malformed output, plain-string suggestions).
+_CATEGORY_HINTS = [
+    ("finetune", ("finetun", "fine-tun", "lora", "adapter", "pre-train", "pretrain")),
+    ("hyperparameter", ("learning rate", "lr=", "epoch", "n_estimators", "max_depth",
+                        "batch size", "dropout", "gamma", "eps=", "hyperparameter",
+                        "regularization", "weight decay", "criterion", "optimizer")),
+    ("eval", ("evaluate", "evaluation", "cross-validation", "cross validation",
+              "benchmark", "auc", "roc", "confusion", "metric", "test set", "holdout",
+              "f1", "precision", "recall")),
+    ("data", ("data", "dataset", "column", "imbalance", "augment", "clean",
+              "missing", "features", "synthetic", "more samples", "sample")),
+    ("model", ("model", "svm", "knn", "logistic", "random forest", "xgboost",
+               "neural", "transformer", "architecture", "baseline")),
+    ("method", ("method", "approach", "preprocess", "protocol", "pipeline",
+                "feature engineering", "transform")),
+    ("reproducibility", ("seed", "reproduc", "save", "artifact", "provenance",
+                         "commit", "snapshot")),
+]
+
+
+def suggest_category(title: str = "", action: str = "", prompt: str = "") -> str:
+    """Best-effort category for a suggestion: honour an explicit one, else match
+    keyword hints against the title/action/prompt text."""
+    text = " ".join([str(title or ""), str(action or ""), str(prompt or "")]).lower()
+    for cat, hints in _CATEGORY_HINTS:
+        if any(h in text for h in hints):
+            return cat
+    return "other"
+
+
+def _normalize_suggestion(raw) -> dict | None:
+    """Coerce a reviewer suggestion into a structured {title, action, prompt}
+    form with a category tag.
+
+    Accepts dict suggestions (title/action/prompt/category) as well as legacy
+    plain strings.
     """
     if isinstance(raw, dict):
         title = str(raw.get("title") or "").strip()
         action = str(raw.get("action") or "").strip()
         prompt = str(raw.get("prompt") or "").strip()
+        category = str(raw.get("category") or "").strip().lower()
+        if category not in SUGGESTION_CATEGORIES:
+            category = suggest_category(title, action, prompt)
         if not title and action:
             title = action[:80]
         if not action and prompt:
@@ -203,9 +255,10 @@ def _normalize_suggestion(raw) -> dict | None:
             prompt = action
         if title or prompt:
             return {"title": title or prompt[:80], "action": action,
-                    "prompt": prompt or action}
+                    "prompt": prompt or action, "category": category}
         return None
     if isinstance(raw, str) and raw.strip():
         text = raw.strip()
-        return {"title": text[:80], "action": text, "prompt": text}
+        return {"title": text[:80], "action": text, "prompt": text,
+                "category": suggest_category(text)}
     return None

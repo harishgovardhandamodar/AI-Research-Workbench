@@ -46,11 +46,18 @@ Runs list (no 50-run truncation):
 Each card shows: name (click → **detail modal**), status badge, ✓ reached, run
 count, goal + best, a **trend sparkline** of the goal metric across runs with
 **trend stats** (μ · σ · slope per run), a **Δ best** chip, and a progress bar.
+A 🔬 **next-steps** chip appears when the reviewer has pending suggestions.
 Actions: ★ focus, ✎ edit, status select, **🔁 Improve**, **⬇ export** (this
 experiment's runs as CSV), and **Details** (hypothesis, model pin, plan,
 learnings, leaderboard). Search + sort (recently active / best / name / runs).
 Experiments render in a **horizontal slider** (‹ › arrows, trackpad / scrollbar),
 so older experiments are always reachable — the "Show more" paging is gone.
+
+The detail modal opens with a 🧭 **Research advisor** panel: goal proposal &
+alignment, a missing-elements checklist, typed improvement suggestions, the best
+run's config (suggested hyperparameters), the data pipeline, model selection and
+a finetune-readiness checklist. See
+[Research advisor](../features/research-advisor.md).
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)
 
