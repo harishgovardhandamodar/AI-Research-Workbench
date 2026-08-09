@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from pathlib import Path
 
 from . import finetune_status as fs
 
@@ -61,6 +62,7 @@ class FinetuneMonitor:
         self._last_snapshot: dict | None = None
         self._persisted_step: dict[str, int] = {}   # job_id -> last persisted step
         self._persisted_terminal: set[str] = set()  # job_id whose end was persisted
+        self._persisted_verify: set[str] = set()    # verify run whose report was posted
         self._last_broadcast: dict[str, float] = {}  # per-job flood control
 
     # ------------------------------------------------------------------ life --
@@ -86,6 +88,7 @@ class FinetuneMonitor:
                 await self._tail_logs(active)
                 await self._maybe_broadcast_pipeline(jobs)
                 await self._persist_transitions(jobs)
+                await self._track_validation()
                 await asyncio.sleep(_TICK if active else _IDLE_TICK)
             except asyncio.CancelledError:
                 raise
@@ -135,6 +138,140 @@ class FinetuneMonitor:
             return
         self._last_snapshot = snap
         await self.rt.broadcast("finetune_pipeline", {"pipeline": snap})
+
+    # -------------------------------------------------------- verification --
+    # RAG verification (ft-validate) runs on the host and writes into the
+    # validate store. Mirror it into the chat (live progress + report) and the
+    # Experiments tab (a kind=verify run) so validation is fully visible.
+
+    async def _track_validation(self) -> None:
+        store_dir = fs.validate_store_dir()
+        if store_dir is None:
+            return
+        runs = fs.validate_runs()
+        if not runs:
+            return
+        last = runs[0]
+        rid = last["id"]
+        # Tail the validate run's log into the chat debug console.
+        await self._tail_validate_log(rid, store_dir)
+        # Persist a chat message + experiment run once it finishes.
+        if last["status"] in ("done", "completed", "failed"):
+            if rid not in self._persisted_verify:
+                await self._persist_verify(last)
+                self._persisted_verify.add(rid)
+                self._offsets.pop(f"v:{rid}", None)
+
+    async def _tail_validate_log(self, rid: str, store_dir: Path) -> None:
+        log = store_dir / "runs" / f"{rid}.log"
+        if not log.exists():
+            return
+        try:
+            size = log.stat().st_size
+            offset = self._offsets.get(f"v:{rid}", 0)
+            if size < offset:
+                offset = 0
+            if size <= offset:
+                return
+            with open(log, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(offset)
+                block = f.read(size - offset)
+            self._offsets[f"v:{rid}"] = size
+        except OSError:
+            return
+        lines = [l for l in _split_lines(block)
+                 if l and not l.startswith("[stage-worker]")]
+        if not lines:
+            return
+        if len(lines) > _BURST_MAX:
+            lines = lines[-_BURST_MAX:]
+        await self.rt.broadcast("finetune_log", {
+            "job": {"id": f"v:{rid}", "kind": "validation"},
+            "lines": lines})
+
+    async def _persist_verify(self, run: dict) -> None:
+        """Record the RAG verification run in the Experiments tab + post the
+        report to chat (assistant message + finetune_report broadcast)."""
+        rid = run["id"]
+        status = "done" if run["status"] in ("done", "completed") else "failed"
+        prog = run.get("progress") or {}
+        base = (run.get("aggregate") or {}).get("base", {})
+        adapter = (run.get("aggregate") or {}).get("adapter", {})
+        metrics = {}
+        for k in ("faithfulness", "accuracy", "hallucination", "retention"):
+            a = (adapter.get(k) or {}).get("mean")
+            b = (base.get(k) or {}).get("mean")
+            if a is not None:
+                metrics[k] = round(float(a), 4)
+                if b is not None:
+                    metrics[f"{k}_delta"] = round(float(a) - float(b), 4)
+        if prog.get("total"):
+            metrics["questions"] = int(prog["total"])
+
+        # Experiments tab: create/update a kind=verify run on the experiment.
+        try:
+            store = self.rt.store
+            exp_id = self._finetune_experiment_id()
+            config = {
+                "run_id": rid,
+                "eval_set_id": run.get("eval_set_id"),
+                "base_model": run.get("base_model"),
+                "adapter_path": run.get("adapter_path"),
+                "status": status,
+                "report": run.get("report") or "",
+                "report_path": run.get("report_path") or "",
+            }
+            existing = store.find_finetune_run(f"verify:{rid}")
+            if existing:
+                store.set_run_metrics(existing, metrics, config=config,
+                                      status=status)
+            else:
+                store.add_run(
+                    prompt=("RAG verification — base vs adapter on "
+                            + str(run.get("eval_set_id") or "?")),
+                    reply=(f"Verification `{rid}` · {status}" + (
+                        " · " + " · ".join(f"{k}={v:+.3f}" for k, v in metrics.items())
+                        if metrics else "")),
+                    status=status, started_at=run.get("created_at") or time.time(),
+                    finished_at=run.get("updated_at") or time.time(),
+                    metrics=metrics, experiment_id=exp_id, config=config,
+                    label=f"dk-lora:verify:{rid}", kind="verify",
+                    model=run.get("base_model") or None,
+                    dataset="rag-eval")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Chat: an assistant message with the report + a broadcast for live UI.
+        head = "Verification complete" if status == "done" else "Verification failed"
+        lines = [f"**Finetune · {head}** — RAG base vs adapter"]
+        if status == "done" and run.get("report"):
+            lines.append(run["report"])
+        else:
+            if run.get("error"):
+                lines.append(f"- Error: {run['error']}")
+        self._persist("\n".join(lines), {"kind": status,
+                                         "job_id": f"verify:{rid}",
+                                         "pipeline": fs.pipeline_snapshot()})
+        try:
+            await self.rt.broadcast("finetune_report", {
+                "run_id": rid, "status": status, "metrics": metrics,
+                "report": run.get("report") or "",
+                "pipeline": fs.pipeline_snapshot()})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _finetune_experiment_id(self) -> int | None:
+        """The experiment the finetune/verify runs attach to (created by the
+        training record; fall back to the most recent active experiment)."""
+        try:
+            exps = self.rt.store.list_experiments()
+            if not exps:
+                return None
+            fin = [e for e in exps if "finetune" in (e.get("name") or "").lower()
+                   or "lora" in (e.get("name") or "").lower()]
+            return (fin or exps)[-1]["id"]
+        except Exception:  # noqa: BLE001
+            return None
 
     # -------------------------------------------------------------- history --
     async def _persist_transitions(self, jobs: list[dict]) -> None:

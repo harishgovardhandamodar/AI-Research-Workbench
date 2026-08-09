@@ -278,6 +278,7 @@ function handleEvent(type, p) {
     case "workflow": renderWorkflow(p); loadCampaigns(); break;
     case "finetune_pipeline": renderFinetunePipelineCard(p.pipeline || p); break;
     case "finetune_log": appendFinetuneLog(p); break;
+    case "finetune_report": renderFinetuneReport(p); break;
     case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); loadCampaigns(); break;
     case "error": onError(p.message); break;
   }
@@ -3160,6 +3161,7 @@ async function loadExperiments() {
   if (typeof sweepExpOptions === "function") sweepExpOptions();
   if (typeof finetuneExpOptions === "function") finetuneExpOptions();
   if (typeof loadFinetuneStatus === "function") loadFinetuneStatus();
+  if (typeof loadFinetuneValidate === "function") loadFinetuneValidate();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -6694,6 +6696,10 @@ function renderFinetuneJobs(data) {
         ${j.output_dir ? `<div class="finetune-job-row muted">${esc(j.output_dir)}</div>` : ""}
         ${pct != null ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${pct}%"></div></div>` : ""}
         ${ftMetricChartBlock(j.series, j.id)}
+        <div class="finetune-job-actions">
+          ${j.status === "done" ? `<button class="btn subtle small ft-panel-stage" data-stage="4" data-job="${esc(j.id)}">▶ stage 4 · verify</button>` : ""}
+          ${j.status === "failed" ? `<button class="btn subtle small ft-panel-stage" data-stage="3" data-job="${esc(j.id)}">↻ stage 3 · train</button>` : ""}
+        </div>
         <pre class="finetune-log hidden"></pre>
       </div>
     </div>`;
@@ -6711,6 +6717,12 @@ function renderFinetuneJobs(data) {
         } catch (e) { body.textContent = "failed to load log: " + e.message; }
       }
     }));
+  host.querySelectorAll(".ft-panel-stage").forEach((b) =>
+    b.addEventListener("click", () => {
+      ftTriggerStage(Number(b.dataset.stage), b.dataset.job || "", `stage ${b.dataset.stage}`);
+      b.disabled = true;
+      b.textContent = "⏳ queued…";
+    }));
 }
 
 async function loadFinetuneStatus() {
@@ -6725,6 +6737,81 @@ async function loadFinetuneStatus() {
       finetunePollTimer = null;
     }
   } catch (e) { /* silent */ }
+}
+
+/* ---------- RAG verification (ft-validate) in the Experiments tab ---------- */
+
+let validatePollTimer = null;
+
+function renderFinetuneValidate(data) {
+  const host = $("finetune-validate");
+  if (!host) return;
+  const runs = (data && data.runs) || [];
+  if (!runs.length) {
+    host.innerHTML = '<div class="exp-empty">No RAG verification runs yet — run stage 4 (verify) after training.</div>';
+    return;
+  }
+  let h = "";
+  for (const r of runs) {
+    const prog = r.progress || {};
+    const deltas = r.deltas || {};
+    const agg = r.aggregate || {};
+    const adapter = agg.adapter || {};
+    const base = agg.base || {};
+    const deltaBits = Object.keys(deltas).length
+      ? Object.keys(deltas).map((k) => `${k} <b style="color:${deltas[k] >= 0 ? "var(--ok, #4cd08d)" : "var(--danger, #e06c6c)"}">${deltas[k] >= 0 ? "+" : ""}${deltas[k].toFixed(3)}</b>`).join(" · ")
+      : "";
+    const metricBits = ["faithfulness", "accuracy", "hallucination", "retention"]
+      .filter((k) => (adapter[k] || {}).mean != null)
+      .map((k) => `${k} <b>${Number(adapter[k].mean).toFixed(3)}</b> (base ${Number((base[k] || {}).mean ?? 0).toFixed(3)})`).join(" · ");
+    h += `<div class="finetune-job" data-id="${esc(r.id)}">
+      <div class="finetune-job-head">
+        <span class="finetune-job-id">${esc(r.id)}</span>
+        ${finetuneStatusBadge(r.status)}
+        <span class="spacer"></span>
+        <span class="muted">${esc(String(r.eval_set_id || "—"))} · ${esc(String(r.base_model || "—"))}</span>
+        <button class="btn subtle small finetune-verify-toggle" data-id="${esc(r.id)}" title="toggle report">▾</button>
+      </div>
+      <div class="finetune-job-body">
+        <div class="finetune-job-row">
+          ${prog.total ? `<span class="muted">progress</span> <b>${prog.answered}/${prog.total}</b> (${prog.pct}%)` : ""}
+          ${metricBits ? `<span class="muted" style="margin-left:12px">metrics</span> ${metricBits}` : ""}
+          ${deltaBits ? `<span class="muted" style="margin-left:12px">Δ adapter−base</span> ${deltaBits}` : ""}
+        </div>
+        ${prog.total ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${prog.pct}%"></div></div>` : ""}
+        <pre class="finetune-log hidden"></pre>
+      </div>
+    </div>`;
+  }
+  host.innerHTML = h;
+  host.querySelectorAll(".finetune-verify-toggle").forEach((b) =>
+    b.addEventListener("click", () => {
+      const body = b.closest(".finetune-job").querySelector(".finetune-log");
+      const show = body.classList.toggle("hidden");
+      b.textContent = show ? "▾" : "▸";
+      if (show && !body.textContent.trim()) {
+        const run = runs.find((x) => x.id === b.dataset.id) || {};
+        body.textContent = run.report || "(no report text yet)";
+      }
+    }));
+  const running = runs.some((r) => r.status === "running");
+  if (running && !validatePollTimer) {
+    validatePollTimer = setInterval(loadFinetuneValidate, 5000);
+  } else if (!running && validatePollTimer) {
+    clearInterval(validatePollTimer);
+    validatePollTimer = null;
+  }
+}
+
+async function loadFinetuneValidate() {
+  try {
+    const data = await api("/api/finetune/validate");
+    renderFinetuneValidate(data);
+  } catch (e) { /* silent */ }
+}
+
+if ($("finetune-validate-refresh")) {
+  $("finetune-validate-refresh").addEventListener("click", loadFinetuneValidate);
 }
 
 /* ---------- finetune live pipeline card + debug log in the chat ---------- */
@@ -6797,6 +6884,45 @@ function ensureFtPipeCard() {
   return card;
 }
 
+// Trigger a pipeline stage from the chat window (queued via WS).
+function ftTriggerStage(stage, jobId, label) {
+  send({ type: "finetune_stage", stage, job_id: jobId || "", label: label || "" });
+  toast(`Stage ${stage} queued — the host worker will run it.`);
+}
+
+// Action buttons shown on the pipeline card when a stage is actionable.
+function ftStageActions(snap) {
+  const stages = snap.stages || [];
+  const byId = {};
+  stages.forEach((s) => { byId[s.id] = s; });
+  const btns = [];
+  const jobId = snap.job_id || "";
+  if (byId.ingest && byId.ingest.state === "pending")
+    btns.push(`<button class="btn subtle small ft-stage-btn" data-stage="1" data-job="${esc(jobId)}">▶ stage 1 · ingest</button>`);
+  if (byId.dataset && byId.dataset.state === "pending")
+    btns.push(`<button class="btn subtle small ft-stage-btn" data-stage="2" data-job="${esc(jobId)}">▶ stage 2 · dataset</button>`);
+  const trainState = byId.train && byId.train.state;
+  if (trainState === "pending" || trainState === "failed")
+    btns.push(`<button class="btn subtle small ft-stage-btn" data-stage="3" data-job="${esc(jobId)}">▶ stage 3 · train</button>`);
+  const verify = byId.verify;
+  if (verify && (verify.state === "pending" || verify.state === "failed") && trainState === "done")
+    btns.push(`<button class="btn subtle small ft-stage-btn" data-stage="4" data-job="${esc(jobId)}">▶ stage 4 · verify</button>`);
+  if (!btns.length) return "";
+  return `<div class="ft-actions">${btns.join("")}</div>`;
+}
+
+function wireFtStageButtons(card) {
+  card.querySelectorAll(".ft-stage-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      const stage = Number(b.dataset.stage);
+      const job = b.dataset.job || "";
+      ftTriggerStage(stage, job, `stage ${stage}`);
+      b.disabled = true;
+      b.textContent = "⏳ queued…";
+    });
+  });
+}
+
 function renderFinetunePipelineCard(snap) {
   if (!snap) return;
   state._ftSnapshot = snap;
@@ -6806,6 +6932,10 @@ function renderFinetunePipelineCard(snap) {
   card.querySelector(".ft-eta").textContent = snap.eta ? "ETA " + snap.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(snap);
   card.querySelector(".ft-pipe-fill").style.width = (snap.pct || 0) + "%";
+  const actions = card.querySelector(".ft-actions");
+  if (actions) actions.outerHTML = ftStageActions(snap);
+  else card.querySelector(".ft-stages").insertAdjacentHTML("afterend", ftStageActions(snap));
+  wireFtStageButtons(card);
   if (snap.job_id) {
     const job = card.querySelector(".ft-log-job");
     job.textContent = snap.job_id + (snap.job_status ? " · " + snap.job_status : "");
@@ -6838,6 +6968,24 @@ function appendFinetuneLog(p) {
   log.scrollTop = log.scrollHeight;
 }
 
+// A verification run finished: show the RAG report as an assistant chat
+// message and refresh the Experiments finetune panel.
+function renderFinetuneReport(p) {
+  const head = p.status === "done" ? "RAG verification complete" : "RAG verification failed";
+  const meta = [
+    p.run_id ? "run `" + p.run_id + "`" : "",
+    p.metrics && p.metrics.questions ? p.metrics.questions + " questions" : "",
+  ].filter(Boolean).join(" · ");
+  const el = ensureAssistant(["finetune", "report"], null);
+  el.body.innerHTML = renderMarkdown(
+    `**🔎 ${head}**${meta ? " — " + meta : ""}\n\n` + (p.report || "*(no report text)*"));
+  enhanceCodeBlocks(el.body);
+  curAssistantEl = null;
+  state.streaming = false;
+  loadFinetuneStatus();
+  scrollBottom();
+}
+
 // Re-attach the live pipeline card after a chat re-render (refreshState).
 function restoreFinetuneLiveCard() {
   if (!state._ftSnapshot) return;
@@ -6847,6 +6995,10 @@ function restoreFinetuneLiveCard() {
   card.querySelector(".ft-eta").textContent = state._ftSnapshot.eta ? "ETA " + state._ftSnapshot.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(state._ftSnapshot);
   card.querySelector(".ft-pipe-fill").style.width = (state._ftSnapshot.pct || 0) + "%";
+  const actions = card.querySelector(".ft-actions");
+  if (actions) actions.outerHTML = ftStageActions(state._ftSnapshot);
+  else card.querySelector(".ft-stages").insertAdjacentHTML("afterend", ftStageActions(state._ftSnapshot));
+  wireFtStageButtons(card);
   if (state._ftSnapshot.job_id) {
     const job = card.querySelector(".ft-log-job");
     job.textContent = state._ftSnapshot.job_id +

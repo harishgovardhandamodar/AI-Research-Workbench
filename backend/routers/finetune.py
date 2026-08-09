@@ -56,3 +56,31 @@ async def finetune_set_workspace(body: dict):
     cfg["workspace"] = ws
     save_config(CONFIG)
     return {"workspace": str(Path(ws).expanduser().resolve())}
+
+
+@router.post("/api/finetune/stage")
+async def finetune_stage_trigger(body: dict):
+    """Queue a pipeline stage (1-4) for the host worker to run."""
+    try:
+        stage = int(body.get("stage"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "stage (int 1-4) required"}, status_code=400)
+    try:
+        req = fs.submit_stage(stage, job_id=body.get("job_id") or "",
+                              options=body.get("options") or {},
+                              label=body.get("label") or "")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"request_id": req["request_id"], "stage": stage, "status": "queued"}
+
+
+@router.get("/api/finetune/stage")
+async def finetune_stage_list():
+    """Stage requests + their results (for the chat/panel to reflect them)."""
+    return {"requests": fs.list_stage_requests()}
+
+
+@router.get("/api/finetune/validate")
+async def finetune_validate_list():
+    """RAG verification runs with progress + deltas + report text."""
+    return {"runs": fs.validate_runs()}

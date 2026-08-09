@@ -110,6 +110,7 @@
         <button class="exp-nav-chip" data-target="campaigns">Campaigns</button>
         <button class="exp-nav-chip" data-target="sweeps">Sweep & Finetune</button>
         <button class="exp-nav-chip" data-target="finetune">Finetune status</button>
+        <button class="exp-nav-chip" data-target="finetune-validate">RAG verification</button>
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
         <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
@@ -297,6 +298,15 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
           </div>
         </div>
         <div id="finetune-jobs" class="finetune-jobs"></div>
+      </section>
+
+      <section id="exp-section-finetune-validate" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">RAG verification <span class="muted exp-hint">ft-validate · base vs adapter</span></span>
+          <span class="spacer"></span>
+          <button id="finetune-validate-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div id="finetune-validate" class="finetune-jobs"></div>
       </section>
 
       <section id="exp-section-benchmarks" class="exp-section">
