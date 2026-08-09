@@ -11,3 +11,6 @@ examples/privacy/reports/
 examples/obfuscation/obfuscation_report.md
 docker-compose.override.yml
 .env
+
+# Unsloth runtime compiled cache
+unsloth_compiled_cache/

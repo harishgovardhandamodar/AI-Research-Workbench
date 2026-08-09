@@ -42,14 +42,85 @@ def _log(msg: str) -> None:
 def _emit_metric(name: str, value: Any) -> None:
     _log(f"[dk-metric] {{name}}={{value}}")
 
+# Triton JIT-compiles kernels at runtime and needs Python.h. If the venv's
+# sysconfig include path has no Python.h (e.g. pythonX.Y-dev not installed),
+# honor DK_LORA_PYTHON_INCLUDE pointing at a directory that does.
+import sysconfig as _sc
+if not os.path.exists(os.path.join(_sc.get_paths().get("include", ""), "Python.h")):
+    _cand = os.environ.get("DK_LORA_PYTHON_INCLUDE")
+    if _cand and os.path.exists(os.path.join(_cand, "Python.h")):
+        _orig_sc_paths = _sc.get_paths
+        def _patched_sc_paths(*a, **kw):
+            d = _orig_sc_paths(*a, **kw)
+            d["include"] = _cand
+            return d
+        _sc.get_paths = _patched_sc_paths
+        _log("python include patched: " + _cand)
+
+def _fmt_text(ex) -> str:
+    if ex.get("text"):
+        return ex["text"]
+    return (
+        "### Instruction: " + ex.get("instruction", "") + "\\n\\n"
+        "### Input: " + ex.get("input", "") + "\\n\\n"
+        "### Response: " + ex.get("output", "")
+    )
+
+def _train_model(cfg, model, tokenizer):
+    """Common LM training body: pre-tokenize, then plain Trainer.
+
+    Uses DataCollatorForLanguageModeling + a transformers Trainer instead of
+    SFTTrainer's formatting_func/max_seq_length, which TRL removed in 0.24.
+    """
+    from datasets import load_dataset
+    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    ds = load_dataset("json", data_files=DATASET, split="train")
+
+    def tok_fn(batch):
+        rows = [dict(zip(batch, vals)) for vals in zip(*batch.values())]
+        return tokenizer(
+            [_fmt_text(ex) for ex in rows],
+            truncation=True, padding="max_length",
+            max_length=cfg["max_seq_length"], return_tensors=None,
+        )
+    ds = ds.map(tok_fn, batched=True, remove_columns=ds.column_names)
+
+    args = TrainingArguments(
+        per_device_train_batch_size=cfg["per_device_batch_size"],
+        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+        warmup_ratio=cfg["warmup_ratio"],
+        num_train_epochs=cfg["epochs"],
+        learning_rate=cfg["learning_rate"],
+        # bf16 for bf16-native (none/4bit) runs; fp16 fallback for 8bit loads.
+        bf16=cfg["quant"] != "8bit",
+        fp16=cfg["quant"] == "8bit",
+        logging_steps=1,
+        weight_decay=cfg["weight_decay"],
+        lr_scheduler_type=cfg["lr_scheduler_type"],
+        seed=cfg["random_state"],
+        output_dir=OUT_DIR,
+        report_to=[],
+        save_strategy="no",
+    )
+    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    trainer = Trainer(
+        model=model, args=args, train_dataset=ds, data_collator=collator,
+    )
+    _log("starting training")
+    trainer.train()
+    _log("saving adapter")
+    model.save_pretrained(os.path.join(OUT_DIR, "adapter"))
+    tokenizer.save_pretrained(os.path.join(OUT_DIR, "adapter"))
+    _log("TRAINING_DONE")
+
 '''
 
 UNSLOTH_SCRIPT = '''
 def run_unsloth(cfg):
     from unsloth import FastLanguageModel
-    from datasets import load_dataset
-    from trl import SFTTrainer
-    from transformers import TrainingArguments
 
     _log("loading base model (unsloth): " + cfg["base_model"])
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -73,51 +144,14 @@ def run_unsloth(cfg):
         use_gradient_checkpointing=("unsloth" if cfg["use_gradient_checkpointing"] else False),
         random_state=cfg["random_state"],
     )
-
-    ds = load_dataset("json", data_files=DATASET, split="train")
-    def fmt(ex):
-        if ex.get("text"):
-            return ex["text"]
-        return (
-            "### Instruction: " + ex.get("instruction", "") + "\\n\\n"
-            "### Input: " + ex.get("input", "") + "\\n\\n"
-            "### Response: " + ex.get("output", "")
-        )
-    args = TrainingArguments(
-        per_device_train_batch_size=cfg["per_device_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        warmup_ratio=cfg["warmup_ratio"],
-        num_train_epochs=cfg["epochs"],
-        learning_rate=cfg["learning_rate"],
-        fp16=not cfg["quant"] == "4bit",
-        bf16=cfg["quant"] == "4bit",
-        logging_steps=1,
-        weight_decay=cfg["weight_decay"],
-        lr_scheduler_type=cfg["lr_scheduler_type"],
-        seed=cfg["random_state"],
-        output_dir=OUT_DIR,
-        report_to=[],
-        save_strategy="no",
-    )
-    trainer = SFTTrainer(
-        model=model, tokenizer=tokenizer, args=args, train_dataset=ds,
-        formatting_func=fmt, max_seq_length=cfg["max_seq_length"],
-    )
-    _log("starting training")
-    trainer.train()
-    _log("saving adapter")
-    model.save_pretrained(os.path.join(OUT_DIR, "adapter"))
-    tokenizer.save_pretrained(os.path.join(OUT_DIR, "adapter"))
-    _log("TRAINING_DONE")
+    _train_model(cfg, model, tokenizer)
 
 '''
 
 TRL_SCRIPT = '''
 def run_trl(cfg):
-    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import LoraConfig, get_peft_model
-    from trl import SFTTrainer
-    from datasets import load_dataset
 
     _log("loading base model (transformers): " + cfg["base_model"])
     kwargs = {"device_map": "auto"}
@@ -136,29 +170,7 @@ def run_trl(cfg):
         r=cfg["lora_r"], lora_alpha=cfg["lora_alpha"],
         target_modules=cfg["target_modules"], lora_dropout=cfg["lora_dropout"],
         bias=cfg["bias"], task_type="CAUSAL_LM"))
-    ds = load_dataset("json", data_files=DATASET, split="train")
-    def fmt(ex):
-        if ex.get("text"):
-            return ex["text"]
-        return (f"### Instruction: {{ex.get('instruction','')}}\\n\\n"
-                f"### Input: {{ex.get('input','')}}\\n\\n"
-                f"### Response: {{ex.get('output','')}}")
-    args = TrainingArguments(
-        per_device_train_batch_size=cfg["per_device_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        warmup_ratio=cfg["warmup_ratio"], num_train_epochs=cfg["epochs"],
-        learning_rate=cfg["learning_rate"], weight_decay=cfg["weight_decay"],
-        output_dir=OUT_DIR, report_to=[], seed=cfg["random_state"],
-        save_strategy="no", logging_steps=1)
-    trainer = SFTTrainer(model=model, tokenizer=tokenizer, args=args,
-                         train_dataset=ds, formatting_func=fmt,
-                         max_seq_length=cfg["max_seq_length"])
-    _log("starting training")
-    trainer.train()
-    _log("saving adapter")
-    model.save_pretrained(os.path.join(OUT_DIR, "adapter"))
-    tokenizer.save_pretrained(os.path.join(OUT_DIR, "adapter"))
-    _log("TRAINING_DONE")
+    _train_model(cfg, model, tokenizer)
 
 '''
 
@@ -266,7 +278,7 @@ def _write_dataset_jsonl(ws: Workspace, ds: Dataset, dataset_id: str) -> str:
 
 def _python() -> str:
     """Best python for the training subprocess (prefer the current venv)."""
-    return shutil.which("python") or sys.executable
+    return sys.executable or shutil.which("python")
 
 
 def _sanity_check(cfg: TrainingConfig) -> str:
