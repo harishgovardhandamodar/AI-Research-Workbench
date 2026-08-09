@@ -1526,6 +1526,15 @@ function onTurnDone() {
   setTurnControls(false);
   $("input").focus();
   refreshState();
+  // Round-30: refresh the open experiment's plan after a turn (a plan step may
+  // have just completed and linked its run).
+  const body = $("exp-detail-body");
+  const ph = body && body.querySelector(".plan-host");
+  if (ph && !$("exp-detail-modal").classList.contains("hidden")) {
+    const eid = ph.dataset.eid;
+    ph.dataset.loaded = "";
+    loadExpPlan(eid);
+  }
 }
 
 function onError(msg) {
@@ -3879,6 +3888,7 @@ async function openExpDetail(eid) {
   const exp = await loadExpDetail(eid);
   body.innerHTML = renderExpDetailBody(eid, meta, exp);
   loadExpAdvisor(eid);
+  loadExpPlan(eid);
   body.querySelectorAll(".expd-close").forEach((b) =>
     b.addEventListener("click", () => $("exp-detail-modal").classList.add("hidden")));
   body.querySelectorAll(".expd-improve").forEach((b) =>
@@ -3944,6 +3954,7 @@ function renderExpDetailBody(eid, meta, exp) {
       <button class="btn subtle small expd-focus" data-eid="${eid}">${state.focusExperiment === eid ? "☆ Unfocus" : "★ Focus"}</button>
       <button class="btn subtle small expd-close">Close</button>
     </div>
+    <div class="plan-host" data-eid="${eid}"><div class="muted">Loading plan…</div></div>
     <div class="advisor-host" data-eid="${eid}"><div class="muted">Loading advisor…</div></div>`;
   if (rank && (rank.rows || []).length) {
     h += `<div class="run-detail-sec">Leaderboard (${esc(rank.metric || "metric")})</div>` +
@@ -4000,6 +4011,105 @@ const SUG_CAT_META = {
 function sugCatMeta(cat) {
   return SUG_CAT_META[cat] || SUG_CAT_META.other;
 }
+
+async function loadExpPlan(eid) {
+  const host = $("exp-detail-body") && $("exp-detail-body").querySelector(`.plan-host[data-eid="${eid}"]`);
+  if (!host || host.dataset.loaded) return;
+  host.dataset.loaded = "1";
+  try {
+    const r = await api(`/api/projects/${state.project}/experiments/${eid}/plan`);
+    host.innerHTML = renderExpPlan(r, eid);
+    wireExpPlan(host, eid);
+  } catch (e) {
+    host.innerHTML = '<div class="muted">Plan unavailable.</div>';
+  }
+}
+
+function renderExpPlan(r, eid) {
+  const steps = r.steps || [];
+  const done = r.done || 0;
+  const total = r.total || 0;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  let h = `<div class="plan-panel">`;
+  h += `<div class="plan-head"><span class="plan-title">🗺 Plan</span>`;
+  if (total) h += `<span class="muted">${done}/${total} steps · ${pct}%</span>`;
+  h += `<span class="spacer"></span>`;
+  h += `<button class="btn subtle small plan-propose" data-eid="${eid}" title="Ask the LLM to propose a goal + plan for this experiment">✨ Propose</button>`;
+  h += `<button class="btn subtle small plan-regen" data-eid="${eid}" title="Re-split the experiment's plan text into steps">↻ Split</button>`;
+  h += `</div>`;
+  if (total) {
+    h += `<div class="advisor-progress"><div class="advisor-progress-fill" style="width:${pct}%"></div></div>`;
+  }
+  if (!steps.length) {
+    h += `<div class="plan-empty">No plan steps yet — <b>Split</b> the experiment's plan text into steps, or <b>Propose</b> a goal + plan.</div>`;
+    h += `</div>`;
+    return h;
+  }
+  h += `<ol class="plan-steps">`;
+  for (const s of steps) {
+    const st = s.status || "planned";
+    const badge = st === "done" ? '<span class="sug-badge ok">✓ done</span>'
+      : st === "running" ? '<span class="sug-badge det">▶ running</span>'
+      : '<span class="sug-badge muted">planned</span>';
+    const ico = s.kind === "sweep" ? "🌊" : s.kind === "finetune" ? "🎓"
+      : s.kind === "eval" ? "📊" : s.kind === "data" ? "🧬" : "🧠";
+    h += `<li class="plan-step ${st}">
+      <span class="plan-step-ico">${ico}</span>
+      <div class="plan-step-body">
+        <span class="plan-step-title">${esc(s.title)}</span>
+        ${s.hypothesis ? `<span class="plan-step-sub muted">${esc(s.hypothesis)}</span>` : ""}
+        ${s.plan ? `<span class="plan-step-sub muted">${esc(s.plan)}</span>` : ""}
+        ${s.run_id != null ? `<span class="muted">· run #${s.run_id}</span>` : ""}
+      </div>
+      ${badge}
+      <button class="btn subtle small plan-run" data-eid="${eid}" data-sid="${s.id}" data-title="${esc(s.title)}" title="Run this step as a chat turn" ${st === "running" ? "disabled" : ""}>▶</button>
+    </li>`;
+  }
+  h += `</ol>`;
+  h += `</div>`;
+  return h;
+}
+
+function wireExpPlan(host, eid) {
+  host.querySelectorAll(".plan-propose").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.textContent = "Proposing…";
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/${eid}/plan`, {
+          method: "POST", body: JSON.stringify({ propose: true }),
+        });
+        host.dataset.loaded = "";
+        loadExpPlan(eid);
+        toast("Plan proposed — steps saved.");
+      } catch (e) { toast("Propose failed: " + e.message); }
+      b.disabled = false;
+      b.textContent = "✨ Propose";
+    }));
+  host.querySelectorAll(".plan-regen").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        await api(`/api/projects/${state.project}/experiments/${eid}/plan`, {
+          method: "POST", body: JSON.stringify({}),
+        });
+        host.dataset.loaded = "";
+        loadExpPlan(eid);
+        toast("Plan re-split from the experiment's plan text.");
+      } catch (e) { toast("Split failed: " + e.message); }
+    }));
+  host.querySelectorAll(".plan-run").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const eidN = Number(b.dataset.eid);
+      const sid = Number(b.dataset.sid);
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/${eidN}/plan/steps/${sid}/run`);
+        b.disabled = true;
+        sendChat(r.prompt, "plan_step", { experiment_id: eidN, step_id: sid });
+        setTimeout(() => { b.disabled = false; }, 2500);
+      } catch (e) { toast("Failed to start step: " + e.message); }
+    }));
+}
+
 
 async function loadExpAdvisor(eid) {
   const host = $("exp-detail-body") && $("exp-detail-body").querySelector(`.advisor-host[data-eid="${eid}"]`);

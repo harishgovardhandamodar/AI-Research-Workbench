@@ -8,7 +8,7 @@ everything is computed from stored records, so the panel is always available.
 ## Where to find it
 
 - **Experiment detail modal** (open any experiment card): a 🧭 **Research
-  advisor** panel at the top.
+  advisor** panel at the top, right below the 🗺 **Plan** panel.
 - **Chat**: the experiment-controls strip shows a compact health line (gaps,
   next-steps, % of target) that opens the full advisor.
 

@@ -1134,6 +1134,7 @@ async def ws_chat(ws: WebSocket, name: str):
                 # Explicit intents (from the UI quick-action buttons) route
                 # deterministically instead of relying on keyword matching.
                 workflow_mode = compare_mode = fresh_mode = god_mode = False
+                plan_step_id = None
                 if intent == "privacy_workflow":
                     workflow_mode = True
                     user_tags = ["privacy workflow"]
@@ -1184,6 +1185,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     # carries base_model/dataset/hyperparameters; records a
                     # kind=finetune run with a generated training script.
                     user_tags = ["finetune"]
+                elif intent == "plan_step":
+                    # Round-30: run one experiment plan step as a chat turn.
+                    user_tags = ["experiment", "plan step"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1277,6 +1281,27 @@ async def ws_chat(ws: WebSocket, name: str):
                         rt, coordinator, emit, text, intent, experiment_id,
                         msg_extra, user_tags)
                     return
+                if intent == "plan_step":
+                    # Round-30: run one experiment plan step. Resolve the
+                    # experiment + step, bind the coordinator, mark the step
+                    # running, then fall through to the normal agent turn so the
+                    # pipeline captures it. After the turn the step is resolved
+                    # to done with the produced run.
+                    sid = (msg_extra.get("step_id") if msg_extra else None)
+                    if not str(sid).isdigit():
+                        await emit("error", {"message": "No plan step specified."})
+                        await emit("done", {})
+                        return
+                    step = rt.store.get_experiment_step(int(sid))
+                    if step is None:
+                        await emit("error", {"message": "Plan step not found."})
+                        await emit("done", {})
+                        return
+                    eid = step.get("experiment_id")
+                    coordinator.ctx.experiment_id = str(eid)
+                    coordinator.ctx.parent_run_id = _best_run_id(rt.store, eid)
+                    rt.store.update_experiment_step(int(sid), status="running")
+                    plan_step_id = int(sid)
                 if intent == "retry_stage":
                     await emit("status", {"message": "Retrying workflow stage…"})
                     snap = rt.workflow.snapshot()
@@ -1315,7 +1340,9 @@ async def ws_chat(ws: WebSocket, name: str):
                 # focused experiment, so runs/timelines attach automatically
                 # instead of drifting to a stale experiment id.
                 exp_meta = {}
-                if not str(coordinator.ctx.experiment_id).isdigit():
+                if plan_step_id:
+                    exp_meta["experiment_id"] = int(coordinator.ctx.experiment_id)
+                elif not str(coordinator.ctx.experiment_id).isdigit():
                     fid = rt.store.get_setting("focus_experiment_id", "")
                     if str(fid).isdigit() and rt.store.get_experiment(int(fid)) is not None:
                         coordinator.ctx.experiment_id = fid
@@ -1500,6 +1527,16 @@ async def ws_chat(ws: WebSocket, name: str):
                     except Exception:  # noqa: BLE001
                         pass
                 await emit("status", {"message": ""})
+                # Round-30: resolve a plan step that was run this turn — mark it
+                # done and link the run it produced.
+                if plan_step_id:
+                    try:
+                        rid = runs_now[-1]["id"] if runs_now else None
+                        rt.store.update_experiment_step(
+                            plan_step_id, status="done", run_id=rid,
+                            note="Step completed by the agent.")
+                    except Exception:  # noqa: BLE001
+                        pass
                 # Background deviation scan: flag novel tools, sequences,
                 # data classes and network destinations after the turn.
                 try:
@@ -1511,13 +1548,28 @@ async def ws_chat(ws: WebSocket, name: str):
                 await emit("status", {"message": ""})
                 await emit("notice",
                            {"message": "Turn stopped by user — progress so far was saved."})
+                if plan_step_id:
+                    try:
+                        rt.store.update_experiment_step(plan_step_id, status="planned")
+                    except Exception:  # noqa: BLE001
+                        pass
                 await emit("done", {})
             except LLMError as e:
                 await emit("status", {"message": ""})
                 await emit("error", {"message": str(e)})
+                if plan_step_id:
+                    try:
+                        rt.store.update_experiment_step(plan_step_id, status="planned")
+                    except Exception:  # noqa: BLE001
+                        pass
             except Exception as e:  # noqa: BLE001
                 await emit("status", {"message": ""})
                 await emit("error", {"message": f"{type(e).__name__}: {e}"})
+                if plan_step_id:
+                    try:
+                        rt.store.update_experiment_step(plan_step_id, status="planned")
+                    except Exception:  # noqa: BLE001
+                        pass
 
     incoming: asyncio.Queue = asyncio.Queue()
 

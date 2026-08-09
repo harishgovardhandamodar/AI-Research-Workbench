@@ -387,6 +387,14 @@ class ProjectRuntime:
         if plan:
             lines.append(f"- Plan: {plan}")
         try:
+            steps = self.store.list_experiment_steps(pick.get("id"))
+            if steps:
+                lines.append("- Plan steps: " + "; ".join(
+                    f"{i + 1}. {s['title']} ({s['status']})"
+                    for i, s in enumerate(steps)))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             runs = self.store.list_runs(limit=2000)
             exp_runs = [r for r in runs if r.get("experiment_id") == pick.get("id")]
             if exp_runs:

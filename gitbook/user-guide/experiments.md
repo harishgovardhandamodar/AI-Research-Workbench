@@ -53,10 +53,12 @@ learnings, leaderboard). Search + sort (recently active / best / name / runs).
 Experiments render in a **horizontal slider** (‹ › arrows, trackpad / scrollbar),
 so older experiments are always reachable — the "Show more" paging is gone.
 
-The detail modal opens with a 🧭 **Research advisor** panel: goal proposal &
-alignment, a missing-elements checklist, typed improvement suggestions, the best
-run's config (suggested hyperparameters), the data pipeline, model selection and
-a finetune-readiness checklist. See
+The detail modal opens with a 🗺 **Plan** panel (ordered runnable steps with
+per-step ▶ run, ✨ propose, ↻ split — see
+[Experiment planning](../features/experiment-planning.md)) and a 🧭 **Research
+advisor** panel: goal proposal & alignment, a missing-elements checklist, typed
+improvement suggestions, the best run's config (suggested hyperparameters), the
+data pipeline, model selection and a finetune-readiness checklist. See
 [Research advisor](../features/research-advisor.md).
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)

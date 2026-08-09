@@ -133,6 +133,15 @@ class ProjectStore:
                 note TEXT, created_at REAL, updated_at REAL)"""
         )
         c.execute(
+            """CREATE TABLE IF NOT EXISTS experiment_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experiment_id INTEGER, step_order INTEGER,
+                title TEXT, kind TEXT, hypothesis TEXT, plan TEXT,
+                status TEXT DEFAULT 'planned',
+                run_id INTEGER, note TEXT,
+                created_at REAL, updated_at REAL)"""
+        )
+        c.execute(
             """CREATE TABLE IF NOT EXISTS learnings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 experiment_id INTEGER, run_id INTEGER,
@@ -679,6 +688,71 @@ class ProjectStore:
                 "best_run_id": r["best_run_id"], "status": r["status"] or "planned",
                 "note": r["note"] or "", "created_at": r["created_at"],
                 "updated_at": r["updated_at"]}
+
+    # -- experiment plan steps (round 30: plan → runnable steps) --------------
+    def add_experiment_step(self, experiment_id: int, step_order: int, title: str,
+                            kind: str = "experiment", hypothesis: str = "",
+                            plan: str = "") -> int:
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO experiment_steps (experiment_id, step_order, title, kind,"
+            " hypothesis, plan, status, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?, 'planned', ?, ?)",
+            (experiment_id, step_order, title, kind, hypothesis, plan, now, now))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def replace_experiment_plan(self, experiment_id: int,
+                                steps: list[dict]) -> list[int]:
+        """Replace an experiment's plan with a new ordered step list."""
+        self._conn.execute(
+            "DELETE FROM experiment_steps WHERE experiment_id=?", (experiment_id,))
+        ids = []
+        for i, s in enumerate(steps, 1):
+            ids.append(self.add_experiment_step(
+                experiment_id, i, str(s.get("title") or f"Step {i}"),
+                str(s.get("kind") or "experiment").strip() or "experiment",
+                str(s.get("hypothesis") or "").strip(),
+                str(s.get("plan") or "").strip()))
+        self._conn.commit()
+        return ids
+
+    def list_experiment_steps(self, experiment_id: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM experiment_steps WHERE experiment_id=?"
+            " ORDER BY step_order", (experiment_id,)).fetchall()
+        return [self._row_experiment_step(r) for r in rows]
+
+    def get_experiment_step(self, sid: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM experiment_steps WHERE id=?", (sid,)).fetchone()
+        return self._row_experiment_step(row) if row else None
+
+    def update_experiment_step(self, sid: int, *, status: str | None = None,
+                               run_id: int | None = None,
+                               note: str | None = None) -> None:
+        sets, vals = [], []
+        if status is not None:
+            sets.append("status=?"); vals.append(status)
+        if run_id is not None:
+            sets.append("run_id=?"); vals.append(run_id)
+        if note is not None:
+            sets.append("note=?"); vals.append(note)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        self._conn.execute(
+            f"UPDATE experiment_steps SET {', '.join(sets)} WHERE id=?", (*vals, sid))
+        self._conn.commit()
+
+    def _row_experiment_step(self, r) -> dict:
+        return {"id": r["id"], "experiment_id": r["experiment_id"],
+                "step_order": r["step_order"], "title": r["title"] or "",
+                "kind": r["kind"] or "experiment", "hypothesis": r["hypothesis"] or "",
+                "plan": r["plan"] or "", "status": r["status"] or "planned",
+                "run_id": r["run_id"], "note": r["note"] or "",
+                "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
     # -- learnings (compounding knowledge: measured outcomes worth remembering) --
     def add_learning(self, experiment_id: int | None, run_id: int | None,

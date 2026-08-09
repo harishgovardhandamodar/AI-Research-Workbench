@@ -25,6 +25,7 @@
 ## Features
 
 * [Goal-first experimentation](features/goal-first-experimentation.md)
+* [Experiment planning](features/experiment-planning.md)
 * [The improve loop](features/improve-loop.md)
 * [Parameter sweeps](features/parameter-sweeps.md)
 * [Finetune launch](features/finetune-launch.md)

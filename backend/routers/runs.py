@@ -385,6 +385,88 @@ async def link_run_to_experiment(name: str, eid: int, body: dict):
     return {"run": store.get_run(int(rid))}
 
 
+@router.get("/api/projects/{name}/experiments/{eid}/plan")
+async def project_experiment_plan(name: str, eid: int):
+    """An experiment's ordered plan steps with their run progress."""
+    rt = get_runtime(name)
+    store = rt.store
+    if store.get_experiment(eid) is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    steps = store.list_experiment_steps(eid)
+    done = sum(1 for s in steps if s["status"] == "done")
+    return {"steps": steps, "total": len(steps), "done": done}
+
+
+@router.post("/api/projects/{name}/experiments/{eid}/plan")
+async def project_experiment_plan_set(name: str, eid: int, body: dict):
+    """Set an experiment's plan: from explicit `steps`, by splitting `plan_text`,
+    or — when `propose=true` — by asking the LLM for a goal + plan."""
+    rt = get_runtime(name)
+    store = rt.store
+    exp = store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    from ..planning import plan_to_steps, propose_plan
+
+    steps = body.get("steps")
+    if steps:
+        ids = store.replace_experiment_plan(eid, steps)
+        return {"steps": store.list_experiment_steps(eid), "ids": ids}
+    if body.get("propose"):
+        proposal = await propose_plan(store, rt.llm, exp)
+        if proposal.get("steps"):
+            store.replace_experiment_plan(eid, proposal["steps"])
+            if proposal.get("goal_metric"):
+                # Keep the experiment's objective in sync with the proposal.
+                try:
+                    store.update_experiment(
+                        eid, goal_metric=proposal["goal_metric"],
+                        goal_target=proposal.get("goal_target"),
+                        higher_better=proposal.get("higher_better", True),
+                        plan=proposal.get("plan_text") or exp.get("plan"))
+                except Exception:  # noqa: BLE001
+                    pass
+        return {"steps": store.list_experiment_steps(eid),
+                "proposal": proposal}
+    plan_text = (body.get("plan_text") or exp.get("plan") or "").strip()
+    steps = plan_to_steps(plan_text, exp.get("hypothesis") or "")
+    if not steps:
+        from ..planning import default_plan
+        steps = default_plan(exp)
+    ids = store.replace_experiment_plan(eid, steps)
+    return {"steps": store.list_experiment_steps(eid), "ids": ids}
+
+
+@router.patch("/api/projects/{name}/experiments/{eid}/plan/steps/{sid}")
+async def project_experiment_plan_step_patch(name: str, eid: int, sid: int,
+                                             body: dict):
+    """Mark a plan step running / done (optionally linked to a run)."""
+    rt = get_runtime(name)
+    store = rt.store
+    if store.get_experiment_step(sid) is None:
+        raise HTTPException(status_code=404, detail="plan step not found")
+    store.update_experiment_step(
+        sid, status=body.get("status") or None,
+        run_id=body.get("run_id") if body.get("run_id") is not None else None,
+        note=body.get("note") or None)
+    return {"steps": store.list_experiment_steps(eid)}
+
+
+@router.post("/api/projects/{name}/experiments/{eid}/plan/steps/{sid}/run")
+async def project_experiment_plan_step_run(name: str, eid: int, sid: int):
+    """Return the ready-to-send prompt that runs one plan step (the UI sends it
+    as a chat turn so the pipeline captures the launch)."""
+    rt = get_runtime(name)
+    store = rt.store
+    exp = store.get_experiment(eid)
+    step = store.get_experiment_step(sid)
+    if exp is None or step is None:
+        raise HTTPException(status_code=404, detail="experiment or plan step not found")
+    from ..planning import step_prompt
+    step["step_order"] = step["step_order"]
+    return {"prompt": step_prompt(exp, step), "step": step}
+
+
 @router.get("/api/projects/{name}/experiments/{eid}/advisor")
 async def project_experiment_advisor(name: str, eid: int):
     """Deterministic research advisor for one experiment: goal proposal +
