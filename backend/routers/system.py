@@ -321,20 +321,58 @@ async def call_tool(server: str, tool: str, body: dict):
     args = body.get("args") or {}
     project = (body.get("project") or "").strip()
     track = bool(body.get("experiment"))
+    background = bool(body.get("background"))
     rt = get_runtime(project) if project else None
     permissions = rt.permissions if rt else None
     started = _time.time()
+    if background and rt is None:
+        return JSONResponse({"error": "background calls need a project"},
+                            status_code=400)
+
+    def _record_run(status: str, reply: str, metrics=None,
+                    experiment_id=None) -> int:
+        return rt.store.add_run(
+            prompt=json.dumps(args)[:500] or f"{server}__{tool}",
+            reply=(reply or "")[:8000], status=status,
+            started_at=started, finished_at=_time.time(),
+            metrics=metrics or None, kind="mcp_tool",
+            label=f"{server}__{tool}", model="MCP",
+            experiment_id=experiment_id)
+
+    # Background mode: record a running run now, complete it in a task so the
+    # caller (chat/panel) doesn't block on long tools.
+    if background:
+        experiment_id = _tool_experiment(rt, server, tool) if track else None
+        run_id = _record_run("running", "")
+        import asyncio as _asyncio
+
+        async def _bg():
+            try:
+                btext, berr = await call_mcp_tool(
+                    mcp_registry, server, tool, args,
+                    permissions=permissions)
+                bmetrics = _parse_flat_metrics(btext) if track else None
+                rt.store.update_run(
+                    run_id, status="done" if not berr else "error",
+                    reply=btext[:8000], metrics=bmetrics or None,
+                    experiment_id=experiment_id,
+                    finished_at=_time.time())
+            except Exception as e:  # noqa: BLE001
+                rt.store.update_run(
+                    run_id, status="error",
+                    reply=f"{type(e).__name__}: {e}"[:4000],
+                    finished_at=_time.time())
+        _asyncio.get_running_loop().create_task(_bg())
+        return {"ok": True, "run_id": run_id, "background": True,
+                "tool": f"{server}__{tool}", "experiment_id": experiment_id}
+
     text, is_err = await call_mcp_tool(
         mcp_registry, server, tool, args, permissions=permissions)
     if is_err:
         denied = text.startswith("[denied]")
         if rt and not denied:
             try:
-                rt.store.add_run(
-                    prompt=json.dumps(args)[:500] or f"{server}__{tool}",
-                    reply=text[:4000], status="error",
-                    started_at=started, finished_at=_time.time(),
-                    kind="mcp_tool", label=f"{server}__{tool}", model="MCP")
+                _record_run("error", text)
             except Exception:  # noqa: BLE001
                 pass
         status_code = 403 if denied else 502
@@ -348,13 +386,7 @@ async def call_tool(server: str, tool: str, body: dict):
         if track:
             experiment_id = _tool_experiment(rt, server, tool)
         try:
-            run_id = rt.store.add_run(
-                prompt=json.dumps(args)[:500] or f"{server}__{tool}",
-                reply=text[:4000], status="done",
-                started_at=started, finished_at=_time.time(),
-                metrics=metrics or None, kind="mcp_tool",
-                label=f"{server}__{tool}", model="MCP",
-                experiment_id=experiment_id)
+            run_id = _record_run("done", text, metrics, experiment_id)
         except Exception:  # noqa: BLE001
             pass
     return {"ok": True, "text": text, "tool": f"{server}__{tool}",

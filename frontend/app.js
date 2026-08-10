@@ -3716,6 +3716,10 @@ function renderExpKpis() {
     ["Learnings", learnings, "experiments"],
     ["Open goals", openGoals, "goals"],
   );
+  const mcpSum = state.mcpSummary || null;
+  if (mcpSum && mcpSum.total > 0) {
+    kpis.push(["MCP", `${mcpSum.ok}/${mcpSum.total}`, "mcp"]);
+  }
   el.innerHTML = kpis.map(([l, n, target]) =>
     `<div class="exp-kpi${target === "running" ? " running" : ""}" data-target="${target}" title="Jump to ${target}"><div class="kpi-n">${n}</div><div class="kpi-l">${esc(l)}</div></div>`).join("");
   el.querySelectorAll(".exp-kpi").forEach((k) =>
@@ -7307,7 +7311,10 @@ async function loadMcpServers() {
       api("/api/mcp"),
       api(`/api/projects/${state.project}/mcp/grants`).catch(() => ({ grants: {} })),
     ]);
-    renderMcpServers(r.servers || [], (g && g.grants) || {});
+    const servers = r.servers || [];
+    state.mcpSummary = { ok: servers.filter((s) => s.ok).length, total: servers.length };
+    renderMcpServers(servers, (g && g.grants) || {});
+    if (typeof renderExpKpis === "function") renderExpKpis();
   } catch (e) { /* silent */ }
 }
 
@@ -7338,7 +7345,8 @@ function renderMcpServers(servers, grants) {
                 <button class="btn subtle small mcp-call" data-server="${esc(s.name)}" data-tool="${esc(t.name)}" title="Invoke this tool">▶ Call</button>
                 <div class="mcp-call-box hidden" data-call-box>
                   <input class="exp-search mcp-call-args" placeholder="${esc(ph)}" />
-                  <label class="check mcp-track"><input type="checkbox" class="mcp-track-box" /> 📈 track as experiment</label>
+                  <label class="check mcp-track"><input type="checkbox" class="mcp-track-box" /> 📈 exp</label>
+                  <label class="check mcp-track"><input type="checkbox" class="mcp-bg-box" /> ⏳ background</label>
                   <button class="btn subtle small mcp-call-go">Run</button>
                   <pre class="mcp-call-result"></pre>
                 </div>
@@ -7375,11 +7383,17 @@ function renderMcpServers(servers, grants) {
       const tool = row.querySelector(".mcp-call").dataset.tool;
       const raw = row.querySelector(".mcp-call-args").value.trim();
       const track = !!(row.querySelector(".mcp-track-box") || {}).checked;
+      const bg = !!(row.querySelector(".mcp-bg-box") || {}).checked;
       const out = row.querySelector(".mcp-call-result");
       out.textContent = "…";
       out.classList.remove("mcp-err");
       try {
-        const r = await callMcpTool(server, tool, raw, track);
+        const r = await callMcpTool(server, tool, raw, track, bg);
+        if (r && r.background) {
+          out.textContent = `⏳ started as run #${r.run_id} — watching…`;
+          pollMcpRun(r.run_id, out);
+          return;
+        }
         if (r && r.ok === false && r.permission_key) {
           out.textContent = r.text + "\n\nThis tool needs permission. Allow it?";
           out.classList.add("mcp-err");
@@ -7427,7 +7441,7 @@ function renderMcpServers(servers, grants) {
     }));
 }
 
-async function callMcpTool(server, tool, rawArgs, track) {
+async function callMcpTool(server, tool, rawArgs, track, background) {
   let args = {};
   const s = (rawArgs || "").trim();
   if (s) {
@@ -7436,10 +7450,27 @@ async function callMcpTool(server, tool, rawArgs, track) {
   }
   try {
     return await api(`/api/mcp/tools/${encodeURIComponent(server)}/${encodeURIComponent(tool)}`, {
-      method: "POST", body: JSON.stringify({ args, project: state.project, experiment: !!track }) });
+      method: "POST", body: JSON.stringify({ args, project: state.project, experiment: !!track, background: !!background }) });
   } catch (e) {
     throw e;
   }
+}
+
+function pollMcpRun(runId, out, tries) {
+  tries = tries || 0;
+  if (tries > 120) { out.textContent += "\n(timeout waiting for result)"; return; }
+  api(`/api/projects/${state.project}/runs/${runId}`).then((r) => {
+    const run = r.run || {};
+    if (run.status === "running") {
+      out.textContent = `⏳ run #${runId} in progress… (${tries})`;
+      setTimeout(() => pollMcpRun(runId, out, tries + 1), 2000);
+    } else {
+      out.textContent = `✅ run #${runId} — ${run.status}\n\n${(run.reply || "(no output)").slice(0, 4000)}`;
+      if (run.status !== "done") out.classList.add("mcp-err");
+    }
+  }).catch(() => {
+    out.textContent += "\n(could not poll run)";
+  });
 }
 
 async function toggleMcpServer(name, enabled) {

@@ -502,6 +502,26 @@ class ProjectStore:
             (json.dumps(review), rid))
         self._conn.commit()
 
+    def update_run(self, rid: int, **fields) -> bool:
+        """Update safe fields on a run row. Returns True when a row changed."""
+        allowed = {"status", "reply", "metrics", "label", "model",
+                   "experiment_id", "finished_at", "dataset"}
+        sets, vals = [], []
+        for k in allowed:
+            if k in fields:
+                v = fields[k]
+                if k == "metrics":
+                    v = json.dumps(v) if v is not None else None
+                sets.append(f"{k}=?")
+                vals.append(v)
+        if not sets:
+            return False
+        vals.append(rid)
+        cur = self._conn.execute(
+            f"UPDATE runs SET {', '.join(sets)} WHERE id=?", vals)
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def set_run_dataset(self, rid: int, dataset: str) -> bool:
         """Tag which dataset a run used (grouping for dataset-comparison)."""
         cur = self._conn.execute(

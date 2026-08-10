@@ -386,10 +386,44 @@ class TestMcpProjectIntegration(unittest.IsolatedAsyncioTestCase):
                    if e["id"] == res["experiment_id"])
         self.assertTrue(exp["name"].startswith("🧪 s__wr"))
         # without the track flag, no experiment is created
-        runs_before = len(self.rt.store.list_runs())
         with mock.patch.object(self.sysmod, "mcp_registry", reg):
             await self.sysmod.call_tool("s", "wr", {"args": {}, "project": "mpcproj"})
         self.assertEqual(len(self.rt.store.list_experiments()), 1)
+
+    async def test_update_run(self):
+        rid = self.rt.store.add_run("p", "r", "done", 0.0, 1.0)
+        self.assertTrue(self.rt.store.update_run(
+            rid, status="error", reply="boom", metrics={"a": 1.0}))
+        run = self.rt.store.get_run(rid)
+        self.assertEqual(run["status"], "error")
+        self.assertEqual(run["reply"], "boom")
+        self.assertEqual(run["metrics"], {"a": 1.0})
+        # unknown fields are ignored (no update attempted)
+        self.assertFalse(self.rt.store.update_run(rid, bogus_field=1))
+
+    async def test_background_call(self):
+        reg = _registry(enabled=True, wr_reply='{"ok": 1}')
+        perms = self.rt.permissions
+        perms.record("mcp_tool", "s__wr", "allow")
+        with mock.patch.object(self.sysmod, "mcp_registry", reg):
+            res = await self.sysmod.call_tool(
+                "s", "wr", {"args": {}, "project": "mpcproj", "background": True})
+            self.assertTrue(res["ok"])
+            self.assertTrue(res["background"])
+            self.assertIsNotNone(res["run_id"])
+            run = self.rt.store.get_run(res["run_id"])
+            self.assertEqual(run["status"], "running")
+            # wait for the background task to complete
+            for _ in range(100):
+                run = self.rt.store.get_run(res["run_id"])
+                if run["status"] != "running":
+                    break
+                await asyncio.sleep(0.05)
+            self.assertEqual(run["status"], "done")
+            self.assertIn("ok", run["reply"])
+        # background without a project -> 400
+        bad = await self.sysmod.call_tool("s", "wr", {"args": {}, "background": True})
+        self.assertEqual(bad.status_code, 400)
 
 
 if __name__ == "__main__":

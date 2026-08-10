@@ -519,6 +519,12 @@ class MCPRegistry:
                 except Exception as e:  # noqa: BLE001
                     return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
                 return f"[MCP:{sname}] {text}" if text else f"[MCP:{sname}] (no output)"
+            # Fail fast on missing required args instead of a server-side error.
+            schema = getattr(tool, "input_schema", None) or {}
+            missing = [r for r in (schema.get("required") or []) if r not in args]
+            if missing:
+                return (f"[error] {full_name} is missing required argument(s): "
+                        f"{', '.join(missing)}")
             try:
                 text, is_err = await conn.call_tool(tool.name, args)
             except Exception as e:  # noqa: BLE001
@@ -555,12 +561,14 @@ async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
     """
     if server not in registry._servers:
         return (f"[error] unknown MCP server '{server}' — "
-                f"available: {list(registry._servers)}", True)
+                f"available: {list(registry._servers)}. Add it in Settings → MCP.",
+                True)
     conn = registry.connection(server)
     try:
         tools = await conn.list_tools()
     except Exception as e:  # noqa: BLE001
-        return (f"[error] MCP server '{server}' unreachable: {e}", True)
+        return (f"[error] MCP server '{server}' unreachable: {e} — check it's "
+                "enabled in Settings → MCP and that the command/URL is valid.", True)
     match = next((t for t in tools if t.name == tool), None)
     if match is None:
         return (f"[error] tool '{server}__{tool}' not found on that server", True)
