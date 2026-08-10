@@ -7307,16 +7307,51 @@ async function loadFinetuneValidate() {
 /* ---------- MCP servers section (management + health + tools + calls) ---------- */
 async function loadMcpServers() {
   try {
-    const [r, g] = await Promise.all([
+    const [r, g, a] = await Promise.all([
       api("/api/mcp"),
       api(`/api/projects/${state.project}/mcp/grants`).catch(() => ({ grants: {} })),
+      api(`/api/projects/${state.project}/mcp/activity`).catch(() => ({ calls: [] })),
     ]);
     const servers = r.servers || [];
     state.mcpSummary = { ok: servers.filter((s) => s.ok).length, total: servers.length };
     state._mcpData = { servers, grants: (g && g.grants) || {} };
     renderMcpServers(servers, state._mcpData.grants);
+    renderMcpRecent((a && a.calls) || []);
     if (typeof renderExpKpis === "function") renderExpKpis();
   } catch (e) { /* silent */ }
+}
+
+function renderMcpRecent(calls) {
+  const host = $("mcp-recent");
+  if (!host) return;
+  if (!calls.length) { host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="exp-runs-title">Recent MCP calls</div>'
+    + calls.map((c) => {
+        const cls = c.status === "done" ? "ok" : (c.status === "error" ? "danger" : "warn");
+        return `<div class="finetune-job mcp-recent-row">
+          <span class="exp-badge ${cls}">${esc(c.status)}</span>
+          <span class="mcp-tool-name">${esc(c.label || "tool")}</span>
+          <span class="muted">${esc(c.reply || c.prompt || "")}</span>
+          <span class="spacer"></span>
+          <button class="btn subtle small mcp-rerun" data-run="${esc(c.id)}" title="Re-run this call">↻</button>
+        </div>`;
+      }).join("");
+  host.querySelectorAll(".mcp-rerun").forEach((b) =>
+    b.addEventListener("click", () => rerunMcpRun(b.dataset.run)));
+}
+
+async function rerunMcpRun(runId) {
+  try {
+    const r = await api(`/api/projects/${state.project}/runs/${runId}`);
+    const run = r.run || {};
+    const key = run.label || "";
+    const [server, tool] = key.split("__");
+    const raw = (run.prompt || "").startsWith("{") ? run.prompt : `"${run.prompt}"`;
+    if (!server || !tool) { toast("Cannot re-run: missing tool label.", 4000); return; }
+    const out = await callMcpTool(server, tool, raw, false, false);
+    toast("Re-ran " + key + " — see the panel / runs.");
+    loadMcpServers();
+  } catch (e) { toast("Could not re-run: " + e.message, 4000); }
 }
 
 function renderMcpServers(servers, grants) {
@@ -7348,13 +7383,24 @@ function renderMcpServers(servers, grants) {
               : `<span class="exp-badge ${grant === "allow" ? "ok" : (grant === "deny" ? "danger" : "warn")}" title="writable tool permission">${grant === "allow" ? "🔓 allowed" : (grant === "deny" ? "⛔ denied" : "🔒 ask")}</span>`;
             const req = (t.params || []).filter((p) => p.required).map((p) => p.name);
             const ph = req.length ? `json args (required: ${req.join(", ")})` : "json args, e.g. {} or a bare string";
+            const params = t.params || [];
+            const scalarOnly = params.length > 0 && params.every((p) =>
+              !p.type || ["string", "number", "integer", "boolean"].includes(p.type));
+            const inputHtml = scalarOnly
+              ? `<div class="mcp-fields" data-mcp-fields>${params.map((p) => {
+                  const star = p.required ? " *" : "";
+                  if (p.type === "boolean")
+                    return `<label class="check"><input type="checkbox" class="mcp-field" data-name="${esc(p.name)}" data-type="boolean" /> ${esc(p.name)}${esc(star)}</label>`;
+                  return `<label class="mcp-field-label">${esc(p.name)}${esc(star)}<input class="exp-search mcp-field" data-name="${esc(p.name)}" data-type="${esc(p.type || "string")}" type="${(p.type === "number" || p.type === "integer") ? "number" : "text"}" /></label>`;
+                }).join("")}</div>`
+              : `<input class="exp-search mcp-call-args" placeholder="${esc(ph)}" />`;
             return `<div class="mcp-tool-row">
                 <span class="mcp-tool-name">${esc(t.name)}</span>
                 ${t.read_only ? '<span class="exp-badge ok">ro</span>' : '<span class="exp-badge warn">rw</span>' + grantBadge}
                 <span class="spacer"></span>
                 <button class="btn subtle small mcp-call" data-server="${esc(s.name)}" data-tool="${esc(t.name)}" title="Invoke this tool">▶ Call</button>
                 <div class="mcp-call-box hidden" data-call-box>
-                  <input class="exp-search mcp-call-args" placeholder="${esc(ph)}" />
+                  ${inputHtml}
                   <label class="check mcp-track"><input type="checkbox" class="mcp-track-box" /> 📈 exp</label>
                   <label class="check mcp-track"><input type="checkbox" class="mcp-bg-box" /> ⏳ background</label>
                   <button class="btn subtle small mcp-call-go">Run</button>
@@ -7391,14 +7437,30 @@ function renderMcpServers(servers, grants) {
       const row = b.closest(".mcp-tool-row");
       const server = row.querySelector(".mcp-call").dataset.server;
       const tool = row.querySelector(".mcp-call").dataset.tool;
-      const raw = row.querySelector(".mcp-call-args").value.trim();
+      const raw = row.querySelector(".mcp-call-args") ? row.querySelector(".mcp-call-args").value.trim() : "";
       const track = !!(row.querySelector(".mcp-track-box") || {}).checked;
       const bg = !!(row.querySelector(".mcp-bg-box") || {}).checked;
+      const fieldsBox = row.querySelector("[data-mcp-fields]");
+      let argsJson = "";
+      if (fieldsBox) {
+        const args = {};
+        fieldsBox.querySelectorAll("input").forEach((inp) => {
+          const name = inp.dataset.name;
+          const type = inp.dataset.type;
+          if (type === "boolean") { if (inp.checked) args[name] = true; }
+          else if (inp.value.trim() !== "") {
+            args[name] = (type === "number" || type === "integer") ? Number(inp.value) : inp.value;
+          }
+        });
+        argsJson = JSON.stringify(args);
+      } else {
+        argsJson = raw;
+      }
       const out = row.querySelector(".mcp-call-result");
       out.textContent = "…";
       out.classList.remove("mcp-err");
       try {
-        const r = await callMcpTool(server, tool, raw, track, bg);
+        const r = await callMcpTool(server, tool, argsJson, track, bg);
         if (r && r.background) {
           out.textContent = `⏳ started as run #${r.run_id} — watching…`;
           pollMcpRun(r.run_id, out);

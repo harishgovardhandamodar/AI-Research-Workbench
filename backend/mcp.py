@@ -260,7 +260,13 @@ class MCPConnection:
             elif btype == "image":
                 parts.append(f"[image {getattr(block, 'mimeType', '')}]")
             elif btype == "resource":
-                parts.append(f"[resource {getattr(block, 'uri', '')}]")
+                # Resource blocks may carry inline text — surface it rather than
+                # collapsing to a bare uri placeholder.
+                rtext = getattr(block, "text", "") or ""
+                if rtext:
+                    parts.append(rtext)
+                else:
+                    parts.append(f"[resource {getattr(block, 'uri', '')}]")
         return "\n".join(p for p in parts if p), bool(getattr(res, "isError", False))
 
     async def close(self):

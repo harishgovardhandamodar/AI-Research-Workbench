@@ -393,6 +393,22 @@ async def call_tool(server: str, tool: str, body: dict):
             "run_id": run_id, "experiment_id": experiment_id}
 
 
+@router.get("/api/projects/{name}/mcp/activity")
+async def mcp_activity(name: str, limit: int = 10):
+    """Recent direct MCP tool calls recorded as runs (kind=mcp_tool)."""
+    rt = get_runtime(name)
+    limit = max(1, min(int(limit), 50))
+    runs = rt.store.list_runs(limit=200)
+    recent = [r for r in runs if r.get("kind") == "mcp_tool"][-limit:]
+    recent.reverse()  # newest first
+    return {"calls": [{
+        "id": r["id"], "status": r.get("status"), "label": r.get("label"),
+        "prompt": (r.get("prompt") or "")[:120],
+        "reply": (r.get("reply") or "")[:200],
+        "finished_at": r.get("finished_at"),
+    } for r in recent]}
+
+
 @router.post("/api/projects/{name}/mcp/artifacts")
 async def save_mcp_result_artifact(name: str, body: dict):
     """Persist a direct MCP tool call's result as a project artifact."""

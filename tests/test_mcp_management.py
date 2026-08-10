@@ -487,6 +487,19 @@ class TestMcpProjectIntegration(unittest.IsolatedAsyncioTestCase):
         bad = await self.sysmod.call_tool("s", "wr", {"args": {}, "background": True})
         self.assertEqual(bad.status_code, 400)
 
+    async def test_activity_endpoint(self):
+        # two mcp_tool runs + one non-mcp run; activity lists only mcp_tool.
+        r1 = self.rt.store.add_run("p1", "r1", "done", 0.0, 1.0, kind="mcp_tool", label="a__t1")
+        r2 = self.rt.store.add_run("p2", "r2", "done", 0.0, 1.0, kind="mcp_tool", label="a__t2")
+        self.rt.store.add_run("p3", "r3", "done", 0.0, 1.0, kind="agent_run")
+        act = await self.sysmod.mcp_activity("mpcproj")
+        calls = act["calls"]
+        self.assertEqual(len(calls), 2)
+        # newest first
+        self.assertEqual(calls[0]["label"], "a__t2")
+        self.assertEqual(calls[0]["status"], "done")
+        self.assertIn("reply", calls[0])
+
 
 if __name__ == "__main__":
     unittest.main()
