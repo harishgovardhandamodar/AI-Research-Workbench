@@ -690,20 +690,7 @@ function pipelineHtml(run, exp) {
   if (cfgKeys.length) {
     h += `<div class="pipe-sec">Hyperparameters · model config</div><div class="run-detail-grid">`;
     for (const k of cfgKeys) {
-      const v = cfg[k];
-      // Compact display: arrays/objects (e.g. metric_series, report) render as
-      // a collapsed summary instead of "[object Object]".
-      let vstr;
-      if (Array.isArray(v)) {
-        vstr = `[${v.length} item(s)]`;
-        if (v.length && typeof v[0] === "object") vstr += " (chart above)";
-      } else if (v && typeof v === "object") {
-        vstr = JSON.stringify(v).length > 60
-          ? JSON.stringify(v).slice(0, 60) + "…" : JSON.stringify(v);
-      } else {
-        vstr = String(v);
-      }
-      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(vstr)}</span>`;
+      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${cfgValueHtml(k, cfg[k])}</span>`;
     }
     h += `</div>`;
   }
@@ -4721,6 +4708,26 @@ function renderRuns() {
   }
 }
 
+// Compact display for a run config value: arrays/objects collapse to a short
+// summary instead of "[object Object]"; the verify report renders as markdown.
+function cfgValueHtml(k, v) {
+  if (k === "report" && v && typeof v === "string" && v.trim().startsWith("#")) {
+    return `<div class="finetune-report">${renderMarkdown(v)}</div>`;
+  }
+  let vstr;
+  if (Array.isArray(v)) {
+    vstr = `[${v.length} item(s)]`;
+    if (v.length && typeof v[0] === "object") vstr += " (chart above)";
+  } else if (v && typeof v === "object") {
+    const s = JSON.stringify(v);
+    vstr = s.length > 60 ? s.slice(0, 60) + "…" : s;
+  } else {
+    vstr = String(v);
+    if (vstr.length > 140) vstr = vstr.slice(0, 140) + "…";
+  }
+  return esc(vstr);
+}
+
 function runDetailHtml(r) {
   const goalExp = (state.expList || []).find((e) => String(e.id) === String(r.experiment_id));
   const goalMetric = goalExp && goalExp.goal_metric;
@@ -4738,7 +4745,7 @@ function runDetailHtml(r) {
   if (cfg) {
     h += `<div class="run-detail-sec">Config</div><div class="run-detail-grid">`;
     for (const [k, v] of Object.entries(r.config)) {
-      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(String(v))}</span>`;
+      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${cfgValueHtml(k, v)}</span>`;
     }
     h += `</div>`;
   }
