@@ -1386,6 +1386,29 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .audit-count { font-size: 11px; }
 
 .audit-strip { width: 100%; max-height: 74px; margin: 4px 0 10px; }
+
+/* ---------- audit charts (radar + distributions) + flag lists ---------- */
+.audit-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 8px 0 4px; }
+.audit-chart-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.audit-chart-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); margin-bottom: 6px; }
+.audit-radar { width: 100%; max-width: 260px; display: block; margin: 0 auto; }
+.audit-chart-note { font-size: 10px; text-align: center; }
+.audit-dist { display: flex; flex-direction: column; gap: 5px; }
+.audit-dist-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.audit-dist-label { flex: 0 0 90px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-dist-track { flex: 1; height: 8px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }
+.audit-dist-fill { display: block; height: 100%; background: var(--accent-2, #4d9fff); border-radius: 4px; }
+.audit-dist-n { flex: 0 0 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.audit-flags { margin: 6px 0 10px; }
+.audit-flag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.audit-flag-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; max-height: 260px; overflow: auto; }
+.audit-flag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.audit-flag-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.audit-flag-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; cursor: pointer; border-radius: 6px; padding: 2px 6px; }
+.audit-flag-row:hover { background: var(--bg-3); }
+.audit-flag-time { flex: 0 0 64px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.audit-flag-agent { flex: 0 0 64px; color: var(--accent-2); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-flag-tool { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-tl { position: relative; }
 .audit-tl-day { font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 4px; }
 .audit-tl-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; border-radius: 8px; padding: 3px 6px; }

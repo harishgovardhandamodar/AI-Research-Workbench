@@ -7536,13 +7536,14 @@ async function loadAudit() {
     const f = auditFilters();
     const range = f.get("range");
     const since = range && range !== "0" ? Date.now() / 1000 - Number(range) : "";
-    const [summ, timeline, agents, chain] = await Promise.all([
+    const [summ, timeline, agents, chain, devs] = await Promise.all([
       auditApi("/summary" + (since ? `?since=${since}` : "")).catch(() => ({ summary: {}, agents: [], tool_usage: [] })),
       auditApi("/timeline" + (since ? `?since=${since}` : "") + `&agent=${f.get("agent")}&severity=${f.get("severity")}&source=${f.get("source")}&limit=800`).catch(() => ({ events: [] })),
       auditApi("/agents").catch(() => ({ agents: [] })),
       auditApi("/verify").catch(() => ({ chain: {} })),
+      auditApi("/deviations?limit=50").catch(() => ({ deviations: [] })),
     ]);
-    state.audit = { summary: summ.summary || {}, toolUsage: summ.tool_usage || [], agents: agents.agents || [], timeline: timeline.events || [], chain: chain.chain || {} };
+    state.audit = { summary: summ.summary || {}, toolUsage: summ.tool_usage || [], agents: agents.agents || [], timeline: timeline.events || [], chain: chain.chain || {}, deviations: devs.deviations || [] };
     renderAuditKpis();
     renderAuditChain();
     populateAuditAgentSelect();
@@ -7619,9 +7620,146 @@ function renderAuditOverview() {
   $("audit-count").textContent = `${events.length} event(s)`;
   // ordered event ids for the overlay's prev/next navigation
   state.auditEventIds = events.map((e) => e.event_id);
+  $("audit-charts").innerHTML = buildAuditCharts((state.audit && state.audit.summary) || {}, events);
+  $("audit-flags").innerHTML = buildAuditFlags(events);
   $("audit-timeline").innerHTML = buildAuditTimeline(events);
   $("audit-timeline").querySelectorAll("[data-eid]").forEach((r) =>
     r.addEventListener("click", () => showAuditEvent(r.dataset.eid)));
+  $("audit-flags").querySelectorAll("[data-eid]").forEach((r) =>
+    r.addEventListener("click", () => showAuditEvent(r.dataset.eid)));
+  $("audit-flags").querySelectorAll("[data-devid]").forEach((r) =>
+    r.addEventListener("click", () => switchAuditView("deviations")));
+}
+
+// Spider-web (radar) chart of the audit profile + a couple of distribution
+// cards, laid out on the left of the overview alongside the timeline.
+function buildAuditCharts(summary, events) {
+  const axes = [
+    { k: "critical", label: "critical", color: "#e05b5b" },
+    { k: "warnings", label: "warnings", color: "#d29922" },
+    { k: "overrides", label: "overrides", color: "#b98cff" },
+    { k: "denials", label: "denials", color: "#4f8cff" },
+    { k: "data_access", label: "data access", color: "#35c4b6" },
+    { k: "network", label: "network", color: "#f0b429" },
+    { k: "filesystem", label: "filesystem", color: "#7ee787" },
+  ];
+  const radar = buildAuditRadarSvg(summary, axes);
+
+  // Source distribution (donut-ish bar list) from the current events.
+  const bySource = {};
+  (events || []).forEach((e) => {
+    const s = e.source || "other";
+    bySource[s] = (bySource[s] || 0) + 1;
+  });
+  const srcEntries = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
+  const srcMax = Math.max(1, ...srcEntries.map(([, n]) => n));
+  const srcHtml = srcEntries.length
+    ? srcEntries.map(([s, n]) => `
+      <div class="audit-dist-row"><span class="audit-dist-label">${esc(s)}</span>
+        <span class="audit-dist-track"><span class="audit-dist-fill" style="width:${(n / srcMax) * 100}%"></span></span>
+        <span class="audit-dist-n">${n}</span></div>`).join("")
+    : '<div class="empty">no events</div>';
+
+  // Severity split for a second mini-card.
+  const sev = { critical: 0, warning: 0, info: 0 };
+  (events || []).forEach((e) => {
+    const s = e.severity || "info";
+    if (sev[s] != null) sev[s]++;
+    else sev.info++;
+  });
+  const sevTotal = Math.max(1, (events || []).length);
+  const sevHtml = [["critical", sev.critical, "#e05b5b"], ["warning", sev.warning, "#d29922"], ["info", sev.info, "#9b93ab"]]
+    .map(([k, n, c]) => `<div class="audit-dist-row"><span class="audit-dist-label" style="color:${c}">${k}</span>
+      <span class="audit-dist-track"><span class="audit-dist-fill" style="width:${(n / sevTotal) * 100}%;background:${c}"></span></span>
+      <span class="audit-dist-n">${n}</span></div>`).join("");
+
+  return `<div class="audit-chart-card audit-radar-card">
+      <div class="audit-chart-title">🕸 Audit profile</div>
+      ${radar}
+      <div class="audit-chart-note muted">per-axis counts (range-filtered)</div>
+    </div>
+    <div class="audit-chart-card">
+      <div class="audit-chart-title">🧩 Sources</div>
+      <div class="audit-dist">${srcHtml}</div>
+    </div>
+    <div class="audit-chart-card">
+      <div class="audit-chart-title">🚦 Severity</div>
+      <div class="audit-dist">${sevHtml}</div>
+    </div>`;
+}
+
+function buildAuditRadarSvg(summary, axes) {
+  const N = axes.length;
+  const W = 240, H = 240, cx = W / 2, cy = H / 2, R = 88;
+  const maxVal = Math.max(1, ...axes.map((a) => Number(summary[a.k]) || 0));
+  const pt = (i, r) => {
+    const ang = -Math.PI / 2 + (2 * Math.PI * i) / N;
+    return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
+  };
+  const rings = [0.33, 0.66, 1];
+  let grid = "";
+  rings.forEach((f) => {
+    grid += `<polygon points="${axes.map((_, i) => pt(i, R * f).join(",")).join(" ")}" fill="none" stroke="var(--border)" stroke-width="1"/>`;
+  });
+  axes.forEach((a, i) => {
+    const [x, y] = pt(i, R + 14);
+    const [x0, y0] = pt(i, R + 4);
+    grid += `<line x1="${cx}" y1="${cy}" x2="${x0}" y2="${y0}" stroke="var(--border)" stroke-width="1"/>`;
+    grid += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="var(--text-dim)">${esc(a.label)}</text>`;
+  });
+  const dataPts = axes.map((a) => {
+    const v = (Number(summary[a.k]) || 0) / maxVal;
+    return pt(axes.indexOf(a), Math.max(4, v * R)).join(",");
+  });
+  const fillPts = axes.map((a, i) => {
+    const v = (Number(summary[a.k]) || 0) / maxVal;
+    return pt(i, Math.max(4, v * R)).join(",");
+  });
+  const poly = `<polygon points="${fillPts.join(" ")}" fill="rgba(79,140,255,.22)" stroke="#4f8cff" stroke-width="1.5"/>`;
+  const dots = axes.map((a, i) => {
+    const v = (Number(summary[a.k]) || 0) / maxVal;
+    const [x, y] = pt(i, Math.max(4, v * R));
+    return `<circle cx="${x}" cy="${y}" r="3" fill="${a.color}"><title>${a.label}: ${summary[a.k] || 0}</title></circle>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" class="audit-radar" role="img" aria-label="Audit profile radar">
+    ${grid}${poly}${dots}
+    <text x="${cx}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-dim)">max ${maxVal} · ${N} axes</text>
+  </svg>`;
+}
+
+// Lists of notable entries: critical, deviations, network.
+function buildAuditFlags(events) {
+  const criticals = (events || []).filter((e) => e.severity === "critical");
+  const deviations = (events || []).filter((e) =>
+    (e.tags || []).some((t) => /deviation/i.test(String(t))) ||
+    /deviation/i.test(String(e.method || "") + " " + String(e.tool_name || "")));
+  // Fall back to the dedicated deviations registry (scanner findings).
+  const devRegistry = (state.audit && state.audit.deviations) || [];
+  const network = (events || []).filter((e) => e.network);
+  const flagList = (title, ico, items, color, rowHtml) => `
+    <div class="audit-flag-card">
+      <div class="audit-flag-head"><span class="audit-flag-title" style="color:${color}">${ico} ${title}</span><span class="muted">${items.length}</span></div>
+      ${items.length
+        ? items.slice(0, 12).map(rowHtml || ((e) => `
+          <div class="audit-flag-row" data-eid="${esc(e.event_id)}" data-sev="${esc(e.severity || "info")}">
+            <span class="audit-flag-time">${esc(new Date(e.timestamp).toLocaleTimeString())}</span>
+            <span class="audit-flag-agent">${esc(e.agent_id || "?")}</span>
+            <span class="audit-flag-tool">${esc(e.tool_name || e.method || "event")}</span>
+          </div>`)).join("")
+        : '<div class="empty">none</div>'}
+    </div>`;
+  const devRows = devRegistry.length ? devRegistry.slice(0, 12).map((d) => `
+    <div class="audit-flag-row" data-devid="${esc(d.id || d.deviation_id || "")}">
+      <span class="audit-flag-time">${esc(new Date(d.created_at ? d.created_at * 1000 : Date.now()).toLocaleTimeString())}</span>
+      <span class="audit-flag-agent">${esc(d.agent_id || "?")}</span>
+      <span class="audit-flag-tool">${esc((d.deviation_type || d.rule || d.explanation || d.summary || d.reason || "deviation").slice(0, 60))}</span>
+    </div>`) : "";
+  return `<div class="audit-flag-grid">
+    ${flagList("Critical", "🛑", criticals, "var(--danger)")}
+    ${flagList("Deviations", "⚠️", deviations.length ? deviations : devRegistry, "#d29922",
+      deviations.length ? null : () => devRows)}
+    ${flagList("Network", "🌐", network, "#f0b429")}
+  </div>`;
 }
 
 function buildAuditTimeline(events) {
