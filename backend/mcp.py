@@ -311,6 +311,8 @@ class MCPRegistry:
                 self._servers[name] = dict(s)
         self._conns: dict[str, MCPConnection] = {}
         self._available = _mcp_installed()
+        self._status_cache: list[dict] | None = None
+        self._status_cache_ts: float = 0.0
 
     # -- lifecycle ----------------------------------------------------------
     def connection(self, name: str) -> MCPConnection:
@@ -322,23 +324,36 @@ class MCPRegistry:
         return list(self._servers.keys())
 
     async def statuses(self) -> list[dict]:
-        out = []
-        for name in self._servers:
+        # Probe servers concurrently (each stdio server spawns a subprocess and
+        # does an MCP handshake; running them serially made the Agents tab slow).
+        # A short per-server timeout + a small cache keep it snappy.
+        now = time.time()
+        if self._status_cache and now - self._status_cache_ts < 5.0:
+            return list(self._status_cache)
+
+        names = list(self._servers)
+        async def _probe(name: str) -> dict:
             item = {"name": name, "transport": self._servers[name].get("transport", "stdio"),
                     "ok": False, "error": None, "tools": []}
             if not self._available:
                 item["error"] = "mcp package not installed"
-                out.append(item)
-                continue
+                return item
             conn = self.connection(name)
             try:
-                tools = await conn.list_tools()
+                tools = await asyncio.wait_for(conn.list_tools(), timeout=12.0)
                 item["ok"] = True
                 item["tools"] = [t.name for t in tools]
+            except asyncio.TimeoutError:
+                item["error"] = "timed out probing server (12s)"
+                await conn.close()
             except Exception as e:  # noqa: BLE001
                 item["error"] = f"{type(e).__name__}: {e}"
-            out.append(item)
-        return out
+            return item
+
+        results = await asyncio.gather(*(_probe(n) for n in names))
+        self._status_cache = results
+        self._status_cache_ts = now
+        return results
 
     # -- agent integration --------------------------------------------------
     async def build_tools(self, ctx) -> tuple[list[dict], dict[str, ToolFn]]:

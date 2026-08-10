@@ -6038,10 +6038,17 @@ async function loadEditor() {
 /* ============================ agent dashboard ============================= */
 
 async function loadAgent() {
+  // Splash screen while the agent dashboard (esp. MCP server probing) loads.
+  const splash = $("agent-splash");
+  const body = $("agent-body");
+  if (splash) splash.classList.remove("hidden");
+  if (body) body.classList.add("hidden");
   try {
     state.agent = await api("/api/agent");
     renderAgent();
   } catch (e) { /* silent */ }
+  if (splash) splash.classList.add("hidden");
+  if (body) body.classList.remove("hidden");
 }
 
 function renderAgent() {

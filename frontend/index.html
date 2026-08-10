@@ -397,7 +397,11 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <span class="spacer"></span>
         <button id="agent-refresh" class="btn subtle small">Refresh</button>
       </div>
-      <div id="agent-body" class="agent-body"></div>
+      <div id="agent-splash" class="agent-splash">
+        <div class="agent-splash-spinner"></div>
+        <div class="agent-splash-text">Loading agent tools, MCP servers &amp; skills…</div>
+      </div>
+      <div id="agent-body" class="agent-body hidden"></div>
     </section>
 
     <section id="editor-panel" class="hidden">
