@@ -1081,12 +1081,15 @@ async def ws_chat(ws: WebSocket, name: str):
     # Finetune chat integration: tail dk-lora job logs into this chat window and
     # push the current pipeline snapshot so the pipeline card renders instantly
     # (subsequent updates stream via finetune_log / finetune_pipeline events).
-    rt.start_finetune_monitor()
-    try:
-        from . import finetune_status as fs
-        await emit("finetune_pipeline", {"pipeline": fs.pipeline_snapshot()})
-    except Exception:  # noqa: BLE001
-        pass
+    # Only the session that owns the finetune workspace shows the card — a
+    # freshly created session must not inherit another project's pipeline.
+    from . import finetune_status as fs
+    if fs.owns_finetune(name):
+        rt.start_finetune_monitor()
+        try:
+            await emit("finetune_pipeline", {"pipeline": fs.pipeline_snapshot()})
+        except Exception:  # noqa: BLE001
+            pass
 
     broker = ApprovalBroker(emit, store=rt.store, audit=rt.audit_emitter,
                             session_id=rt.name, agent_id="Fox")

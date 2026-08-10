@@ -66,6 +66,26 @@ def workspace_path() -> Path:
     return Path(cfg_ws or env_ws or DEFAULT_WORKSPACE).expanduser().resolve()
 
 
+def finetune_project() -> str:
+    """The session/project that owns this finetune workspace, if it can be
+    derived from the path. Convention: ``<root>/<project>/data/workspace`` →
+    ``<project>`` (e.g. ``.../quai-lora/data/workspace`` → ``quai-lora``). An
+    un-derivable workspace (e.g. ``~/.fox/dk-lora``) returns ``""``."""
+    ws = workspace_path()
+    if ws.name == "workspace" and ws.parent.name == "data" and ws.parent.parent.name:
+        return ws.parent.parent.name
+    return ""
+
+
+def owns_finetune(session_name: str) -> bool:
+    """True when this session is the owner of the configured finetune workspace
+    (so its chat window shows the finetune pipeline card / monitor)."""
+    owner = finetune_project()
+    if not owner:
+        return False
+    return (session_name or "") == owner
+
+
 def jobs_dir() -> Path:
     return workspace_path() / "jobs"
 
