@@ -1039,8 +1039,11 @@ function renderWorkflow(snap) {
   const panel = $("workflow-panel");
   const stages = snap.stages || [];
   // An idle panel is just noise — only surface it while a pipeline is actually
-  // active (running or waiting on approval).
-  if (snap.status === "idle" || !stages.length) {
+  // active (running or waiting on approval). A completed/failed pipeline
+  // shouldn't resurrect the overlay either (fixes a stale "running" panel
+  // persisting after a campaign finishes).
+  if (snap.status === "idle" || snap.status === "done" || snap.status === "failed"
+      || !stages.length) {
     panel.classList.add("hidden");
     return;
   }
@@ -1597,6 +1600,18 @@ async function sendChat(textOverride, intent, extra) {
     else toast("Usage: @load <filename> [var] (e.g. @load data.csv df)", 4000);
     return;
   }
+  // Run deterministic EDA: "@eda data.csv" generates charts + a report as
+  // artifacts (EDA MCP suite) and shows them inline — no LLM loop.
+  if (/^@eda\b/i.test(t)) {
+    const fname = t.replace(/^@eda\b/i, "").trim().split(/\s+/)[0] || "";
+    if (textOverride === undefined) {
+      input.value = "";
+      autoResize(input);
+    }
+    if (fname) await runEdaInline(fname);
+    else toast("Usage: @eda <filename> (e.g. @eda data.csv)", 4000);
+    return;
+  }
   // Begin a fresh session: "/session <name>" creates + switches to it;
   // bare "/session" opens the session planner (templates + dataset step).
   if (/^\/session\b/i.test(t)) {
@@ -2001,6 +2016,45 @@ async function loadDatasetInline(fname, varName) {
   const copyBtn = box.querySelector(".ds-copy");
   if (copyBtn) copyBtn.addEventListener("click", () => copyText(`@load ${fname} ${varName || ""}`.trim()));
   loadFiles();
+  scrollBottom();
+}
+
+// Run deterministic EDA (EDA MCP suite) on a project file and show the
+// generated charts + report inline in the chat.
+async function runEdaInline(fname) {
+  const userMsg = { content: "@eda " + fname, created_at: null };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const uel = msgContainer("user", [], null, set.body);
+  uel.body.textContent = "@eda " + fname;
+  const ael = msgContainer("assistant", [], null, set.body, "Fox · EDA");
+  const box = document.createElement("div");
+  box.className = "schema-card";
+  box.innerHTML = '<div class="empty">Running EDA — profiling, charts &amp; report…</div>';
+  ael.body.appendChild(box);
+  scrollBottom();
+  try {
+    const r = await api(`/api/projects/${state.project}/eda/run`, {
+      method: "POST", body: JSON.stringify({ filename: fname, max_plots: 12 }),
+    });
+    let h = `<div class="ds-card"><div class="schema-head">
+        <span class="sc-file">📊 EDA · ${esc(r.filename)}</span>
+        <span class="sc-rows">${r.summary && r.summary.n_rows != null ? esc(r.summary.n_rows + " rows × " + (r.summary.columns || 0) + " cols") : ""}</span>
+      </div>`;
+    const figs = (r.figures || []).map((f) =>
+      `<figure class="chat-fig-wrap"><img class="chat-fig" src="${B("/artifacts/" + f.id)}" alt="${esc(f.name)}" data-art-id="${esc(f.id)}"><figcaption>${esc(f.caption || f.name)}</figcaption></figure>`).join("");
+    if (figs) h += `<div class="eda-figs">${figs}</div>`;
+    if (r.report_id) {
+      h += `<a class="btn subtle small" href="${B("/artifacts/" + r.report_id)}" target="_blank" rel="noopener">📄 View EDA report</a>`;
+    }
+    h += `<div class="ds-msg">${esc(r.message || "EDA complete.")}</div></div>`;
+    box.innerHTML = h;
+    // Refresh the artifacts panel so the new figures/report appear there too.
+    refreshState();
+  } catch (e) {
+    box.classList.add("schema-err");
+    box.innerHTML = `<span class="sev">error</span>${esc(e.message || "EDA failed")}`;
+  }
   scrollBottom();
 }
 
