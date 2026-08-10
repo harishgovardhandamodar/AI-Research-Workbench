@@ -291,6 +291,68 @@ class TestConfigRedaction(unittest.TestCase):
         asyncio.run(run())
 
 
+class TestMcpChatCommand(unittest.IsolatedAsyncioTestCase):
+    """The @mcp chat command (background + sync) against a real runtime."""
+
+    async def asyncSetUp(self):
+        import backend.project_runtime as pr
+        from backend.state import runtimes
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = pr.PROJECTS_DIR
+        pr.PROJECTS_DIR = self.tmp
+        self.rt = pr.ProjectRuntime("mcpchat")
+        runtimes["mcpchat"] = self.rt
+        from backend import main as mainmod
+        self.mainmod = mainmod
+        self.events = []
+
+        async def emit(etype, payload):
+            self.events.append((etype, payload))
+        self.emit = emit
+
+    async def asyncTearDown(self):
+        import backend.project_runtime as pr
+        from backend.state import runtimes
+        pr.PROJECTS_DIR = self._orig
+        runtimes.pop("mcpchat", None)
+        await self.rt.stop()
+
+    async def test_background_command(self):
+        from backend.agents.approval import ApprovalBroker
+        broker = ApprovalBroker(self.emit)
+        reg = _registry(enabled=True, wr_reply='{"ok": 1}')
+        self.rt.permissions.record("mcp_tool", "s__wr", "allow")
+        # keep the registry patch alive while the background task runs
+        with mock.patch.object(self.mainmod, "mcp_registry", reg):
+            await self.mainmod._handle_mcp_command(
+                self.rt, self.emit, broker, "@mcp bg s__wr {}")
+            msgs = [p for t, p in self.events if t == "assistant_message"]
+            self.assertTrue(any("started in the background" in p["content"] for p in msgs))
+            self.assertTrue(any(t == "done" for t, _ in self.events))
+            runs = self.rt.store.list_runs()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["status"], "running")
+            # background task completes and updates the run
+            for _ in range(100):
+                run = self.rt.store.get_run(runs[0]["id"])
+                if run["status"] != "running":
+                    break
+                await asyncio.sleep(0.05)
+        self.assertEqual(run["status"], "done")
+        self.assertIn("ok", run["reply"])
+
+    async def test_discovery_lists_tools(self):
+        from backend.agents.approval import ApprovalBroker
+        broker = ApprovalBroker(self.emit)
+        reg = _registry(enabled=True)
+        with mock.patch.object(self.mainmod, "mcp_registry", reg):
+            await self.mainmod._handle_mcp_command(
+                self.rt, self.emit, broker, "@mcp")
+        msgs = [p for t, p in self.events if t == "assistant_message"]
+        self.assertTrue(any("s__ro" in p["content"] and "s__wr" in p["content"]
+                            for p in msgs))
+
+
 class TestMcpProjectIntegration(unittest.IsolatedAsyncioTestCase):
     """Tool calls + grants against a real project runtime (records runs)."""
 

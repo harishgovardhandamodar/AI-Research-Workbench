@@ -7313,7 +7313,8 @@ async function loadMcpServers() {
     ]);
     const servers = r.servers || [];
     state.mcpSummary = { ok: servers.filter((s) => s.ok).length, total: servers.length };
-    renderMcpServers(servers, (g && g.grants) || {});
+    state._mcpData = { servers, grants: (g && g.grants) || {} };
+    renderMcpServers(servers, state._mcpData.grants);
     if (typeof renderExpKpis === "function") renderExpKpis();
   } catch (e) { /* silent */ }
 }
@@ -7325,7 +7326,16 @@ function renderMcpServers(servers, grants) {
     host.innerHTML = '<div class="exp-empty">No MCP servers configured.</div>';
     return;
   }
-  host.innerHTML = servers.map((s) => {
+  const q = (state.mcpFilter || "").toLowerCase();
+  const filtered = q
+    ? servers.map((s) => {
+        if (s.name.toLowerCase().includes(q)) return s;
+        const tools = (s.tool_catalog || []).filter((t) => t.name.toLowerCase().includes(q));
+        if (!tools.length) return null;
+        return { ...s, tool_catalog: tools, tools: tools.map((t) => t.name) };
+      }).filter(Boolean)
+    : servers;
+  host.innerHTML = filtered.map((s) => {
     const badge = s.ok ? "ok" : (s.enabled === false ? "warn" : "danger");
     const trust = s.trusted ? '<span class="exp-badge det">trusted</span>' : "";
     const roCount = (s.tool_catalog || []).filter((t) => t.read_only).length;
@@ -7420,19 +7430,35 @@ function renderMcpServers(servers, grants) {
         } else {
           out.textContent = r.text || "(no output)";
           if (r.experiment_id) { out.textContent += `\n\n📈 tracked as experiment #${r.experiment_id}.`; loadExperiments(); }
-          const save = document.createElement("button");
-          save.className = "btn subtle small";
-          save.textContent = "💾 Save as artifact";
-          save.onclick = async () => {
+          const rowBtns = document.createElement("div");
+          rowBtns.className = "mcp-result-actions";
+          const mk = (label, title, fn) => {
+            const b = document.createElement("button");
+            b.className = "btn subtle small";
+            b.textContent = label;
+            b.title = title || "";
+            b.onclick = fn;
+            rowBtns.appendChild(b);
+          };
+          mk("📋 Copy", "Copy the result", async () => {
+            try { await navigator.clipboard.writeText(r.text || ""); toast("Copied."); }
+            catch (e2) { toast("Copy failed: " + e2.message, 4000); }
+          });
+          mk("↻ Re-run", "Run again with the same arguments", () => {
+            const row = out.closest(".mcp-tool-row");
+            row.querySelector(".mcp-call-args").focus();
+            row.querySelector(".mcp-call-go").click();
+          });
+          mk("💾 Save as artifact", "Persist this result as a project artifact", async () => {
             try {
               const ar = await api(`/api/projects/${state.project}/mcp/artifacts`, {
                 method: "POST",
                 body: JSON.stringify({ name: `${server}__${tool}`, text: r.text || "" }) });
               toast(`Saved artifact ${ar.artifact_id}`);
             } catch (e2) { toast("Could not save: " + e2.message, 4000); }
-          };
+          });
           out.appendChild(document.createElement("br"));
-          out.appendChild(save);
+          out.appendChild(rowBtns);
         }
       } catch (e) {
         out.textContent = "Call failed: " + e.message;
@@ -7487,6 +7513,13 @@ if ($("mcp-refresh")) {
   $("mcp-refresh").addEventListener("click", async () => {
     try { await api("/api/mcp/refresh", { method: "POST" }); } catch (e) { /* silent */ }
     loadMcpServers();
+  });
+}
+if ($("mcp-filter")) {
+  $("mcp-filter").addEventListener("input", (e) => {
+    state.mcpFilter = e.target.value.trim();
+    const data = state._mcpData || { servers: [], grants: {} };
+    renderMcpServers(data.servers, data.grants);
   });
 }
 

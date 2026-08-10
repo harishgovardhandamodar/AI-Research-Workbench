@@ -939,16 +939,24 @@ async def _mcp_tool_listing(limit: int = 120) -> str:
 async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
     """Deterministic ``@mcp <server>__<tool> [json args]`` invocation from chat.
 
-    Routes through the same permission model as the agent's MCP calls (read-only
-    tools run freely; writable tools go to the ApprovalBroker), so the result
-    lands in chat without an LLM round-trip. Emits its own ``done`` (the caller
-    returns early).
+    ``@mcp bg <server>__<tool> [json args]`` starts the call as a background
+    run and returns immediately (result lands as a run / notice). Otherwise the
+    call runs synchronously. Routes through the same permission model as the
+    agent's MCP calls (read-only tools run freely; writable tools go to the
+    ApprovalBroker), so results land in chat without an LLM round-trip. Emits
+    its own ``done`` (the caller returns early).
     """
+    import asyncio as _asyncio
     body = text[len("@mcp "):].strip()
+    bg = False
+    if body.startswith("bg "):
+        bg = True
+        body = body[3:].strip()
     full, _, rest = body.partition(" ")
     if "__" not in full:
         listing = await _mcp_tool_listing()
-        content = ("**MCP tools** — `@mcp <server>__<tool> [json args]`\n\n"
+        content = ("**MCP tools** — `@mcp <server>__<tool> [json args]`"
+                   " (`@mcp bg …` runs in the background)\n\n"
                    f"```\n{listing[:4000]}\n```")
         amid = rt.store.add_message("assistant", content, {"tags": ["mcp", "help"]})
         await emit("assistant_message", {"id": amid, "content": content,
@@ -964,6 +972,52 @@ async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
         except Exception:  # noqa: BLE001
             args = {"arg": rest.strip()}
     from .mcp import call_mcp_tool
+
+    prompt = json.dumps(args)[:500] or f"{server}__{tool}"
+
+    if bg:
+        # Background mode: record a running run, complete it in a task so a long
+        # tool doesn't block the chat turn.
+        run_id = rt.store.add_run(
+            prompt=prompt, reply="", status="running",
+            started_at=time.time(), finished_at=time.time(),
+            kind="mcp_tool", label=f"{server}__{tool}", model="MCP")
+
+        async def _bg_run():
+            try:
+                btext, berr = await call_mcp_tool(
+                    mcp_registry, server, tool, args,
+                    permissions=rt.permissions, broker=broker, emit=emit)
+                rt.store.update_run(
+                    run_id, status="done" if not berr else "error",
+                    reply=btext[:8000], finished_at=time.time())
+                icon = "❌" if berr else "🔌"
+                note = (f"{icon} `{server}__{tool}` finished — "
+                        f"[run #{run_id}](/api/projects/{rt.name}/runs/{run_id})")
+                try:
+                    await emit("notice", {"message": note})
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as e:  # noqa: BLE001
+                rt.store.update_run(run_id, status="error",
+                                    reply=f"{type(e).__name__}: {e}"[:4000],
+                                    finished_at=time.time())
+                try:
+                    await emit("error", {"message": f"{server}__{tool} failed: {e}"})
+                except Exception:  # noqa: BLE001
+                    pass
+        _asyncio.get_running_loop().create_task(_bg_run())
+        content = (f"⏳ `{server}__{tool}` started in the background — "
+                   f"[run #{run_id}](/api/projects/{rt.name}/runs/{run_id}). "
+                   "You'll get a notice when it finishes.")
+        tags = ["mcp", "tool", "background"]
+        amid = rt.store.add_message("assistant", content, {"tags": tags})
+        await emit("assistant_message", {"id": amid, "content": content,
+                                         "tags": tags,
+                                         "created_at": _msg_created_at(rt, amid)})
+        await emit("done", {})
+        return
+
     res_text, is_err = await call_mcp_tool(
         mcp_registry, server, tool, args,
         permissions=rt.permissions, broker=broker, emit=emit)
