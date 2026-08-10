@@ -19,6 +19,7 @@
 - [Parameter sweeps](features/parameter-sweeps.md)
 - [Finetune launch](features/finetune-launch.md)
 - [Finetune status & monitoring](features/finetune-status.md)
+- [Fine-tuning LLMs](features/finetuning.md)
 - [Research advisor](features/research-advisor.md)
 - [Background campaigns](features/background-campaigns.md)
 - [Model benchmarks](features/model-benchmarks.md)

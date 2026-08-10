@@ -2754,6 +2754,30 @@ document.querySelectorAll(".quick").forEach((b) =>
     if (b.dataset.extra) { try { extra = JSON.parse(b.dataset.extra); } catch (e) { extra = null; } }
     sendChat(b.dataset.text || "", b.dataset.intent || "", extra);
   }));
+// Finetune quick controls: stage triggers use the finetune_stage WS message
+// (not the chat intent path) so the host worker queue handles them.
+function ftQuickStage(stage, opts) {
+  api("/api/finetune/status").then((st) => {
+    const jobs = (st.jobs || []).filter((j) => j.kind === "training");
+    const jobId = jobs.length ? jobs[0].id : "";
+    send({ type: "finetune_stage", stage, job_id: jobId, options: opts || {}, label: `stage ${stage}` });
+    toast(`Stage ${stage} queued — the host worker will run it; progress streams here.`);
+  }).catch(() => toast("Could not read finetune status.", 4000));
+}
+const $ftTest = $("quick-ft-test");
+if ($ftTest) $ftTest.addEventListener("click", (e) => { e.preventDefault(); ftQuickStage(5, { questions: [], mine_transcripts: true, n: 12, generation: "hf" }); });
+const $ftVerify = $("quick-ft-verify");
+if ($ftVerify) $ftVerify.addEventListener("click", (e) => { e.preventDefault(); ftQuickStage(4, {}); });
+const $ftSummary = $("quick-ft-summary");
+if ($ftSummary) $ftSummary.addEventListener("click", (e) => {
+  e.preventDefault();
+  sendChat("Show the finetune pipeline summary and the latest RAG verification report.", "finetune_summary", null);
+});
+const $ftDocs = $("quick-ft-docs");
+if ($ftDocs) $ftDocs.addEventListener("click", (e) => {
+  e.preventDefault();
+  window.open(B("/gitbook/#/features/finetuning"), "_blank", "noopener");
+});
 // Clicking a figure rendered inside a chat message opens its artifact modal.
 $("messages").addEventListener("click", (e) => {
   const img = e.target.closest("img.chat-fig");
@@ -6901,6 +6925,16 @@ function ftStagesHtml(snap) {
   return (snap.stages || []).map(ftStageHtml).join("");
 }
 
+// Summary strip: pipeline headline + latest verification metrics/Δ.
+function ftSummaryHtml(snap) {
+  const bits = [];
+  const v = (snap.stages || []).find((s) => s.id === "verify");
+  if (v && v.state === "done" && v.detail) bits.push(`<span class="ft-sum-bit">${esc(v.detail)}</span>`);
+  if (snap.job_id) bits.push(`<span class="ft-sum-bit">job <code>${esc(snap.job_id)}</code></span>`);
+  if (!bits.length) return "";
+  return `<div class="ft-summary-inner">${bits.join("")}</div>`;
+}
+
 function ftBadge(status) {
   const cls = status === "running" ? "det" : status === "done" ? "ok"
     : status === "failed" ? "danger" : "warn";
@@ -6924,6 +6958,7 @@ function ensureFtPipeCard() {
     </summary>
     <div class="ft-stages"></div>
     <div class="ft-pipe-bar"><div class="ft-pipe-fill"></div></div>
+    <div class="ft-summary"></div>
     <div class="ft-log-head">
       <span class="ft-log-label">debug log</span>
       <span class="ft-log-job muted"></span>
@@ -6988,6 +7023,8 @@ function renderFinetunePipelineCard(snap) {
   card.querySelector(".ft-eta").textContent = snap.eta ? "ETA " + snap.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(snap);
   card.querySelector(".ft-pipe-fill").style.width = (snap.pct || 0) + "%";
+  const sum = card.querySelector(".ft-summary");
+  if (sum) sum.innerHTML = ftSummaryHtml(snap);
   const actions = card.querySelector(".ft-actions");
   if (actions) actions.outerHTML = ftStageActions(snap);
   else card.querySelector(".ft-stages").insertAdjacentHTML("afterend", ftStageActions(snap));
@@ -7051,6 +7088,8 @@ function restoreFinetuneLiveCard() {
   card.querySelector(".ft-eta").textContent = state._ftSnapshot.eta ? "ETA " + state._ftSnapshot.eta : "";
   card.querySelector(".ft-stages").innerHTML = ftStagesHtml(state._ftSnapshot);
   card.querySelector(".ft-pipe-fill").style.width = (state._ftSnapshot.pct || 0) + "%";
+  const sum = card.querySelector(".ft-summary");
+  if (sum) sum.innerHTML = ftSummaryHtml(state._ftSnapshot);
   const actions = card.querySelector(".ft-actions");
   if (actions) actions.outerHTML = ftStageActions(state._ftSnapshot);
   else card.querySelector(".ft-stages").insertAdjacentHTML("afterend", ftStageActions(state._ftSnapshot));

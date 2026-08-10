@@ -571,6 +571,18 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
                 data-text="Generate a lab-notebook report for the last run">📊 Report last run</button>
         <button class="btn subtle small quick"
                 data-text="Summarize our conversation so far">📝 Summarize chat</button>
+        <button class="btn subtle small quick" id="quick-ft-test"
+                data-intent="finetune_stage"
+                data-extra='{"finetune_stage":{"stage":5,"mine_transcripts":true,"n":12}}'
+                title="Test the finetuned LLM with custom questions + transcript samples (RAG verification)">🔧 Test finetuned LLM</button>
+        <button class="btn subtle small quick" id="quick-ft-verify"
+                data-intent="finetune_stage"
+                data-extra='{"finetune_stage":{"stage":4}}'
+                title="Run stage 4: full base-vs-adapter RAG verification (30 questions)">⚖ Verify adapter</button>
+        <button class="btn subtle small quick" id="quick-ft-summary"
+                title="Show the finetune pipeline summary + report in the chat">📋 Finetune summary</button>
+        <button class="btn subtle small quick" id="quick-ft-docs"
+                title="Open the fine-tuning documentation (hosted GitBook)">📖 Finetune docs</button>
         <button class="btn subtle small quick"
                 data-text="Import the Kaggle dataset alexisbcook/titanic into the project">📥 Import Kaggle dataset</button>
         <button class="btn subtle small quick"

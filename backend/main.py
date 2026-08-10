@@ -1292,6 +1292,35 @@ async def ws_chat(ws: WebSocket, name: str):
                         rt, coordinator, emit, text, intent, experiment_id,
                         msg_extra, user_tags)
                     return
+                if intent == "finetune_summary":
+                    # Deterministic summary + report of the finetune pipeline,
+                    # posted straight to the chat (no LLM round-trip).
+                    from . import finetune_status as fs
+                    snap = fs.pipeline_snapshot()
+                    summary = ["**🔧 LoRA finetune pipeline — summary**", ""]
+                    for s in snap.get("stages") or []:
+                        ico = {"pending": "○", "running": "◔",
+                               "done": "✓", "failed": "✗"}.get(s.get("state"), "·")
+                        summary.append(f"- {ico} **{s.get('label')}** — {s.get('detail') or s.get('state')}")
+                    summary.append("")
+                    summary.append(f"**Pipeline:** {snap.get('pct')}% · {snap.get('message')} · ETA {snap.get('eta') or '—'}")
+                    latest_report = ""
+                    try:
+                        vruns = fs.validate_runs()
+                        done = [r for r in vruns if r.get("status") == "done"]
+                        if done:
+                            latest_report = done[0].get("report") or ""
+                    except Exception:  # noqa: BLE001
+                        pass
+                    content = "\n".join(summary)
+                    if latest_report:
+                        content += "\n\n---\n\n" + latest_report
+                    amid = rt.store.add_message("assistant", content, {"tags": ["finetune", "report", "summary"]})
+                    await emit("assistant_message", {"id": amid, "content": content,
+                                                     "tags": ["finetune", "report", "summary"],
+                                                     "created_at": _msg_created_at(rt, amid)})
+                    await emit("done", {})
+                    return
                 if intent == "plan_step":
                     # Round-30: run one experiment plan step. Resolve the
                     # experiment + step, bind the coordinator, mark the step

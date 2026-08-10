@@ -1032,6 +1032,11 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .ft-history { margin: 8px 2px 0; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
 .ft-history summary { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .ft-history-msg { color: var(--text-dim); font-size: 11.5px; }
+.ft-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ft-summary-inner { display: flex; flex-wrap: wrap; gap: 6px; }
+.ft-sum-bit { font-size: 11px; padding: 2px 9px; border-radius: 12px; border: 1px solid var(--accent, #35c4b6);
+  color: var(--accent, #35c4b6); background: rgba(53,196,182,.08); }
+.ft-sum-bit code { background: transparent; }
 
 .exp-card { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
   display: flex; flex-direction: column; gap: 2px; }
