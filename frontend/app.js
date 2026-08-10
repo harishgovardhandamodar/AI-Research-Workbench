@@ -690,7 +690,20 @@ function pipelineHtml(run, exp) {
   if (cfgKeys.length) {
     h += `<div class="pipe-sec">Hyperparameters · model config</div><div class="run-detail-grid">`;
     for (const k of cfgKeys) {
-      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(String(cfg[k]))}</span>`;
+      const v = cfg[k];
+      // Compact display: arrays/objects (e.g. metric_series, report) render as
+      // a collapsed summary instead of "[object Object]".
+      let vstr;
+      if (Array.isArray(v)) {
+        vstr = `[${v.length} item(s)]`;
+        if (v.length && typeof v[0] === "object") vstr += " (chart above)";
+      } else if (v && typeof v === "object") {
+        vstr = JSON.stringify(v).length > 60
+          ? JSON.stringify(v).slice(0, 60) + "…" : JSON.stringify(v);
+      } else {
+        vstr = String(v);
+      }
+      h += `<span class="rd-k">${esc(k)}</span><span class="rd-v">${esc(vstr)}</span>`;
     }
     h += `</div>`;
   }
@@ -6812,6 +6825,32 @@ async function loadFinetuneValidate() {
 
 if ($("finetune-validate-refresh")) {
   $("finetune-validate-refresh").addEventListener("click", loadFinetuneValidate);
+}
+
+// Test the finetuned LLM with custom questions: queue stage 5 for the worker.
+if ($("finetune-custom-run")) {
+  $("finetune-custom-run").addEventListener("click", async () => {
+    const btn = $("finetune-custom-run");
+    const qs = ($("finetune-custom-questions").value || "")
+      .split("\n").map((s) => s.trim()).filter(Boolean);
+    const mine = !!$("finetune-custom-mine").checked;
+    // job id = latest training job from the finetune status endpoint.
+    let jobId = "";
+    try {
+      const st = await api("/api/finetune/status");
+      const done = (st.jobs || []).filter((j) => j.kind === "training");
+      if (done.length) jobId = done[0].id;
+    } catch (e) { /* best-effort */ }
+    if (!qs.length && !mine) { toast("Add at least one question or enable transcript mining."); return; }
+    if (!jobId) { toast("No training job found to attach the validation to."); return; }
+    send({ type: "finetune_stage", stage: 5, job_id: jobId,
+           options: { questions: qs, mine_transcripts: mine },
+           label: "custom QA validation" });
+    btn.disabled = true;
+    btn.textContent = "⏳ queued…";
+    toast(`Custom validation queued with ${qs.length} question(s) + transcript mining ${mine ? "on" : "off"}.`);
+    setTimeout(() => { btn.disabled = false; btn.textContent = "▶ Test adapter with custom questions"; }, 3000);
+  });
 }
 
 /* ---------- finetune live pipeline card + debug log in the chat ---------- */

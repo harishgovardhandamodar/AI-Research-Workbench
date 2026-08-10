@@ -236,7 +236,8 @@ def get_job(job_id: str) -> dict | None:
 # up, executes the stage, and writes a result file. This keeps the trigger
 # logic tiny and observable: requests/<id>.json -> results/<id>.json.
 
-STAGE_NAMES = {1: "ingest + chunk", 2: "dataset", 3: "train", 4: "verify"}
+STAGE_NAMES = {1: "ingest + chunk", 2: "dataset", 3: "train", 4: "verify",
+               5: "custom QA validation"}
 
 
 def submit_stage(stage: int, job_id: str = "", options: dict | None = None,

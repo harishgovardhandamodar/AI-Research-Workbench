@@ -208,6 +208,18 @@ class FinetuneMonitor:
         if prog.get("total"):
             metrics["questions"] = int(prog["total"])
 
+        # Fresh-read the report (the .md may be written a moment after the run
+        # flips to done), so the chat message always carries the full report.
+        report = run.get("report") or ""
+        if not report and status == "done":
+            try:
+                for v in fs.validate_runs():
+                    if v.get("id") == rid:
+                        report = v.get("report") or ""
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+
         # Experiments tab: create/update a kind=verify run on the experiment.
         try:
             store = self.rt.store
@@ -218,7 +230,7 @@ class FinetuneMonitor:
                 "base_model": run.get("base_model"),
                 "adapter_path": run.get("adapter_path"),
                 "status": status,
-                "report": run.get("report") or "",
+                "report": report,
                 "report_path": run.get("report_path") or "",
             }
             existing = store.find_finetune_run(f"verify:{rid}")
@@ -244,8 +256,8 @@ class FinetuneMonitor:
         # Chat: an assistant message with the report + a broadcast for live UI.
         head = "Verification complete" if status == "done" else "Verification failed"
         lines = [f"**Finetune · {head}** — RAG base vs adapter"]
-        if status == "done" and run.get("report"):
-            lines.append(run["report"])
+        if status == "done" and report:
+            lines.append(report)
         else:
             if run.get("error"):
                 lines.append(f"- Error: {run['error']}")
@@ -255,7 +267,7 @@ class FinetuneMonitor:
         try:
             await self.rt.broadcast("finetune_report", {
                 "run_id": rid, "status": status, "metrics": metrics,
-                "report": run.get("report") or "",
+                "report": report,
                 "pipeline": fs.pipeline_snapshot()})
         except Exception:  # noqa: BLE001
             pass

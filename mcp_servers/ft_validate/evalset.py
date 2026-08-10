@@ -183,3 +183,134 @@ def preview_eval_set(store: ValidateStore, eval_set_id: str, n: int = 10) -> dic
 
 def list_eval_sets(store: ValidateStore) -> dict:
     return {"eval_sets": store.list_evalsets()}
+
+
+# ------------------------------------------------------ custom questions -----
+# "Test the finetuned LLM": build a small eval set from (a) user-supplied custom
+# questions (e.g. about QUAI/QI/crypto) and (b) sample queries mined from the
+# corpus chunks — especially speaker-labeled diarized interview transcripts.
+
+CUSTOM_KEYWORDS = (
+    "QUAI", "QI", "token", "asset", "mining", "proof-of-work", "proof of work",
+    "network", "Layer 1", "L1", "dApp", "digital asset", "crypto", "wallet",
+    "hashrate", "merge-mining", "merge mining", "kWh", "energy", "inflation",
+    "PoW", "PoS", "uncle", "fortify", "QIP", "amm", "liquidity", "burn",
+    "node", "testnet", "mainnet", "dollar", "peg",
+)
+
+_SPEAKER_TAGS = {
+    "Speakers", "Discussion points", "Topics discussed", "Summary",
+    "Announcements", "Community question", "Community Member 1",
+    "Community Member 2", "Matt Man", "Dr. K", None,
+}
+
+
+def _build_custom_question(store: ValidateStore, index_id: str,
+                           question: str, topic: str = "") -> EvalQuestion:
+    """Wrap one question with the top retrieved chunk as gold/evidence."""
+    from .rag import retrieve
+    try:
+        top = retrieve(store, index_id, question, top_k=3)
+    except Exception:  # noqa: BLE001
+        top = []
+    ev_ids = [t["chunk_id"] for t in top]
+    ev_snips = [t["text"] for t in top]
+    gold = ev_snips[0] if ev_snips else ""
+    return EvalQuestion(
+        id=hashlib.sha1(f"custom:{question}".encode()).hexdigest()[:12],
+        question=question, gold_answer=gold,
+        evidence_chunk_ids=ev_ids, evidence_snippets=ev_snips,
+        difficulty="medium",
+        tags=["custom"] + ([topic] if topic else []),
+    )
+
+
+def _mine_transcript_questions(chunks: Sequence[dict], limit: int) -> list[EvalQuestion]:
+    """Sample queries from diarized transcripts: pick speaker-labeled chunks
+    that mention QUAI/QI/crypto and turn their first sentence into a question."""
+    import re as _re
+
+    kw = _re.compile("|".join(map(_re.escape, CUSTOM_KEYWORDS)), _re.I)
+    out: list[EvalQuestion] = []
+    for c in chunks:
+        speaker = c.get("metadata", {}).get("speaker") or c.get("speaker")
+        if speaker in _SPEAKER_TAGS:
+            continue  # only diarized speaker turns (Matt Man, Dr. K, community…)
+        text = " ".join(str(c.get("text", "")).split())
+        if not kw.search(text) or not text:
+            continue
+        snippet = text[:120]
+        q = (f"Based on the interview transcript, what is stated about: "
+             f"{snippet}…? Give specifics (names, numbers, dates) if present.")
+        out.append(EvalQuestion(
+            id=hashlib.sha1(f"mine:{c['id']}".encode()).hexdigest()[:12],
+            question=q, gold_answer=text[:400],
+            evidence_chunk_ids=[c["id"]], evidence_snippets=[text[:1200]],
+            difficulty="medium", tags=["custom", "transcript", str(speaker)],
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def generate_custom_eval_set(store: ValidateStore, index_id: str,
+                             questions: Sequence[str] | None = None,
+                             mine_transcripts: bool = True,
+                             n: int = 12, eval_set_id: str | None = None,
+                             topics: Sequence[str] | None = None) -> dict:
+    """Build an eval set for testing the finetuned LLM with custom questions.
+
+    ``questions`` — explicit user questions (e.g. about QUAI/QI, crypto assets).
+    ``mine_transcripts`` — also mine sample queries from diarized transcripts
+    and keyword-rich chunks. Each question carries the top retrieved chunk as
+    evidence so scoring can check faithfulness of the model's answer.
+    """
+    data = store.get_rag_index(index_id)
+    if data is None:
+        raise ValueError(f"RAG index not found: {index_id} — run build_rag_index first")
+    chunks, _v, _meta = data
+    if not chunks:
+        raise ValueError("RAG index has no chunks")
+
+    qs: list[EvalQuestion] = []
+    topics = topics or CUSTOM_KEYWORDS[:8]
+
+    # 1. Explicit custom questions.
+    for q in (questions or []):
+        q = str(q).strip()
+        if q:
+            qs.append(_build_custom_question(store, index_id, q))
+
+    # 2. Sample queries mined from diarized transcripts.
+    if mine_transcripts:
+        qs.extend(_mine_transcript_questions(chunks, limit=max(0, n)))
+
+    # 3. Topic-driven samples from keyword-rich chunks (non-speaker fallback).
+    import re as _re
+    kw = _re.compile("|".join(map(_re.escape, topics)), _re.I)
+    for c in chunks:
+        if len(qs) >= n:
+            break
+        text = " ".join(str(c.get("text", "")).split())
+        m = kw.search(text)
+        if not m or not text:
+            continue
+        t = m.group(0)
+        qs.append(EvalQuestion(
+            id=hashlib.sha1(f"top:{t}:{c['id']}".encode()).hexdigest()[:12],
+            question=(f"Based on the source material, what is stated about "
+                      f"'{t}'? Give specifics (names, numbers, dates) if present."),
+            gold_answer=text[:400], evidence_chunk_ids=[c["id"]],
+            evidence_snippets=[text[:1200]],
+            difficulty="medium", tags=["custom", "topic", t.lower()],
+        ))
+
+    if not qs:
+        raise ValueError("no questions produced — pass custom questions or "
+                         "enable transcript mining")
+    qs = qs[:max(1, n)]
+    es_id = eval_set_id or f"ev-custom-{hashlib.sha1(f'{index_id}:{time.time()}'.encode()).hexdigest()[:8]}"
+    es = EvalSet(id=es_id, mode="custom", created_at=time.time(), questions=qs)
+    store.save_evalset(es)
+    return {"eval_set_id": es_id, "mode": "custom", "n": len(qs),
+            "sample": [q.model_dump() for q in qs[:5]]}

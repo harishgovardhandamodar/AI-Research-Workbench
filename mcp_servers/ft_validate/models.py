@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-EvalMode = Literal["heldout", "synthetic", "hard"]
+EvalMode = Literal["heldout", "synthetic", "hard", "custom"]
 ReportFormat = Literal["json", "markdown", "both"]
 Metrics = Literal["faithfulness", "accuracy", "hallucination", "retention"]
 

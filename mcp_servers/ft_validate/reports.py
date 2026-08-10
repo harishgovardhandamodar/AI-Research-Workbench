@@ -71,6 +71,47 @@ def render_report_markdown(run: ValidationRun) -> str:
             if ev:
                 lines.append(f"- **Evidence:** {ev[:200]}")
             lines.append("")
+
+    # Test / validation Q&A: each question with the finetuned model's answer
+    # (and the base model's for contrast) + per-question scores.
+    if run.per_question:
+        lines.append("## Test / validation questions — answers")
+        lines.append("")
+        for i, rec in enumerate(run.per_question, 1):
+            q = rec.get("question") or ""
+            lines.append(f"### Q{i}. {q}")
+            lines.append("")
+            base_ans = str(rec.get("base") or "").strip()
+            adapt_ans = str(rec.get("adapter") or "").strip()
+            if adapt_ans and adapt_ans != base_ans:
+                lines.append(f"**Finetuned (adapter):** {adapt_ans[:600]}")
+                lines.append("")
+                lines.append(f"**Base:** {base_ans[:400]}")
+            elif adapt_ans:
+                lines.append(f"**Answer (shared by base & adapter):** {adapt_ans[:600]}")
+            else:
+                lines.append("*(no answer recorded)*")
+            lines.append("")
+            as_ = rec.get("adapter_scores") or {}
+            bs_ = rec.get("base_scores") or {}
+            if as_ or bs_:
+                bits = []
+                for k in ("faithfulness", "accuracy", "hallucination", "retention"):
+                    a = as_.get(k)
+                    b = bs_.get(k)
+                    if a is None:
+                        continue
+                    d = (a - b) if b is not None else None
+                    bit = f"{k} {a:.2f}"
+                    if d is not None:
+                        bit += f" (Δ {d:+.2f})"
+                    bits.append(bit)
+                lines.append(f"- **Scores:** {', '.join(bits)}")
+                lines.append("")
+            ev0 = (rec.get("evidence_snippets") or [""])[0]
+            if ev0:
+                lines.append(f"- **Evidence:** {ev0[:200]}")
+                lines.append("")
     return "\n".join(lines)
 
 

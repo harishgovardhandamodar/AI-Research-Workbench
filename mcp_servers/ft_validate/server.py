@@ -110,6 +110,24 @@ def generate_eval_set(index_id: str, mode: str = "heldout", n: int = 20,
         return _err(e)
 
 
+@mcp.tool()
+def generate_custom_eval_set(index_id: str, questions: list[str] | None = None,
+                             mine_transcripts: bool = True, n: int = 12,
+                             eval_set_id: str | None = None,
+                             topics: list[str] | None = None) -> str:
+    """Build a small eval set to TEST the finetuned LLM with custom questions.
+    Pass your own questions (e.g. about QUAI/QI, crypto assets) and/or let it
+    mine sample queries from the corpus — including diarized interview
+    transcripts. Returns an eval_set_id for run_rag_verification."""
+    try:
+        return _out(**evalset.generate_custom_eval_set(
+            _store(), index_id, questions=questions,
+            mine_transcripts=mine_transcripts, n=n,
+            eval_set_id=eval_set_id, topics=topics))
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 @mcp.tool(annotations=RO)
 def preview_eval_set(eval_set_id: str, n: int = 10) -> str:
     """Preview questions from an eval set (with gold answers + evidence)."""

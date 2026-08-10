@@ -516,10 +516,18 @@ class ProjectStore:
         self._conn.commit()
 
     def find_finetune_run(self, job_id: str) -> int | None:
-        """The run id recorded for a dk-lora training job (by label), if any."""
+        """The run id recorded for a dk-lora training job (by label), if any.
+        Returns the most recent match (labels are unique per job/verify run)."""
         row = self._conn.execute(
-            "SELECT id FROM runs WHERE kind='finetune' AND label=?",
+            "SELECT id FROM runs WHERE kind='finetune' AND label=? "
+            "ORDER BY id DESC LIMIT 1",
             (f"dk-lora:{job_id}",)).fetchone()
+        if row is not None:
+            return row["id"]
+        row = self._conn.execute(
+            "SELECT id FROM runs WHERE kind='verify' AND label=? "
+            "ORDER BY id DESC LIMIT 1",
+            (f"dk-lora:verify:{job_id}",)).fetchone()
         return row["id"] if row else None
 
     # -- suggestions (first-class reviewer suggestion records) ---------------

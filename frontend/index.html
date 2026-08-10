@@ -306,6 +306,16 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
           <span class="spacer"></span>
           <button id="finetune-validate-refresh" class="btn subtle small">Refresh</button>
         </div>
+        <div class="exp-new-form" id="finetune-custom-form">
+          <div class="exp-new-row">
+            <textarea id="finetune-custom-questions" rows="3" placeholder="Test the finetuned LLM with your own questions — one per line (e.g. &quot;What is QI pegged to?&quot;, &quot;How does QUAI mining work?&quot;). Leave blank to mine sample queries from the interview transcripts."></textarea>
+          </div>
+          <div class="exp-new-row">
+            <label class="exp-check"><input type="checkbox" id="finetune-custom-mine" checked /> mine sample queries from transcripts</label>
+            <span class="spacer"></span>
+            <button id="finetune-custom-run" class="btn subtle small">▶ Test adapter with custom questions</button>
+          </div>
+        </div>
         <div id="finetune-validate" class="finetune-jobs"></div>
       </section>
 

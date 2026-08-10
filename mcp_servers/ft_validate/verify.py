@@ -76,15 +76,36 @@ HF_GEN = '''
 def gen_hf(model_spec):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     base = model_spec.get("base") or model_spec.get("path")
-    tokenizer = AutoTokenizer.from_pretrained(base)
+    adapter_path = model_spec.get("path") if model_spec.get("kind") == "adapter" else None
+    if adapter_path:
+        # The adapter may have resized embeddings (e.g. new tokens added during
+        # finetuning), so load the tokenizer from the adapter dir and grow the
+        # base model's embedding/lm_head to match BEFORE attaching the adapter.
+        # Use len(tokenizer) — it includes added tokens (vocab_size is just the
+        # base vocab, e.g. 128000 vs len 128257). Training saved untied weights
+        # (embed 128257 / lm_head 128256), so restore lm_head to its original
+        # size after resizing.
+        tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+        model = AutoModelForCausalLM.from_pretrained(base, device_map="auto")
+        lm_orig = model.get_output_embeddings().weight.shape[0]
+        if model.get_input_embeddings():
+            model.resize_token_embeddings(len(tokenizer))
+        from peft import PeftModel
+        import torch as _torch
+        cur_lm = model.get_output_embeddings().weight.shape[0]
+        if cur_lm != lm_orig:
+            wt = model.get_output_embeddings().weight
+            head = _torch.nn.Linear(wt.shape[1], lm_orig, bias=False,
+                                    dtype=wt.dtype).to(wt.device)
+            with _torch.no_grad():
+                head.weight.copy_(wt.detach()[:lm_orig])
+            model.set_output_embeddings(head)
+        model = PeftModel.from_pretrained(model, adapter_path)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(base)
+        model = AutoModelForCausalLM.from_pretrained(base, device_map="auto")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    if model_spec.get("kind") == "adapter":
-        from peft import PeftModel
-        model = AutoModelForCausalLM.from_pretrained(base, device_map="auto")
-        model = PeftModel.from_pretrained(model, model_spec["path"])
-    else:
-        model = AutoModelForCausalLM.from_pretrained(base, device_map="auto")
     def answer(question, evidence):
         ctx = "\\n".join(evidence[:3]) or "No context."
         prompt = f"Context:\\n{{ctx}}\\n\\nQuestion: {{question}}\\nAnswer:"
