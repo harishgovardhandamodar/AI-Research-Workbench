@@ -443,6 +443,12 @@ Claude, Cursor or VS Code could use.
   **verifies a trained adapter** vs its base model: builds a RAG index over the
   evaluation corpus, samples an eval set, scores base-vs-adapter responses, and
   writes a comparison report — see `gitbook/features/finetune-status.md`.
+- A built-in **`flint`** MCP server (`flint__*` tools) renders **Flint semantic
+  chart specs** locally (Vega-Lite / ECharts / Chart.js): `render_chart`,
+  `compile_chart`, `validate_chart`, `list_chart_types`, `list_themes`, and
+  `create_chart_view` (interactive chart UI). Node-based — installed in the
+  container via `npm install -g flint-chart-mcp`. See
+  <https://microsoft.github.io/flint-chart/>.
 - Add/remove servers under **Settings → MCP** (stdio command+args, or HTTP URL +
   headers), then re-save; status and tool counts are shown.
 - **Human-in-the-loop**: tools annotated read-only run freely; anything that may

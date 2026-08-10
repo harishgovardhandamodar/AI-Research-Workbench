@@ -99,6 +99,17 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    # ---- Flint charts MCP (semantic chart spec -> rendered chart) ----
+    # Node-based stdio server, installed in the container via
+    # `npm install -g flint-chart-mcp` (bin: /usr/local/bin/flint-chart-mcp).
+    {
+        "name": "flint",
+        "transport": "stdio",
+        "command": "/usr/local/bin/flint-chart-mcp",
+        "args": [],
+        "env": {},
+        "trusted": False,
+    },
     # ---- EDA suite (five servers sharing a disk-backed DatasetStore) ----
     {
         "name": "eda_profiler",
