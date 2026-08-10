@@ -15,6 +15,7 @@ import json
 import re
 import sys
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -413,10 +414,34 @@ def tool_turn_label(tools: list[dict]) -> tuple[str, str]:
     return "", ""
 
 
+def _project_tabular_file(rt) -> str | None:
+    """The first tabular data file (CSV/Parquet/Excel/JSON) attached to the
+    project — at its root or in data/. Used to run the privacy workflow on the
+    user's actual source instead of synthetic data."""
+    try:
+        suffixes = (".csv", ".tsv", ".txt", ".parquet", ".xlsx", ".xls",
+                    ".json", ".jsonl")
+        for sub in (rt.dir, rt.dir / "data"):
+            if not sub.is_dir():
+                continue
+            for p in sorted(sub.iterdir()):
+                if p.is_file() and p.suffix.lower() in suffixes:
+                    return str(p)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 async def run_privacy_workflow(rt: ProjectRuntime, emit,
                                fresh: bool = False, compare: bool = False,
                                prompt: str = "") -> str:
-    """Run (or compare) the privacy workflow and register outputs as artifacts."""
+    """Run (or compare) the privacy workflow and register outputs as artifacts.
+
+    If the project has an attached tabular data file (CSV/Parquet/Excel/JSON),
+    it is passed to the workflow via ``--data`` so the peer-exploitation /
+    red-team / DP stages run on the user's actual source instead of the bundled
+    synthetic credit-card generator.
+    """
     script = PRIVACY_WORKFLOW["script"]
     base_report_dir = ROOT / PRIVACY_WORKFLOW["report_dir"]
     runs_file = PROJECTS_DIR.parent / "privacy_runs.json"   # persistent volume
@@ -426,194 +451,256 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
         args.append("--fresh")
     if compare:
         args.append("--compare")
+    else:
+        # Attach the project's data file (first tabular file at the project
+        # root or data/) so the workflow runs on the real source.
+        data_file = _project_tabular_file(rt)
+        if data_file:
+            args += ["--data", str(data_file)]
     wf = getattr(rt, "workflow", None)
     if wf is not None and not compare:
         from .workflows import PRIVACY_STAGES
 
         await wf.start(title="Privacy workflow", stages=PRIVACY_STAGES)
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, *args, cwd=str(ROOT),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        # Stream stdout so the workflow panel shows live stage progress.
-        out_b = bytearray()
-        if proc.stdout is not None:
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                out_b += line
-                if wf is not None and not compare:
-                    txt = line.decode(errors="replace").upper()
-                    for sid, marker in (("stage1", "STAGE 1"), ("stage2", "STAGE 2"),
-                                        ("stage3", "STAGE 3")):
-                        if marker in txt:
-                            await wf.update_stage(sid, "done",
-                                                  message=line.decode(errors="replace").strip()[:90])
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
-    except asyncio.TimeoutError:
-        proc.kill()
-        out, err = b"", b"[timeout] workflow exceeded 600s"
-    summary = (bytes(out_b) or out).decode(errors="replace")
-    if err:
-        summary += "\n[stderr]\n" + err.decode(errors="replace")[-2000:]
-    if wf is not None and not compare:
-        await wf.update_stage("report", "done", message="Report & artifacts ready")
-        await wf.finish()
 
-    report_dir = out_dir
-    artifact_names = []
-    artifact_refs = []
-    fig_links = []
-    if report_dir.exists():
+    async def _run_to_completion():
+        """Run the workflow subprocess + register artifacts + build the summary.
+
+        Everything from subprocess creation to message posting lives in this
+        coroutine so a client disconnect (WS handler cancellation) cannot kill
+        it: the workflow keeps running and posts its report even after the tab
+        closes, like background campaigns.
+        """
+        import logging as _log
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, *args, cwd=str(ROOT),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
-            env = await rt.kernels.get_env()
-        except Exception:  # noqa: BLE001
-            env = {}
-        for f in sorted(report_dir.iterdir()):
-            if f.suffix == ".md":
-                art = Artifact(kind="text", name=f.stem,
-                               description=f"Privacy workflow report: {f.stem}",
-                               code="# privacy workflow (autogenerated)", env=env, message_id="")
-                rt.artifacts.add_artifact(art, data=f.read_bytes(), data_type="text")
-            elif f.suffix == ".png":
-                art = Artifact(kind="figure", name=f.stem,
-                               description=f"Privacy workflow figure: {f.stem}",
-                               code="# privacy workflow (autogenerated)", env=env, message_id="")
-                rt.artifacts.add_artifact(art, data=f.read_bytes(), data_type="png")
-                fig_links.append((art.name, art.id))
-            else:
-                continue
-            artifact_names.append(art.name)
-            artifact_refs.append({"name": art.name, "id": art.id})
-            if emit:
-                try:
-                    await emit("artifact", {"artifact": art.to_dict()})
-                except Exception:  # noqa: BLE001
-                    pass
+            out_b = bytearray()
+            if proc.stdout is not None:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    out_b += line
+                    if wf is not None and not compare:
+                        txt = line.decode(errors="replace").upper()
+                        for sid, marker in (("stage1", "STAGE 1"), ("stage2", "STAGE 2"),
+                                            ("stage3", "STAGE 3")):
+                            if marker in txt:
+                                await wf.update_stage(sid, "done",
+                                                      message=line.decode(errors="replace").strip()[:90])
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc.kill()
+            out, err = b"", b"[timeout] workflow exceeded 600s"
+        summary = (bytes(out_b) or out).decode(errors="replace")
+        if err:
+            summary += "\n[stderr]\n" + err.decode(errors="replace")[-2000:]
+        if wf is not None and not compare:
+            await wf.update_stage("report", "done", message="Report & artifacts ready")
+            await wf.finish()
 
-    # Attach the produced artifact names to the run's history record so the
-    # Experiments tab can link each run to its reports/figures.
-    if not compare and runs_file.exists():
-        try:
-            runs = json.loads(runs_file.read_text())
-            if runs and isinstance(runs, list):
-                runs[-1]["artifacts"] = artifact_refs
-                runs_file.write_text(json.dumps(runs, indent=2))
-        except (json.JSONDecodeError, OSError):
-            pass
+        report_dir = out_dir
+        artifact_names = []
+        artifact_refs = []
+        fig_links = []
+        if report_dir.exists():
+            try:
+                env = await rt.kernels.get_env()
+            except Exception:  # noqa: BLE001
+                env = {}
+            for f in sorted(report_dir.iterdir()):
+                if f.suffix == ".md":
+                    art = Artifact(kind="text", name=f.stem,
+                                   description=f"Privacy workflow report: {f.stem}",
+                                   code="# privacy workflow (autogenerated)", env=env, message_id="")
+                    rt.artifacts.add_artifact(art, data=f.read_bytes(), data_type="text")
+                elif f.suffix == ".png":
+                    art = Artifact(kind="figure", name=f.stem,
+                                   description=f"Privacy workflow figure: {f.stem}",
+                                   code="# privacy workflow (autogenerated)", env=env, message_id="")
+                    rt.artifacts.add_artifact(art, data=f.read_bytes(), data_type="png")
+                    fig_links.append((art.name, art.id))
+                else:
+                    continue
+                artifact_names.append(art.name)
+                artifact_refs.append({"name": art.name, "id": art.id})
+                if emit:
+                    try:
+                        await emit("artifact", {"artifact": art.to_dict()})
+                    except Exception:  # noqa: BLE001
+                        pass
 
-    # Build a chat message that includes the run summary AND the full report
-    # (audit trail or comparison), with figures embedded inline.
-    report_file = "compare_report.md" if compare else "audit_trail.md"
-    report_md = (report_dir / report_file).read_text() if (report_dir / report_file).exists() else ""
-    summary_block = "\n".join(
-        f"    {ln}" if ln.strip() else ln for ln in summary.splitlines())
+        # Attach the produced artifact names to the run's history record so the
+        # Experiments tab can link each run to its reports/figures.
+        if not compare and runs_file.exists():
+            try:
+                runs = json.loads(runs_file.read_text())
+                if runs and isinstance(runs, list):
+                    runs[-1]["artifacts"] = artifact_refs
+                    runs_file.write_text(json.dumps(runs, indent=2))
+            except (json.JSONDecodeError, OSError):
+                pass
 
-    # Resolve inline figure placeholders (<!-- FIGURE:name -->) to artifact links.
-    fig_by_name = {name: aid for name, aid in fig_links}
-    if fig_by_name:
-        import re as _re
-        report_md = _re.sub(
-            r"<!-- FIGURE:(\S+) -->",
-            lambda m: f"![{m.group(1)}](/artifacts/{fig_by_name[m.group(1)]})",
-            report_md)
+        # Build a chat message that includes the run summary AND the full report
+        # (audit trail or comparison), with figures embedded inline.
+        report_file = "compare_report.md" if compare else "audit_trail.md"
+        report_md = (report_dir / report_file).read_text() if (report_dir / report_file).exists() else ""
+        summary_block = "\n".join(
+            f"    {ln}" if ln.strip() else ln for ln in summary.splitlines())
 
-    if compare:
-        lines = [
-            "## Privacy workflow — run comparison",
-            "",
-            "Compared the **stored workflow runs** (run history is kept in the "
-            "project volume). The comparison report and figure below are also "
-            "saved as artifacts.",
-        ]
-        if report_md:
-            lines += ["", "### Comparison report", "", report_md]
-        lines += [
-            "",
-            "> Tip: run the workflow a few more times (e.g. add \"rerun with "
-            "fresh results\") to build up more runs to compare.",
-        ]
-    else:
-        lines = [
-            "## Privacy workflow — peer exploitation · red team · DP robustness",
-            "",
-            "The workflow ran **3 stages** on synthetic credit-card data "
-            "(obfuscation-study generator) and produced the reports below, which "
-            "are also saved as artifacts.",
-        ]
-        if fresh:
+        # Resolve inline figure placeholders (<!-- FIGURE:name -->) to artifact links.
+        fig_by_name = {name: aid for name, aid in fig_links}
+        if fig_by_name:
+            import re as _re
+            report_md = _re.sub(
+                r"<!-- FIGURE:(\S+) -->",
+                lambda m: f"![{m.group(1)}](/artifacts/{fig_by_name[m.group(1)]})",
+                report_md)
+
+        if compare:
+            lines = [
+                "## Privacy workflow — run comparison",
+                "",
+                "Compared the **stored workflow runs** (run history is kept in the "
+                "project volume). The comparison report and figure below are also "
+                "saved as artifacts.",
+            ]
+            if report_md:
+                lines += ["", "### Comparison report", "", report_md]
             lines += [
                 "",
-                "> **Fresh rerun** — this run used a new random seed, so the "
-                "numbers, figures and reports below are **new** and differ from "
-                "previous runs.",
+                "> Tip: run the workflow a few more times (e.g. add \"rerun with "
+                "fresh results\") to build up more runs to compare.",
             ]
+        else:
+            data_src = "synthetic credit-card data (obfuscation-study generator)"
+            if data_file:
+                data_src = (f"the project's attached dataset "
+                            f"(`{Path(data_file).name}`)")
+            lines = [
+                "## Privacy workflow — peer exploitation · red team · DP robustness",
+                "",
+                f"The workflow ran **3 stages** on {data_src} and produced the "
+                "reports below, which are also saved as artifacts.",
+            ]
+            if fresh:
+                lines += [
+                    "",
+                    "> **Fresh rerun** — this run used a new random seed, so the "
+                    "numbers, figures and reports below are **new** and differ from "
+                    "previous runs.",
+                ]
+            lines += [
+                "",
+                "### Run summary",
+                "",
+                "```text",
+                summary_block[:6000],
+                "```",
+            ]
+            if report_md:
+                lines += ["", "### Full report (audit trail)", "", report_md]
         lines += [
             "",
-            "### Run summary",
-            "",
-            "```text",
-            summary_block[:6000],
-            "```",
+            "> Artifacts registered: " + ", ".join(artifact_names),
         ]
-        if report_md:
-            lines += ["", "### Full report (audit trail)", "", report_md]
-    lines += [
-        "",
-        "> Artifacts registered: " + ", ".join(artifact_names),
-    ]
-    message = "\n".join(lines)
+        message = "\n".join(lines)
 
-    # Record this workflow run in the project's own runs table (same source of
-    # truth as agent runs) so the Experiments tab shows it with its metrics,
-    # findings and artifacts. Comparisons don't produce new stage data, so only
-    # real workflow executions are recorded.
-    if not compare:
-        try:
-            last = {}
-            if runs_file.exists():
-                data = json.loads(runs_file.read_text())
-                if data and isinstance(data, list):
-                    last = data[-1]
-            # Branching lineage: fresh reruns derive from the previous workflow
-            # run so the branch-history graph chains them.
-            parent_run_id = None
+        # Record this workflow run in the project's own runs table (same source of
+        # truth as agent runs) so the Experiments tab shows it with its metrics,
+        # findings and artifacts. Comparisons don't produce new stage data, so only
+        # real workflow executions are recorded.
+        if not compare:
             try:
-                prior = [r for r in rt.store.list_runs()
-                         if r.get("kind") == "privacy_workflow"]
-                if prior:
-                    parent_run_id = prior[-1]["id"]
+                last = {}
+                if runs_file.exists():
+                    data = json.loads(runs_file.read_text())
+                    if data and isinstance(data, list):
+                        last = data[-1]
+                # Branching lineage: fresh reruns derive from the previous workflow
+                # run so the branch-history graph chains them.
+                parent_run_id = None
+                try:
+                    prior = [r for r in rt.store.list_runs()
+                             if r.get("kind") == "privacy_workflow"]
+                    if prior:
+                        parent_run_id = prior[-1]["id"]
+                except Exception:  # noqa: BLE001
+                    pass
+                rt.store.add_run(
+                    prompt=prompt or "privacy workflow",
+                    reply=message[:4000],
+                    status="done",
+                    started_at=time.time(), finished_at=time.time(),
+                    artifact_ids=[a["id"] for a in artifact_refs],
+                    metrics=metrics_from_run(last),
+                    kind="privacy_workflow",
+                    label="privacy workflow" + (" (fresh)" if fresh else ""),
+                    config={"findings": findings_from_run(last),
+                            "seed": last.get("seed"), "fresh": bool(fresh)},
+                    parent_run_id=parent_run_id,
+                )
             except Exception:  # noqa: BLE001
                 pass
-            rt.store.add_run(
-                prompt=prompt or "privacy workflow",
-                reply=message[:4000],
-                status="done",
-                started_at=time.time(), finished_at=time.time(),
-                artifact_ids=[a["id"] for a in artifact_refs],
-                metrics=metrics_from_run(last),
-                kind="privacy_workflow",
-                label="privacy workflow" + (" (fresh)" if fresh else ""),
-                config={"findings": findings_from_run(last),
-                        "seed": last.get("seed"), "fresh": bool(fresh)},
-                parent_run_id=parent_run_id,
-            )
+        try:
+            from .audit import emit_tool_audit
+
+            await emit_tool_audit(
+                rt.audit_emitter, agent_id="Fox", session_id=rt.name,
+                trace_id=prompt[:120] or None, tool_name="privacy_workflow",
+                method="privacy_workflow",
+                args={"fresh": fresh, "compare": compare},
+                result=message[:2000], ok=True,
+                duration_ms=0.0, source="coordinator")
         except Exception:  # noqa: BLE001
             pass
-    try:
-        from .audit import emit_tool_audit
 
-        await emit_tool_audit(
-            rt.audit_emitter, agent_id="Fox", session_id=rt.name,
-            trace_id=prompt[:120] or None, tool_name="privacy_workflow",
-            method="privacy_workflow",
-            args={"fresh": fresh, "compare": compare},
-            result=message[:2000], ok=True,
-            duration_ms=0.0, source="coordinator")
+        # Post the result even if the original caller disconnected: persist it
+        # and broadcast to any connected window (like background campaigns).
+        try:
+            amid = rt.store.add_message(
+                "assistant", message,
+                {"tags": message_tags("assistant", message)})
+            if emit:
+                await emit("assistant_message", {
+                    "id": amid, "content": message,
+                    "tags": message_tags("assistant", message),
+                    "created_at": time.time()})
+                await emit("done", {})
+        except Exception:  # noqa: BLE001
+            pass
+        return message[:60_000] if message else "(workflow produced no output)"
+
+    # Launch as an independent task so a client disconnect (WS handler
+    # cancellation) can never cancel the workflow mid-flight — it keeps running
+    # and posts its report/message even if the tab closed. Fire-and-forget: the
+    # caller returns immediately and the task runs to completion on its own.
+    import logging as _log
+    _log.getLogger("uvicorn.error").info("[privacy-workflow] launching task")
+    task = asyncio.create_task(_run_to_completion())
+    def _log_done(t):
+        try:
+            exc = t.exception()
+            if exc:
+                _log.getLogger("uvicorn.error").error(
+                    "[privacy-workflow] task failed: %r", exc, exc_info=exc)
+            else:
+                _log.getLogger("uvicorn.error").info(
+                    "[privacy-workflow] task completed")
+        except asyncio.CancelledError:
+            _log.getLogger("uvicorn.error").warning("[privacy-workflow] task CANCELLED")
+        except Exception:  # noqa: BLE001
+            pass
+    task.add_done_callback(_log_done)
+    try:
+        rt._privacy_workflow_task = task
     except Exception:  # noqa: BLE001
         pass
-    return message[:60_000] if message else "(workflow produced no output)"
+    # Do NOT await the task here: awaiting (even via shield) lets a caller
+    # cancellation propagate. Return immediately; the task posts its own result.
+    return "(privacy workflow running in the background)"
 
 
 def _attach_suggestion_ids(store, source_run_id: int, review: dict) -> None:
@@ -1435,13 +1522,14 @@ async def ws_chat(ws: WebSocket, name: str):
                     if not (result or "").strip():
                         result = ("Privacy workflow produced no output — check "
                                   "the server log for errors.")
-                    amid = rt.store.add_message(
-                        "assistant", result,
-                        {"tags": message_tags("assistant", result)})
-                    await emit("assistant_message", {"id": amid, "content": result,
-                                                     "tags": message_tags("assistant", result),
-                                                     "created_at": _msg_created_at(rt, amid)})
-                    await emit("done", {})
+                    # run_privacy_workflow persists + emits the result from
+                    # inside its shielded task, so it survives client disconnect
+                    # (no duplicate here).
+                    if emit:
+                        try:
+                            await emit("done", {})
+                        except Exception:  # noqa: BLE001
+                            pass
                     return
                 nb = match_notebook_run(text)
                 if nb:
@@ -1655,6 +1743,23 @@ async def ws_chat(ws: WebSocket, name: str):
                             "pipeline": fs.pipeline_snapshot()})
                     except Exception as e:  # noqa: BLE001
                         await emit("error", {"message": f"Stage trigger failed: {e}"})
+                elif mtype == "privacy_workflow":
+                    # Run the privacy workflow as a detached background task so
+                    # it survives client disconnects (like campaigns): the task
+                    # posts its own report/message when done.
+                    async def _pw():
+                        try:
+                            await run_privacy_workflow(
+                                rt, emit, fresh=bool(msg.get("fresh")),
+                                compare=bool(msg.get("compare")),
+                                prompt=msg.get("content") or "privacy workflow")
+                        except Exception as e:  # noqa: BLE001
+                            await emit("error", {"message": f"Privacy workflow failed: {e}"})
+                    asyncio.create_task(_pw())
+                    await emit("status", {"message":
+                        "Privacy workflow started in the background — peer "
+                        "exploitation · red team · DP robustness…"})
+                    await emit("done", {})
                 else:
                     await incoming.put(msg)
         except WebSocketDisconnect:

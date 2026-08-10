@@ -3024,10 +3024,23 @@ function autoResize(ta) {
 $("send-btn").addEventListener("click", sendChat);
 document.querySelectorAll(".quick").forEach((b) =>
   b.addEventListener("click", () => {
+    if (b.id === "quick-privacy" || b.id === "quick-privacy-fresh" || b.id === "quick-privacy-compare") return;
     let extra = null;
     if (b.dataset.extra) { try { extra = JSON.parse(b.dataset.extra); } catch (e) { extra = null; } }
     sendChat(b.dataset.text || "", b.dataset.intent || "", extra);
   }));
+// Privacy workflow quick controls: send a dedicated WS message so the workflow
+// runs as a detached background task (survives this tab closing).
+function privacyQuick(fresh, compare) {
+  send({ type: "privacy_workflow", fresh: !!fresh, compare: !!compare, content: "Run the privacy workflow" });
+  toast(`Privacy workflow ${compare ? "comparison" : (fresh ? "fresh rerun" : "started")} — running in the background.`);
+}
+const $priv = $("quick-privacy");
+if ($priv) $priv.addEventListener("click", (e) => { e.preventDefault(); privacyQuick(false, false); });
+const $privFresh = $("quick-privacy-fresh");
+if ($privFresh) $privFresh.addEventListener("click", (e) => { e.preventDefault(); privacyQuick(true, false); });
+const $privCmp = $("quick-privacy-compare");
+if ($privCmp) $privCmp.addEventListener("click", (e) => { e.preventDefault(); privacyQuick(false, true); });
 // Finetune quick controls: stage triggers use the finetune_stage WS message
 // (not the chat intent path) so the host worker queue handles them.
 function ftQuickStage(stage, opts) {

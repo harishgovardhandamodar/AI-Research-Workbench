@@ -547,11 +547,11 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
       <div id="messages" class="scroll"></div>
       <div id="busy-status" class="busy-status" title="Current activity"></div>
       <div id="quick-actions" class="quick-actions">
-        <button class="btn subtle small quick" data-intent="privacy_workflow"
+        <button class="btn subtle small quick" id="quick-privacy" data-intent="privacy_workflow"
                 data-text="Run the privacy workflow">🛡 Privacy workflow</button>
-        <button class="btn subtle small quick" data-intent="privacy_workflow_fresh"
+        <button class="btn subtle small quick" id="quick-privacy-fresh" data-intent="privacy_workflow_fresh"
                 data-text="Run the privacy workflow with a fresh seed">↻ Fresh rerun</button>
-        <button class="btn subtle small quick" data-intent="privacy_compare"
+        <button class="btn subtle small quick" id="quick-privacy-compare" data-intent="privacy_compare"
                 data-text="Compare the privacy workflow runs">⇄ Compare runs</button>
         <button class="btn subtle small quick" data-intent="godmode"
                 data-text="Run the experiment in a quarantined sandbox with full access">⚡ God mode</button>
