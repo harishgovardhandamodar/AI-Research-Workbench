@@ -31,7 +31,10 @@ def _register_peer() -> None:
                         "market share per segment (merchant category) and per "
                         "payment type."),
         "needs_dataset": True,
+        "seed_sensitive": True,
         "requires_columns": ["sender_bank"],
+        "goal_metric": "identification_accuracy",
+        "higher_better": True,
         "plan_steps": [
             "Load the UPI/banking dataset (must have a sender_bank column)",
             "Build a Naive-Bayes-style fingerprint per bank from its own rows",

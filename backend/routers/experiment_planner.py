@@ -27,22 +27,27 @@ def _store(rt):
 
 def create_or_get_experiment(rt, plan: dict, goal_metric: str = "") -> int | None:
     """Create (or find) the Experiments-tab experiment for a plan. Uses a
-    meaningful goal metric when available (falls back to the registry hint)."""
+    meaningful goal metric when available (falls back to the registry hint) and
+    the experiment's declared direction (higher/lower better) instead of blindly
+    ranking higher-is-better."""
     try:
         from ..experiment_planner import EXPERIMENT_REGISTRY
         defn = EXPERIMENT_REGISTRY.get(plan.get("experiment_id")) or {}
         hint = (defn.get("goal_metric") or "").strip() or goal_metric
+        higher_better = bool(defn.get("higher_better", True))
         exps = rt.store.list_experiments()
         for e in exps:
             if (e.get("name") or "").startswith(f"🧪 {plan['name']} · {plan['id']}"):
                 if hint and not (e.get("goal_metric") or ""):
                     rt.store.update_experiment(e["id"], goal_metric=hint)
+                if e.get("higher_better") is None:
+                    rt.store.update_experiment(e["id"], higher_better=higher_better)
                 return e["id"]
         return rt.store.create_experiment(
             name=f"🧪 {plan['name']} · {plan['id']}",
             hypothesis=(plan.get("request") or plan.get("description") or "")[:200],
             goal_metric=hint,
-            higher_better=True)
+            higher_better=higher_better)
     except Exception:  # noqa: BLE001
         return None
 
@@ -66,6 +71,7 @@ def plan_proposal_payload(plan: dict, project_dir: str | None = None) -> dict:
         "request": plan.get("request"),
         "dataset": plan.get("dataset"),
         "seed": plan.get("seed"),
+        "parent_id": plan.get("parent_id") or "",
         "steps": plan.get("steps") or [],
         "expected_outputs": plan.get("expected_outputs") or [],
         "status": plan.get("status"),
@@ -79,8 +85,8 @@ def plan_proposal_payload(plan: dict, project_dir: str | None = None) -> dict:
         cand = base / dataset
         if cand.exists():
             try:
-                import pandas as pd
-                df = pd.read_csv(cand, nrows=500, low_memory=False)
+                from ..experiment_planner import peek_dataset
+                df = peek_dataset(cand, n=500)
                 out["dataset_info"] = {
                     "shape": [len(df), len(df.columns)],
                     "columns": list(df.columns),
@@ -93,31 +99,54 @@ def plan_proposal_payload(plan: dict, project_dir: str | None = None) -> dict:
 async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     """Register the executed plan's artifacts + run, and (if emit) post an
     assistant message with the report + figures to the chat."""
-    from ..experiment_planner import execute_plan
-    import pandas as pd
+    from ..experiment_planner import execute_plan, load_dataset
 
     # Run the (potentially heavy) compute in a worker thread so the event loop
     # stays responsive during long experiments.
     import asyncio
+    loop = asyncio.get_running_loop()
 
     async def _load_df():
-        return await asyncio.to_thread(pd.read_csv, rt.dir / plan["dataset"],
-                                       low_memory=False)
+        return await asyncio.to_thread(load_dataset, rt.dir / plan["dataset"])
 
     df = await _load_df()
 
-    async def _prog(i, message):
+    async def _emit_progress(i, message):
         if emit:
             try:
                 await emit("workflow", {
                     "status": "running", "title": f"Plan {plan['id']}",
-                    "message": message, "pct": round(i / max(len(plan.get("steps") or []), 1) * 100),
+                    "message": message,
+                    "pct": round(i / max(len(plan.get("steps") or []), 1) * 100),
                 })
             except Exception:  # noqa: BLE001
                 pass
 
+    # Sync progress: execute_plan calls it from the to_thread worker, so it must
+    # hop back onto this event loop thread-safely (asyncio.get_event_loop() from
+    # a worker thread would drop the update silently).
+    def _prog(i, message):
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _emit_progress(i, message), loop)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Persist RUNNING + started_at up front so a restart can recover the run,
+    # and so a concurrent cancel can flip it to REJECTED (checked below).
+    _store(rt).update(plan["id"], status="RUNNING", started_at=time.time())
+
     done = await asyncio.to_thread(
         execute_plan, plan, df, rt.dir, progress or _prog)
+
+    # A cancel that raced the compute flips the persisted status to REJECTED;
+    # respect it and don't register artifacts for a cancelled run.
+    current = _store(rt).get(done["id"]) or {}
+    if current.get("status") == "REJECTED":
+        return {"plan_id": plan["id"], "cancelled": True,
+                "artifact_ids": [], "report_id": "", "figures": [],
+                "metrics": None}
+
     if done["status"] != "DONE":
         raise RuntimeError(done.get("error") or "experiment failed")
 
@@ -212,11 +241,39 @@ async def list_plans(name: str, status: str = ""):
 
 @router.get("/api/projects/{name}/experiment-plans/suggestions")
 async def plan_suggestions(name: str):
-    """Incremental next-step suggestions derived from prior plan runs."""
+    """Incremental next-step suggestions derived from prior plan runs.
+
+    Also scans the project dir for dataset files that have never been planned so
+    a freshly uploaded CSV isn't invisible to the planner (cold-start EDA).
+    User-dismissed suggestion ids are filtered out."""
     rt = get_runtime(name)
-    from ..experiment_planner import build_suggestions
-    plans = _store(rt).list()
-    return {"suggestions": build_suggestions(plans)}
+    from ..experiment_planner import build_suggestions, is_dataset_file
+    st = _store(rt)
+    plans = st.list()
+    planned = {p.get("dataset") for p in plans if p.get("dataset")}
+    available = set()
+    try:
+        for f in rt.dir.iterdir():
+            if (f.is_file() and is_dataset_file(f.name)
+                    and not f.name.lower().startswith("synthetic_")
+                    and f.name not in planned):
+                available.add(f.name)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"suggestions": build_suggestions(
+        plans, datasets=sorted(available),
+        dismissed=st.dismissed_suggestions())}
+
+
+@router.post("/api/projects/{name}/experiment-plans/suggestions/{suggestion_id}/dismiss")
+async def dismiss_suggestion(name: str, suggestion_id: str):
+    """Dismiss a suggestion so it no longer appears (per-project, persistent)."""
+    rt = get_runtime(name)
+    st = _store(rt)
+    if not suggestion_id or len(suggestion_id) < 8:
+        raise HTTPException(status_code=400, detail="invalid suggestion id")
+    st.dismiss_suggestion(suggestion_id)
+    return {"ok": True, "dismissed": suggestion_id}
 
 
 @router.get("/api/experiments/catalog")
@@ -329,10 +386,21 @@ async def run_plan(name: str, plan_id: str):
     if key in _run_tasks and not _run_tasks[key].done():
         return {"ok": False, "running": True,
                 "message": "Plan is already running."}
+    # Persist the launch so a restart can recover an orphaned RUNNING plan and
+    # a cancel mid-run is visible to present_result.
+    _store(rt).update(plan_id, status="RUNNING", started_at=time.time())
 
     async def _task():
         try:
             await present_result(rt, plan, emit=None)
+        except Exception as e:  # noqa: BLE001
+            try:
+                cur = _store(rt).get(plan_id) or {}
+                if cur.get("status") != "REJECTED":
+                    _store(rt).update(plan_id, status="FAILED",
+                                      error=f"{type(e).__name__}: {e}")
+            except Exception:  # noqa: BLE001
+                pass
         finally:
             _run_tasks.pop(key, None)
 
@@ -343,18 +411,26 @@ async def run_plan(name: str, plan_id: str):
 
 @router.post("/api/projects/{name}/experiment-plans/{plan_id}/cancel")
 async def cancel_plan(name: str, plan_id: str):
-    """Cancel an in-flight plan run (best-effort)."""
+    """Cancel an in-flight plan run (best-effort). The worker thread can't be
+    killed, but the persisted status flips to REJECTED so a racing
+    present_result won't register artifacts or a DONE result."""
     import asyncio
     rt = get_runtime(name)
+    plan = _store(rt).get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="plan not found")
     key = _runs_key(rt, plan_id)
+    running = bool(_run_tasks.get(key) and not _run_tasks[key].done()) \
+        or plan.get("status") == "RUNNING"
+    if not running:
+        return {"ok": False, "message": "Plan is not running."}
     task = _run_tasks.get(key)
     if task and not task.done():
         task.cancel()
         _run_tasks.pop(key, None)
-        _store(rt).update(plan_id, status="REJECTED",
-                          error="cancelled by user")
-        return {"ok": True, "message": "Plan run cancelled."}
-    return {"ok": False, "message": "Plan is not running."}
+    _store(rt).update(plan_id, status="REJECTED",
+                      error="cancelled by user")
+    return {"ok": True, "message": "Plan run cancelled."}
 
 
 @router.post("/api/projects/{name}/experiment-plans/{plan_id}/repropose")

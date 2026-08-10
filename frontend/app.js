@@ -1706,17 +1706,38 @@ function renderMcpList() {
     el.className = "nb-item";
     el.innerHTML = `<span class="nb-icon">🔌</span>
       <div class="nbinfo">
-        <div class="nbname">${esc(s.name)} <span class="akind">${esc(s.transport || "stdio")}</span></div>
+        <div class="nbname">${esc(s.name)} <span class="akind">${esc(s.transport || "stdio")}</span>${s.enabled === false ? ' <span class="exp-badge warn">disabled</span>' : ""}</div>
         <div class="nbmeta" data-mcp-status="${esc(s.name)}">${esc(s.command || s.url || "")}</div>
       </div>
       <span class="nb-badge" data-mcp-count="${esc(s.name)}"></span>
+      <button class="btn subtle small" data-mcp-edit="${esc(s.name)}" title="Edit server config">✎</button>
       <span class="adel" data-mcp-del="${esc(s.name)}" title="Remove">🗑</span>`;
+    el.querySelector(`[data-mcp-edit="${esc(s.name)}"]`).addEventListener("click", () => {
+      startMcpEdit(s.name);
+    });
     el.querySelector(`[data-mcp-del="${esc(s.name)}"]`).addEventListener("click", () => {
       state.mcpServers = state.mcpServers.filter((x) => x.name !== s.name);
       renderMcpList();
     });
     list.appendChild(el);
   }
+}
+
+let _editingMcp = "";
+
+function startMcpEdit(name) {
+  const s = (state.mcpServers || []).find((x) => x.name === name);
+  if (!s) return;
+  _editingMcp = name;
+  $("mcp-name").value = s.name;
+  $("mcp-transport").value = s.transport === "http" ? "http" : "stdio";
+  $("mcp-command").value = (s.command || "{python}").replace("{python}", "{python}");
+  $("mcp-args").value = (s.args || []).join(",");
+  $("mcp-url").value = s.url || "";
+  $("mcp-headers").value = JSON.stringify(s.headers || {});
+  $("mcp-trusted").checked = !!s.trusted;
+  $("mcp-add-save").textContent = "Save changes";
+  $("mcp-add-form").classList.remove("hidden");
 }
 
 async function refreshMcpStatus() {
@@ -3411,6 +3432,7 @@ $("mcp-add-save").addEventListener("click", () => {
     name,
     transport: $("mcp-transport").value,
     trusted: $("mcp-trusted").checked,
+    enabled: true,
   };
   if (server.transport === "stdio") {
     server.command = $("mcp-command").value.trim() || "{python}";
@@ -3422,11 +3444,26 @@ $("mcp-add-save").addEventListener("click", () => {
     catch { server.headers = {}; }
   }
   state.mcpServers = state.mcpServers || [];
-  state.mcpServers.push(server);
+  if (_editingMcp) {
+    // keep the original enabled flag when only editing other fields
+    const orig = state.mcpServers.find((x) => x.name === _editingMcp);
+    if (orig) server.enabled = orig.enabled;
+    state.mcpServers = state.mcpServers.map((x) => (x.name === _editingMcp ? server : x));
+    _editingMcp = "";
+  } else {
+    if (state.mcpServers.some((x) => x.name === name)) { toast("Server already exists"); return; }
+    state.mcpServers.push(server);
+  }
   $("mcp-add-form").classList.add("hidden");
+  $("mcp-add-save").textContent = "Add";
   $("mcp-name").value = ""; $("mcp-command").value = ""; $("mcp-args").value = "";
   $("mcp-url").value = ""; $("mcp-headers").value = ""; $("mcp-trusted").checked = false;
   renderMcpList();
+});
+$("mcp-add-cancel").addEventListener("click", () => {
+  $("mcp-add-form").classList.add("hidden");
+  _editingMcp = "";
+  $("mcp-add-save").textContent = "Add";
 });
 $("art-close").addEventListener("click", () => $("artifact-modal").classList.add("hidden"));
 $("artifact-modal").addEventListener("click", (e) => { if (e.target === $("artifact-modal")) $("artifact-modal").classList.add("hidden"); });
@@ -3538,6 +3575,7 @@ async function loadExperiments() {
   if (typeof loadFinetuneStatus === "function") loadFinetuneStatus();
   if (typeof loadFinetuneValidate === "function") loadFinetuneValidate();
   if (typeof loadExperimentPlans === "function") loadExperimentPlans();
+  loadMcpServers();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -7262,11 +7300,172 @@ async function loadFinetuneValidate() {
   } catch (e) { /* silent */ }
 }
 
+/* ---------- MCP servers section (management + health + tools + calls) ---------- */
+async function loadMcpServers() {
+  try {
+    const [r, g] = await Promise.all([
+      api("/api/mcp"),
+      api(`/api/projects/${state.project}/mcp/grants`).catch(() => ({ grants: {} })),
+    ]);
+    renderMcpServers(r.servers || [], (g && g.grants) || {});
+  } catch (e) { /* silent */ }
+}
+
+function renderMcpServers(servers, grants) {
+  const host = $("mcp-server-cards");
+  if (!host) return;
+  if (!servers.length) {
+    host.innerHTML = '<div class="exp-empty">No MCP servers configured.</div>';
+    return;
+  }
+  host.innerHTML = servers.map((s) => {
+    const badge = s.ok ? "ok" : (s.enabled === false ? "warn" : "danger");
+    const trust = s.trusted ? '<span class="exp-badge det">trusted</span>' : "";
+    const roCount = (s.tool_catalog || []).filter((t) => t.read_only).length;
+    const tools = (s.tool_catalog || []).length
+      ? `<details class="mcp-tools"><summary>${(s.tools || []).length} tools (${roCount} read-only)</summary>
+          ${(s.tool_catalog || []).map((t) => {
+            const key = `${s.name}__${t.name}`;
+            const grant = grants[key];
+            const grantBadge = t.read_only ? ""
+              : `<span class="exp-badge ${grant === "allow" ? "ok" : (grant === "deny" ? "danger" : "warn")}" title="writable tool permission">${grant === "allow" ? "🔓 allowed" : (grant === "deny" ? "⛔ denied" : "🔒 ask")}</span>`;
+            const req = (t.params || []).filter((p) => p.required).map((p) => p.name);
+            const ph = req.length ? `json args (required: ${req.join(", ")})` : "json args, e.g. {} or a bare string";
+            return `<div class="mcp-tool-row">
+                <span class="mcp-tool-name">${esc(t.name)}</span>
+                ${t.read_only ? '<span class="exp-badge ok">ro</span>' : '<span class="exp-badge warn">rw</span>' + grantBadge}
+                <span class="spacer"></span>
+                <button class="btn subtle small mcp-call" data-server="${esc(s.name)}" data-tool="${esc(t.name)}" title="Invoke this tool">▶ Call</button>
+                <div class="mcp-call-box hidden" data-call-box>
+                  <input class="exp-search mcp-call-args" placeholder="${esc(ph)}" />
+                  <label class="check mcp-track"><input type="checkbox" class="mcp-track-box" /> 📈 track as experiment</label>
+                  <button class="btn subtle small mcp-call-go">Run</button>
+                  <pre class="mcp-call-result"></pre>
+                </div>
+              </div>`;
+          }).join("")}
+        </details>` : "";
+    const enableBtn = `<button class="btn subtle small mcp-toggle" data-server="${esc(s.name)}" data-enable="${s.enabled ? "false" : "true"}" title="${s.enabled ? "Disable this server" : "Enable this server"}">${s.enabled ? "◼ Disable" : "▶ Enable"}</button>`;
+    return `<div class="finetune-job mcp-server-card">
+      <div class="finetune-job-head">
+        <span class="finetune-job-id">🔌 ${esc(s.name)} <span class="akind">${esc(s.transport || "stdio")}</span></span>
+        ${trust}
+        <span class="exp-badge ${badge}">${s.ok ? "connected" : (s.enabled === false ? "disabled" : "offline")}</span>
+        <span class="spacer"></span>
+        <span class="muted">${esc(s.error || "")}</span>
+      </div>
+      <div class="finetune-job-body">
+        ${tools}
+        <div class="finetune-job-actions">${enableBtn}</div>
+      </div>
+    </div>`;
+  }).join("");
+  host.querySelectorAll(".mcp-toggle").forEach((b) =>
+    b.addEventListener("click", () => toggleMcpServer(b.dataset.server, b.dataset.enable === "true")));
+  host.querySelectorAll(".mcp-call").forEach((b) =>
+    b.addEventListener("click", () => {
+      const box = b.closest(".mcp-tool-row").querySelector("[data-call-box]");
+      box.classList.toggle("hidden");
+      if (!box.classList.contains("hidden")) box.querySelector("input").focus();
+    }));
+  host.querySelectorAll(".mcp-call-go").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const row = b.closest(".mcp-tool-row");
+      const server = row.querySelector(".mcp-call").dataset.server;
+      const tool = row.querySelector(".mcp-call").dataset.tool;
+      const raw = row.querySelector(".mcp-call-args").value.trim();
+      const track = !!(row.querySelector(".mcp-track-box") || {}).checked;
+      const out = row.querySelector(".mcp-call-result");
+      out.textContent = "…";
+      out.classList.remove("mcp-err");
+      try {
+        const r = await callMcpTool(server, tool, raw, track);
+        if (r && r.ok === false && r.permission_key) {
+          out.textContent = r.text + "\n\nThis tool needs permission. Allow it?";
+          out.classList.add("mcp-err");
+          const allow = document.createElement("button");
+          allow.className = "btn subtle small";
+          allow.textContent = "🔓 Allow this tool (persists)";
+          allow.onclick = async () => {
+            try {
+              await api(`/api/projects/${state.project}/mcp/grants`, {
+                method: "POST",
+                body: JSON.stringify({ key: r.permission_key, decision: "allow" }) });
+              loadMcpServers();
+              out.textContent = "…";
+              const r2 = await callMcpTool(server, tool, raw, track);
+              out.textContent = r2.text || "(no output)";
+              if (r2.experiment_id) { out.textContent += `\n\n📈 tracked as experiment #${r2.experiment_id}.`; loadExperiments(); }
+              if (r2.ok === false) out.classList.add("mcp-err");
+            } catch (e2) {
+              out.textContent = "Could not grant: " + e2.message;
+            }
+          };
+          out.appendChild(document.createElement("br"));
+          out.appendChild(allow);
+        } else {
+          out.textContent = r.text || "(no output)";
+          if (r.experiment_id) { out.textContent += `\n\n📈 tracked as experiment #${r.experiment_id}.`; loadExperiments(); }
+          const save = document.createElement("button");
+          save.className = "btn subtle small";
+          save.textContent = "💾 Save as artifact";
+          save.onclick = async () => {
+            try {
+              const ar = await api(`/api/projects/${state.project}/mcp/artifacts`, {
+                method: "POST",
+                body: JSON.stringify({ name: `${server}__${tool}`, text: r.text || "" }) });
+              toast(`Saved artifact ${ar.artifact_id}`);
+            } catch (e2) { toast("Could not save: " + e2.message, 4000); }
+          };
+          out.appendChild(document.createElement("br"));
+          out.appendChild(save);
+        }
+      } catch (e) {
+        out.textContent = "Call failed: " + e.message;
+        out.classList.add("mcp-err");
+      }
+    }));
+}
+
+async function callMcpTool(server, tool, rawArgs, track) {
+  let args = {};
+  const s = (rawArgs || "").trim();
+  if (s) {
+    try { args = JSON.parse(s); }
+    catch (e) { args = { arg: s }; }
+  }
+  try {
+    return await api(`/api/mcp/tools/${encodeURIComponent(server)}/${encodeURIComponent(tool)}`, {
+      method: "POST", body: JSON.stringify({ args, project: state.project, experiment: !!track }) });
+  } catch (e) {
+    throw e;
+  }
+}
+
+async function toggleMcpServer(name, enabled) {
+  try {
+    await api(`/api/mcp/servers/${encodeURIComponent(name)}/enabled`, {
+      method: "POST", body: JSON.stringify({ enabled }) });
+    await api("/api/mcp/refresh", { method: "POST" });
+    toast(`MCP server ${name} ${enabled ? "enabled" : "disabled"}.`);
+    loadMcpServers();
+  } catch (e) { toast("Could not toggle server: " + e.message, 4000); }
+}
+
+if ($("mcp-refresh")) {
+  $("mcp-refresh").addEventListener("click", async () => {
+    try { await api("/api/mcp/refresh", { method: "POST" }); } catch (e) { /* silent */ }
+    loadMcpServers();
+  });
+}
+
 /* ---------- experiment plans manager (planner) ---------- */
 const PLAN_BADGE = {
   DRAFT: "warn", WAITING_APPROVAL: "det", APPROVED: "det",
   RUNNING: "det", DONE: "ok", FAILED: "danger", REJECTED: "warn",
 };
+
+let _plansAutoRefresh = null;
 
 async function loadExperimentPlans() {
   try {
@@ -7275,6 +7474,12 @@ async function loadExperimentPlans() {
     api(`/api/projects/${state.project}/experiment-plans/suggestions`).then((s) => {
       renderPlanSuggestions(s.suggestions || []);
     }).catch(() => {});
+    // Live status: keep polling while any plan is active (running / awaiting
+    // approval), so the manager reflects progress without a manual refresh.
+    const active = (r.plans || []).some((p) =>
+      ["RUNNING", "WAITING_APPROVAL", "APPROVED"].includes(p.status));
+    if (_plansAutoRefresh) { clearTimeout(_plansAutoRefresh); _plansAutoRefresh = null; }
+    if (active) _plansAutoRefresh = setTimeout(loadExperimentPlans, 3000);
   } catch (e) { /* silent */ }
 }
 
@@ -7286,29 +7491,72 @@ function renderPlanSuggestions(suggestions) {
     return;
   }
   host.innerHTML = '<div class="exp-runs-title">💡 Suggested next</div>'
-    + suggestions.map((s) => `<div class="finetune-job suggestion-job" data-sug="${esc(s.id)}">
-        <div class="finetune-job-head">
-          <span class="finetune-job-id">${esc(s.name)}</span>
-          <span class="exp-badge det">score ${esc(s.score)}</span>
-          <span class="spacer"></span>
-          <button class="btn subtle small sug-plan" data-exp="${esc(s.id)}" title="Plan this experiment">🧪 Plan</button>
-        </div>
-        <div class="finetune-job-body"><div class="finetune-job-row muted">${esc(s.reason)}</div></div>
-      </div>`).join("");
-  host.querySelectorAll(".sug-plan").forEach((b) =>
-    b.addEventListener("click", () => planSuggested(b.dataset.exp)));
+    + suggestions.map((s) => {
+        const src = (s.based_on || []).length
+          ? `<div class="finetune-job-row muted">from: ${esc((s.based_on || []).join(" · "))}</div>` : "";
+        const isRetry = s.action === "repropose";
+        const retryPlan = isRetry ? (s.evidence || [])[0] || "" : "";
+        let actionHtml;
+        if (s.action === "clone")
+          actionHtml = `<button class="btn subtle small sug-act" data-act="clone" data-exp="${esc(s.id)}" data-seed="${esc(s.suggested_seed ?? "")}" title="Clone and re-run">🧪 ${s.suggested_seed ? `Clone &amp; verify (seed ${esc(s.suggested_seed)})` : "Clone &amp; verify"}</button>`;
+        else if (isRetry && retryPlan)
+          actionHtml = `<button class="btn subtle small sug-act" data-act="retry" data-plan="${esc(retryPlan)}" title="Re-propose the failed plan with the same id">↻ Retry</button>`;
+        else
+          actionHtml = `<button class="btn subtle small sug-act" data-act="plan" data-exp="${esc(s.id)}" title="Run this">🧪 Plan</button>`;
+        return `<div class="finetune-job suggestion-job" data-sug="${esc(s.suggestion_id || s.id)}">
+          <div class="finetune-job-head">
+            <span class="finetune-job-id">${esc(s.name)}</span>
+            <span class="exp-badge det">score ${esc(s.score)}</span>
+            <span class="spacer"></span>
+            <button class="btn subtle small sug-dismiss" data-sid="${esc(s.suggestion_id || "")}" title="Dismiss this suggestion">✕</button>
+          </div>
+          <div class="finetune-job-body"><div class="finetune-job-row muted">${esc(s.reason)}</div>${src}</div>
+          <div class="finetune-job-actions">${actionHtml}</div>
+        </div>`;
+      }).join("");
+  host.querySelectorAll(".sug-act").forEach((b) =>
+    b.addEventListener("click", () => {
+      const act = b.dataset.act;
+      if (act === "retry") reproposeSuggested(b.dataset.plan);
+      else if (act === "clone") planSuggested(b.dataset.exp, b.dataset.seed || "");
+      else planSuggested(b.dataset.exp, "");
+    }));
+  host.querySelectorAll(".sug-dismiss").forEach((b) =>
+    b.addEventListener("click", () => dismissSuggestion(b.dataset.sid)));
+}
+
+async function dismissSuggestion(suggestionId) {
+  if (!suggestionId) return;
+  try {
+    await api(`/api/projects/${state.project}/experiment-plans/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: "POST" });
+    toast("Suggestion dismissed.");
+    loadExperimentPlans();
+  } catch (e) { toast("Could not dismiss: " + e.message, 4000); }
+}
+
+// Re-propose the failed plan a suggestion pointed at (keeps the plan id so the
+// failure stays traceable in history).
+async function reproposeSuggested(planId) {
+  if (!planId) { toast("No plan to retry.", 4000); return; }
+  try {
+    const r = await api(`/api/projects/${state.project}/experiment-plans/${planId}/repropose`, {
+      method: "POST", body: JSON.stringify({}) });
+    toast(r.message || "Plan re-proposed — confirm to execute.");
+    loadExperimentPlans();
+  } catch (e) { toast("Could not retry: " + e.message, 4000); }
 }
 
 // One-click: propose a suggested experiment (needs a dataset in the project).
-async function planSuggested(experimentId) {
+async function planSuggested(experimentId, seed) {
   try {
     const files = await api(`/api/projects/${state.project}/files`);
     const csv = (files.files || []).filter((f) => f.name.endsWith(".csv")
       && !f.name.startsWith("synthetic_"));
     if (!csv.length) { toast("Upload a CSV dataset first.", 4000); return; }
     const dataset = csv.find((f) => /upi/i.test(f.name))?.name || csv[0].name;
-    sendChat("Plan and run " + experimentId, "experiment_plan",
-             { experiment_id: experimentId, dataset });
+    const extra = { experiment_id: experimentId, dataset };
+    if (seed) extra.seed = Number(seed);
+    sendChat("Plan and run " + experimentId, "experiment_plan", extra);
     toast(`Proposing ${experimentId}…`);
   } catch (e) { toast("Could not propose: " + e.message, 4000); }
 }

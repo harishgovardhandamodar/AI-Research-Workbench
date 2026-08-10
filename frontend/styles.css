@@ -189,6 +189,19 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .agent-tool-chip { font-size: 10px; background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; color: var(--text-dim); }
 .agent-tool-chip.nb-run { cursor: pointer; }
 .agent-tool-chip.nb-run:hover { border-color: var(--accent); color: var(--text); }
+
+/* ---- MCP servers panel (Experiments tab) ---- */
+.mcp-server-card .mcp-tools { margin-top: 6px; }
+.mcp-tools summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+.mcp-tool-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; border-top: 1px dashed var(--border); font-size: 12px; }
+.mcp-tool-row:first-of-type { border-top: none; }
+.mcp-tool-name { font-family: var(--mono, monospace); color: var(--text); }
+.mcp-tool-desc { width: 100%; font-size: 11px; }
+.mcp-call-box { width: 100%; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.mcp-call-box.hidden { display: none; }
+.mcp-call-args { flex: 1; min-width: 160px; font-family: var(--mono, monospace); font-size: 11px; }
+.mcp-call-result { width: 100%; max-height: 220px; overflow: auto; background: rgba(0,0,0,.25); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11px; white-space: pre-wrap; }
+.mcp-call-result.mcp-err { color: var(--danger, #e05b5b); }
 .agent-form { margin-top: 8px; }
 .agent-form summary { cursor: pointer; color: var(--accent); font-size: 12px; }
 .agent-form input, .agent-form select, .agent-form textarea { width: 100%; margin: 4px 0; font-size: 12px; }

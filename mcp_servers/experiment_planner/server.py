@@ -36,11 +36,29 @@ RO = ToolAnnotations(read_only_hint=True)
 
 def _store_dir(project: str = "") -> Path:
     """The per-project plan store dir. The host sets FOX_PLAN_STORE to the
-    workbench projects dir (or a specific project dir); falls back to ~/.fox."""
+    workbench projects dir (or a specific project dir); falls back to ~/.fox.
+
+    With an explicit ``project`` the dir is FOX_PLAN_STORE/<project>. Without
+    one, it resolves to the *active* project — the subdirectory whose
+    ``experiment_plans.json`` was touched most recently — so MCP calls that omit
+    ``project`` share state with the REST host (which uses
+    PROJECTS_DIR/<project>/experiment_plans.json). Falls back to the base dir.
+    """
     base = Path(os.environ.get("FOX_PLAN_STORE", "~/.fox")).expanduser()
     if project:
-        base = base / project
-    return base
+        return base / project
+    best, best_m = None, -1.0
+    if base.is_dir():
+        for sub in sorted(base.iterdir()):  # deterministic tie-break by name
+            if not sub.is_dir():
+                continue
+            store = sub / "experiment_plans.json"
+            if not store.exists():
+                continue
+            m = store.stat().st_mtime
+            if m > best_m:
+                best, best_m = sub, m
+    return best if best is not None else base
 
 
 def _out(**data) -> str:
@@ -149,11 +167,15 @@ def list_plans(status: str = "", project: str = "") -> str:
 
 
 @mcp.tool()
-def run_experiment(plan_id: str, project: str = "") -> str:
+def run_experiment(plan_id: str, project: str = "", timeout: float = 300.0) -> str:
     """Execute an APPROVED plan deterministically. Requires status=APPROVED
-    (the user confirmed it in the chat)."""
+    (the user confirmed it in the chat). Persists RUNNING first (so the REST
+    host can recover/cancel it) and writes the figures + report to the project
+    so a DONE plan survives a restart."""
     try:
-        from backend.experiment_planner import PlanStore
+        import time as _time
+        from backend.experiment_planner import (PlanStore, execute_plan,
+                                                load_dataset)
         st = PlanStore(_store_dir(project))
         plan = st.get(plan_id)
         if plan is None:
@@ -163,15 +185,25 @@ def run_experiment(plan_id: str, project: str = "") -> str:
                 f"plan is '{plan.get('status')}' — the user must approve it "
                 "first (it is shown in the chat for confirmation)")
         # Execute synchronously (imports the pure functions; heavy but local).
-        import pandas as pd
+        # Persist RUNNING + started_at so a restart recovers an orphaned run and
+        # a concurrent cancel in the host is honoured below.
         _ensure_registry()
-        from backend.experiment_planner import execute_plan
-        df = pd.read_csv(_store_dir(project) / plan["dataset"], low_memory=False)
-        done = execute_plan(plan, df)
+        st.update(plan_id, status="RUNNING", started_at=_time.time())
+        df = load_dataset(_store_dir(project) / plan["dataset"])
+        done = execute_plan(plan, df, project_dir=_store_dir(project),
+                            timeout=timeout)
+        # A cancel that raced the compute flipped the status to REJECTED.
+        cur = st.get(plan_id) or {}
+        if cur.get("status") == "REJECTED":
+            return _out(status="CANCELLED",
+                        message="plan was cancelled during the run")
         if done["status"] != "DONE":
+            st.update(done["id"], status=done["status"],
+                      error=done.get("error"))
             raise RuntimeError(done.get("error") or "experiment failed")
         st.update(done["id"], status=done["status"], result=done["result"],
-                  metrics=done["metrics"], error=done.get("error"))
+                  metrics=done["metrics"], error=done.get("error"),
+                  result_dir=done.get("result_dir"))
         out = {k: v for k, v in done.items()
                if k not in ("_figures_bytes", "_report_md")}
         return _out(status="DONE", plan=out)

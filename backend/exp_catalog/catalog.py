@@ -384,6 +384,87 @@ def _reid_figures(res):
     return figs
 
 
+# ------------------------------------------------------- cleaning plan --------
+def _clean_run(df, seed=42):
+    """Quantify the remediation a cleaning pass would apply: duplicate rows,
+    missing-value columns, and IQR-outlier columns (with the union of affected
+    rows as the headline impact metric). Deterministic — no data is mutated."""
+    num = _num_cols(df)
+    dup_mask = df.duplicated()
+    null_mask = df.isna().any(axis=1)
+    outlier_rows = {}
+    for c in num:
+        s = pd.to_numeric(df[c], errors="coerce")
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        iqr = (q3 - q1) or 1.0
+        lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        n_out = int(((s < lo) | (s > hi)).sum())
+        if n_out:
+            outlier_rows[c] = n_out
+    affected = (dup_mask | null_mask).copy()
+    for c in num:
+        s = pd.to_numeric(df[c], errors="coerce")
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        iqr = (q3 - q1) or 1.0
+        affected |= (s < q1 - 1.5 * iqr) | (s > q3 + 1.5 * iqr)
+    null_cols = {c: int(df[c].isna().sum()) for c in df.columns
+                 if int(df[c].isna().sum()) > 0}
+    metrics = {
+        "rows": int(len(df)),
+        "duplicates": int(dup_mask.sum()),
+        "null_rows": int(null_mask.sum()),
+        "null_cols": len(null_cols),
+        "outlier_cols": len(outlier_rows),
+        "affected_rows": int(affected.sum()),
+    }
+    return {"n": int(len(df)), "duplicates": int(dup_mask.sum()),
+            "null_cols": null_cols, "outlier_rows": outlier_rows,
+            "affected_rows": int(affected.sum()), "metrics": metrics}
+
+
+def _clean_report(res):
+    lines = ["# Data cleaning plan (impact assessment)", "",
+             f"- **Rows:** {res['n']:,}",
+             f"- **Duplicate rows:** {res['duplicates']:,}",
+             f"- **Columns with missing values:** {len(res['null_cols'])}",
+             f"- **Numeric columns with IQR outliers:** {len(res['outlier_rows'])}",
+             f"- **Rows affected by any remediation:** {res['affected_rows']:,} "
+             f"({res['affected_rows'] / max(res['n'], 1):.1%})", "",
+             "## Missing-value columns", ""]
+    if res["null_cols"]:
+        for c, n in sorted(res["null_cols"].items(), key=lambda x: -x[1])[:15]:
+            lines.append(f"- `{c}`: {n:,} null")
+    else:
+        lines.append("_No missing values._")
+    lines += ["", "## Outlier columns", ""]
+    if res["outlier_rows"]:
+        for c, n in sorted(res["outlier_rows"].items(), key=lambda x: -x[1])[:15]:
+            lines.append(f"- `{c}`: {n:,} IQR outliers")
+    else:
+        lines.append("_No IQR outliers._")
+    return "\n".join(lines)
+
+
+def _clean_figures(res):
+    figs = {}
+    dup, null, out = res["duplicates"], sum(res["null_cols"].values()), \
+        sum(res["outlier_rows"].values())
+    if dup or null or out:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        cats = ["duplicates", "missing", "outliers"]
+        vals = [dup, null, out]
+        ax.bar(cats, vals, color=["#6fbf73", "#d9a441", "#e05b5b"])
+        ax.set_ylabel("rows / cells affected")
+        ax.set_title("Cleaning impact")
+        for i, v in enumerate(vals):
+            if v:
+                ax.text(i, v, f"{v:,}", ha="center", va="bottom", fontsize=9)
+        fig.tight_layout()
+        _fig_bytes(fig, "clean_impact.png", figs)
+        plt.close(fig)
+    return figs
+
+
 # --------------------------------------------------------- catalog ----
 CATALOG = [
     {
@@ -392,6 +473,7 @@ CATALOG = [
         "description": "Profile the dataset: numeric stats, missing values, "
                        "duplicates, and histograms.",
         "goal_metric": "duplicates",
+        "higher_better": False,
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and infer schema/column types",
@@ -406,13 +488,37 @@ CATALOG = [
         "render_figures": _eda_figures,
     },
     {
+        "id": "clean",
+        "name": "Data cleaning plan (dedupe + nulls + outliers)",
+        "description": "Quantify the remediation a cleaning pass would apply — "
+                       "duplicate rows, missing-value columns and IQR-outlier "
+                       "columns — and report the impact (affected rows).",
+        "goal_metric": "affected_rows",
+        "higher_better": False,
+        "needs_dataset": True,
+        "plan_steps": lambda req, ds: [
+            f"Load `{ds}` and count duplicate rows",
+            "Report missing-value columns and their cell counts",
+            "Flag IQR-outlier columns and per-column counts",
+            "Compute the union of affected rows and render the impact chart",
+        ],
+        "expected_outputs": [
+            "duplicate summary", "missing-value columns",
+            "outlier columns", "cleaning-impact chart"],
+        "run": _clean_run,
+        "render_report": _clean_report,
+        "render_figures": _clean_figures,
+    },
+    {
         "id": "dp_privacy",
         "name": "Differential-privacy mean estimation",
         "description": "Estimate a numeric column's mean under the Laplace "
                        "mechanism at several ε and show the privacy-utility "
                        "tradeoff.",
         "goal_metric": "min_mae",
+        "higher_better": False,
         "needs_dataset": True,
+        "seed_sensitive": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and pick a numeric target column",
             "Compute the real mean and sensitivity",
@@ -450,6 +556,7 @@ CATALOG = [
         "description": "Flag IQR outliers (1.5×) per numeric column and report "
                        "their share + bounds.",
         "goal_metric": "max_outlier_pct",
+        "higher_better": False,
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and select numeric columns",
@@ -469,6 +576,7 @@ CATALOG = [
                        "phones, cards, SSNs, UUIDs) and high-cardinality "
                        "identifier columns.",
         "goal_metric": "pii_columns",
+        "higher_better": False,
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and sample columns",
@@ -489,6 +597,7 @@ CATALOG = [
                        "k-anonymity over the dataset's quasi-identifiers "
                        "(share of rows with k<2 and k<6).",
         "goal_metric": "k_anonymity_1",
+        "higher_better": False,
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and pick quasi-identifier columns",

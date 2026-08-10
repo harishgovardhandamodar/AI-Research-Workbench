@@ -327,13 +327,30 @@ _PERSISTED_GRAPH_TOOLS = ("build_knowledge_graph_from_notes",
                           "merge_knowledge_graphs")
 
 
+def _tool_params(schema: dict) -> list[dict]:
+    """Collapse a tool's JSON input schema into an ordered param list."""
+    props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    out = []
+    for name, p in props.items():
+        out.append({"name": str(name), "required": name in required,
+                    "type": (p or {}).get("type", "")})
+    # include required names not present in properties (lenient servers)
+    for r in schema.get("required") or []:
+        if r not in props:
+            out.append({"name": str(r), "required": True, "type": ""})
+    return out
+
+
 class MCPRegistry:
     def __init__(self, servers: list[dict] | None = None):
         self._servers: dict[str, dict] = {}
         for s in servers or []:
             name = (s.get("name") or "").strip()
             if name:
-                self._servers[name] = dict(s)
+                cfg = dict(s)
+                cfg.setdefault("enabled", True)
+                self._servers[name] = cfg
         self._conns: dict[str, MCPConnection] = {}
         self._available = _mcp_installed()
         self._status_cache: list[dict] | None = None
@@ -348,26 +365,44 @@ class MCPRegistry:
     def server_names(self) -> list[str]:
         return list(self._servers.keys())
 
+    def enabled_servers(self) -> list[str]:
+        return [n for n, c in self._servers.items() if c.get("enabled", True)]
+
     async def statuses(self) -> list[dict]:
-        # Probe servers concurrently (each stdio server spawns a subprocess and
-        # does an MCP handshake; running them serially made the Agents tab slow).
+        # Probe enabled servers concurrently (each stdio server spawns a
+        # subprocess and does an MCP handshake; running them serially made the
+        # Agents tab slow). Disabled servers are reported without being probed.
         # A short per-server timeout + a small cache keep it snappy.
         now = time.time()
         if self._status_cache and now - self._status_cache_ts < 5.0:
             return list(self._status_cache)
 
         names = list(self._servers)
+
         async def _probe(name: str) -> dict:
-            item = {"name": name, "transport": self._servers[name].get("transport", "stdio"),
-                    "ok": False, "error": None, "tools": []}
+            cfg = self._servers[name]
+            item = {"name": name, "transport": cfg.get("transport", "stdio"),
+                    "enabled": bool(cfg.get("enabled", True)),
+                    "trusted": bool(cfg.get("trusted", False)),
+                    "ok": False, "error": None, "tools": [], "tool_catalog": []}
             if not self._available:
                 item["error"] = "mcp package not installed"
+                return item
+            if not item["enabled"]:
+                item["error"] = "disabled"
                 return item
             conn = self.connection(name)
             try:
                 tools = await asyncio.wait_for(conn.list_tools(), timeout=12.0)
                 item["ok"] = True
                 item["tools"] = [t.name for t in tools]
+                item["tool_catalog"] = [
+                    {"name": t.name,
+                     "description": (getattr(t, "description", "") or "")[:300],
+                     "read_only": bool(getattr(
+                         getattr(t, "annotations", None), "read_only_hint", None)),
+                     "params": _tool_params(getattr(t, "input_schema", None) or {})}
+                    for t in tools]
             except asyncio.TimeoutError:
                 item["error"] = "timed out probing server (12s)"
                 await conn.close()
@@ -380,6 +415,10 @@ class MCPRegistry:
         self._status_cache_ts = now
         return results
 
+    def clear_status_cache(self) -> None:
+        self._status_cache = None
+        self._status_cache_ts = 0.0
+
     # -- agent integration --------------------------------------------------
     async def build_tools(self, ctx) -> tuple[list[dict], dict[str, ToolFn]]:
         """Return (llm_tool_schemas, {namespaced_name: async callable}) for all MCP tools."""
@@ -387,7 +426,7 @@ class MCPRegistry:
         fns: dict[str, ToolFn] = {}
         if not self._available:
             return schemas, fns
-        for sname in self._servers:
+        for sname in self.enabled_servers():
             conn = self.connection(sname)
             try:
                 tools = await conn.list_tools()
@@ -499,3 +538,69 @@ class MCPRegistry:
         for conn in self._conns.values():
             await conn.close()
         self._conns.clear()
+
+
+async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
+                        args: dict | None = None, *,
+                        permissions=None, broker=None, emit=None,
+                        workflow=None) -> tuple[str, bool]:
+    """Deterministically invoke an MCP tool, honoring the workbench permission
+    model. Returns (text, is_error).
+
+    - read-only or trusted tools run without approval;
+    - writable tools: an existing grant runs; an 'ask' goes to the
+      ApprovalBroker when provided, otherwise the call is denied with a clear
+      message. This mirrors ``MCPRegistry._make_caller`` so both the chat
+      ``@mcp`` command and the REST endpoint share one policy.
+    """
+    if server not in registry._servers:
+        return (f"[error] unknown MCP server '{server}' — "
+                f"available: {list(registry._servers)}", True)
+    conn = registry.connection(server)
+    try:
+        tools = await conn.list_tools()
+    except Exception as e:  # noqa: BLE001
+        return (f"[error] MCP server '{server}' unreachable: {e}", True)
+    match = next((t for t in tools if t.name == tool), None)
+    if match is None:
+        return (f"[error] tool '{server}__{tool}' not found on that server", True)
+    # Basic input validation against the tool's JSON schema (required args).
+    schema = getattr(match, "input_schema", None) or {}
+    required = list(schema.get("required") or [])
+    missing = [r for r in required if r not in (args or {})]
+    if missing:
+        props = {k: (schema.get("properties") or {}).get(k, {})
+                 for k in required}
+        return (f"[error] {server}__{tool} is missing required argument(s): "
+                f"{', '.join(missing)}. Expected: {json.dumps(props, default=str)}",
+                True)
+    annotations = getattr(match, "annotations", None)
+    read_only = bool(getattr(annotations, "read_only_hint", None)) if annotations else False
+    trusted = bool(registry._servers.get(server, {}).get("trusted", False))
+    key = f"{server}__{tool}"
+    if not read_only and not trusted and permissions is not None:
+        grant = permissions.check("mcp_tool", key)
+        if grant == "ask":
+            if broker is None:
+                return (f"[denied] {key} may modify data or launch compute and "
+                        "requires your approval.", True)
+            if emit:
+                try:
+                    await emit("status", {"message":
+                        f"⏸ Waiting for your approval to run {key}…"})
+                except Exception:  # noqa: BLE001
+                    pass
+            ok, _ = await broker.request(
+                "mcp_tool", key,
+                f"MCP tool '{tool}' on server '{server}' may modify data or "
+                "launch compute. Approve?")
+            if not ok:
+                return ("[denied by user]", True)
+            permissions.record("mcp_tool", key, "allow")
+        elif grant == "deny":
+            return (f"[denied] {key} is blocked by the permission policy.", True)
+    try:
+        text, is_err = await conn.call_tool(tool, args or {})
+    except Exception as e:  # noqa: BLE001
+        return (f"[error] MCP tool '{tool}' failed: {type(e).__name__}: {e}", True)
+    return (text or "(no output)", is_err)

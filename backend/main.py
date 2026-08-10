@@ -46,6 +46,14 @@ _rkg_scheduler: "ScenarioScheduler | None" = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    # Recover plans a previous process left RUNNING (killed by a restart).
+    try:
+        from .experiment_planner import PlanStore
+        for sub in PROJECTS_DIR.iterdir():
+            if sub.is_dir():
+                PlanStore(sub).recover_interrupted()
+    except Exception:  # noqa: BLE001
+        pass
     global _rkg_scheduler
     from .research_knowledge_graphs.config import Config as RkgConfig
     from .research_knowledge_graphs.scheduler import ScenarioScheduler
@@ -70,6 +78,12 @@ async def lifespan(app: FastAPI):
     set_scheduler(None)
     for rt in list(runtimes.values()):
         await rt.stop()
+    # Close MCP server subprocesses so stdio children don't leak on restart.
+    try:
+        from .state import mcp_registry as _mcp_registry
+        await _mcp_registry.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="Local - Open - Agentic Experimentation Workbench", lifespan=lifespan)
@@ -900,6 +914,98 @@ UI switches: `?flat=1` plain bubbles (default) · `?sets=1` grouped collapsible 
 """
 
 
+async def _mcp_tool_listing(limit: int = 120) -> str:
+    """A discoverable ``server__tool`` listing for the @mcp command."""
+    try:
+        statuses = await mcp_registry.statuses()
+    except Exception:  # noqa: BLE001
+        return "MCP registry unavailable."
+    lines = []
+    for s in statuses:
+        if not s.get("ok"):
+            lines.append(f"🔌 {s['name']} — {s.get('error') or 'offline'}")
+            continue
+        for t in s.get("tool_catalog") or []:
+            required = [p["name"] for p in (t.get("params") or []) if p.get("required")]
+            sig = f"({' '.join(required)})" if required else ""
+            lines.append(f"  {s['name']}__{t['name']}{sig}"
+                         f"{' (read-only)' if t.get('read_only') else ''}"
+                         f" — {(t.get('description') or '')[:90]}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines) if lines else "No MCP servers connected."
+
+
+async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
+    """Deterministic ``@mcp <server>__<tool> [json args]`` invocation from chat.
+
+    Routes through the same permission model as the agent's MCP calls (read-only
+    tools run freely; writable tools go to the ApprovalBroker), so the result
+    lands in chat without an LLM round-trip. Emits its own ``done`` (the caller
+    returns early).
+    """
+    body = text[len("@mcp "):].strip()
+    full, _, rest = body.partition(" ")
+    if "__" not in full:
+        listing = await _mcp_tool_listing()
+        content = ("**MCP tools** — `@mcp <server>__<tool> [json args]`\n\n"
+                   f"```\n{listing[:4000]}\n```")
+        amid = rt.store.add_message("assistant", content, {"tags": ["mcp", "help"]})
+        await emit("assistant_message", {"id": amid, "content": content,
+                                         "tags": ["mcp", "help"],
+                                         "created_at": _msg_created_at(rt, amid)})
+        await emit("done", {})
+        return
+    server, tool = full.split("__", 1)
+    args: dict = {}
+    if rest.strip():
+        try:
+            args = json.loads(rest)
+        except Exception:  # noqa: BLE001
+            args = {"arg": rest.strip()}
+    from .mcp import call_mcp_tool
+    res_text, is_err = await call_mcp_tool(
+        mcp_registry, server, tool, args,
+        permissions=rt.permissions, broker=broker, emit=emit)
+    if is_err and "not found" in res_text:
+        listing = await _mcp_tool_listing()
+        res_text += f"\n\nAvailable tools:\n{listing[:2000]}"
+    icon = "❌" if is_err else "🔌"
+    shown = res_text
+    try:
+        parsed = json.loads(res_text)
+        shown = json.dumps(parsed, indent=2, default=str)
+    except Exception:  # noqa: BLE001
+        pass
+    truncated = len(shown) > 4000
+    content = (f"{icon} `{server}__{tool}`\n\n```json\n{shown[:4000]}\n```")
+    tags = ["mcp", "tool"]
+    amid = rt.store.add_message("assistant", content, {"tags": tags})
+    await emit("assistant_message", {"id": amid, "content": content,
+                                     "tags": tags,
+                                     "created_at": _msg_created_at(rt, amid)})
+    # Record the direct call as a run so the Experiments timeline shows it.
+    run_id = None
+    if not res_text.strip().startswith("[denied]") \
+            and not res_text.strip().startswith("[error]"):
+        try:
+            run_id = rt.store.add_run(
+                prompt=json.dumps(args)[:500] or f"{server}__{tool}",
+                reply=res_text[:8000], status="done" if not is_err else "error",
+                started_at=time.time(), finished_at=time.time(),
+                kind="mcp_tool", label=f"{server}__{tool}", model="MCP")
+        except Exception:  # noqa: BLE001
+            pass
+    if truncated:
+        note = (f"\n\n_Result truncated in chat — "
+                + (f"full output saved as run #{run_id}." if run_id else "see the MCP panel.")
+                + "_")
+        await emit("assistant_message", {"id": None, "content": note,
+                                         "tags": ["mcp", "note"],
+                                         "created_at": time.time()})
+    await emit("done", {})
+
+
 async def _run_slash_command(rt: ProjectRuntime, emit, coordinator,
                              text: str) -> bool:
     """Handle a slash command. Returns True when fully handled (chat turn ends)."""
@@ -1305,6 +1411,10 @@ async def ws_chat(ws: WebSocket, name: str):
                         text = _slash_arg(text)
                     elif await _run_slash_command(rt, emit, coordinator, text):
                         return
+                # Deterministic MCP orchestration: @mcp <server>__<tool> [json].
+                if text.startswith("@mcp "):
+                    await _handle_mcp_command(rt, emit, broker, text)
+                    return
                 user_tags = message_tags("user", text)
                 # Explicit intents (from the UI quick-action buttons) route
                 # deterministically instead of relying on keyword matching.

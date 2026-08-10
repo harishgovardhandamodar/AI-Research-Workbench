@@ -24,9 +24,48 @@ async def health():
     return {"ok": True}
 
 
+_MCP_MASK = "***REDACTED***"
+_SENSITIVE_HINTS = ("token", "key", "secret", "password", "passwd", "auth",
+                    "bearer", "credential", "cookie")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    k = str(key).lower()
+    return any(h in k for h in _SENSITIVE_HINTS)
+
+
+def _redact_config(cfg: dict) -> dict:
+    """Deep-copy config with any key whose name hints at a secret masked."""
+    def walk(node):
+        if isinstance(node, dict):
+            return {k: (_MCP_MASK if _is_sensitive_key(k) else walk(v))
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(x) for x in node]
+        return node
+    return walk(cfg)
+
+
+def _merge_mcp_server(orig: dict, new: dict) -> dict:
+    """Preserve real secrets (env/headers values) that came back as the mask so
+    saving a redacted config never clobbers them."""
+    for key in ("env", "headers"):
+        old, cur = orig.get(key), new.get(key)
+        if isinstance(old, dict) and isinstance(cur, dict):
+            merged = dict(old)
+            for k, v in cur.items():
+                if isinstance(v, str) and v == _MCP_MASK and k in merged:
+                    continue  # keep the live secret
+                merged[k] = v
+            new[key] = merged
+    return new
+
+
 @router.get("/api/config")
 async def get_config():
-    return {"config": CONFIG}
+    """Return the config with secrets (MCP headers/env tokens, kaggle keys)
+    masked so they never reach the browser."""
+    return {"config": _redact_config(CONFIG)}
 
 
 @router.post("/api/config")
@@ -37,14 +76,24 @@ async def set_config(body: dict):
     if "agent" in cfg:
         CONFIG["agent"].update(cfg["agent"])
     if "kaggle" in cfg:
-        CONFIG["kaggle"].update({k: v for k, v in cfg["kaggle"].items()
-                                 if k in ("username", "key")})
+        new_k = {k: v for k, v in cfg["kaggle"].items()
+                 if k in ("username", "key")}
+        # a masked key value means the frontend never had the real secret.
+        if new_k.get("key") == _MCP_MASK:
+            new_k.pop("key", None)
+        CONFIG["kaggle"].update(new_k)
     if "management" in cfg:
         CONFIG["management"].update({k: v for k, v in cfg["management"].items()
                                      if k in ("repo_dir", "github_repo",
                                               "auto_commit", "auto_push")})
     if "mcp" in cfg and "servers" in cfg["mcp"]:
-        CONFIG["mcp"]["servers"] = cfg["mcp"]["servers"]
+        # Merge so redacted env/header values don't clobber live secrets.
+        old_by_name = {s.get("name"): s for s in CONFIG["mcp"]["servers"]}
+        merged_servers = [
+            _merge_mcp_server(old_by_name.get(s.get("name"), {}), s)
+            for s in cfg["mcp"]["servers"]
+        ]
+        CONFIG["mcp"]["servers"] = merged_servers
         await rebuild_mcp()
     save_config(CONFIG)
     reset_llm_cache()
@@ -181,6 +230,178 @@ async def editor_status(request: Request):
 async def mcp_status():
     statuses = await mcp_registry.statuses()
     return {"servers": statuses, "installed": mcp_registry._available}
+
+
+@router.post("/api/mcp/refresh")
+async def mcp_refresh():
+    """Clear the status cache so the next GET /api/mcp re-probes the servers."""
+    mcp_registry.clear_status_cache()
+    return {"ok": True}
+
+
+@router.post("/api/mcp/servers/{name}/enabled")
+async def set_mcp_server_enabled(name: str, body: dict):
+    """Enable/disable an MCP server (persisted). Disabled servers are neither
+    probed for status nor offered to the agent."""
+    cfg = json.loads(json.dumps(CONFIG))
+    servers = cfg.setdefault("mcp", {}).setdefault("servers", [])
+    server = next((s for s in servers if s.get("name") == name), None)
+    if server is None:
+        return JSONResponse({"error": "server not found"}, status_code=404)
+    enabled = bool(body.get("enabled", True))
+    server["enabled"] = enabled
+    save_config(cfg)
+    CONFIG["mcp"]["servers"] = servers
+    await rebuild_mcp()
+    return {"ok": True, "name": name, "enabled": enabled}
+
+
+@router.patch("/api/mcp/servers/{name}")
+async def edit_mcp_server(name: str, body: dict):
+    """Edit an MCP server's config (transport/command/args/url/headers/trusted/
+    enabled) without removing it — keeps its name (and any grants keyed on it)."""
+    cfg = json.loads(json.dumps(CONFIG))
+    servers = cfg.setdefault("mcp", {}).setdefault("servers", [])
+    server = next((s for s in servers if s.get("name") == name), None)
+    if server is None:
+        return JSONResponse({"error": "server not found"}, status_code=404)
+    patchable = ("transport", "command", "args", "env", "trusted", "enabled",
+                 "url", "headers")
+    for key in patchable:
+        if key in body:
+            server[key] = body[key]
+    save_config(cfg)
+    CONFIG["mcp"]["servers"] = servers
+    await rebuild_mcp()
+    return {"ok": True, "server": server}
+
+
+def _tool_experiment(rt, server: str, tool: str) -> int | None:
+    """Find-or-create an Experiments-tab experiment for a tool call."""
+    try:
+        name = f"🧪 {server}__{tool}"
+        for e in rt.store.list_experiments():
+            if (e.get("name") or "").startswith(name):
+                return e["id"]
+        return rt.store.create_experiment(
+            name=name,
+            hypothesis=f"Output of MCP tool {server}__{tool} on {rt.name}",
+            goal_metric="", higher_better=True)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _parse_flat_metrics(text: str) -> dict | None:
+    """Best-effort flat numeric metrics from a JSON tool reply."""
+    try:
+        parsed = json.loads(text)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out = {}
+    for k, v in parsed.items():
+        if isinstance(v, bool):
+            out[k] = 1.0 if v else 0.0
+        elif isinstance(v, (int, float)):
+            out[k] = round(float(v), 6)
+    return out or None
+
+
+@router.post("/api/mcp/tools/{server}/{tool}")
+async def call_tool(server: str, tool: str, body: dict):
+    """Invoke an MCP tool directly from the UI (read-only / granted tools only;
+    writable tools without a grant return 403 with the permission key). A real
+    invocation is recorded as a run (kind=mcp_tool) for timeline traceability.
+    When ``experiment`` is truthy the call is also attached to (or creates) an
+    Experiments-tab experiment with any flat numeric metrics parsed from the
+    reply."""
+    import time as _time
+    from ..mcp import call_mcp_tool
+    args = body.get("args") or {}
+    project = (body.get("project") or "").strip()
+    track = bool(body.get("experiment"))
+    rt = get_runtime(project) if project else None
+    permissions = rt.permissions if rt else None
+    started = _time.time()
+    text, is_err = await call_mcp_tool(
+        mcp_registry, server, tool, args, permissions=permissions)
+    if is_err:
+        denied = text.startswith("[denied]")
+        if rt and not denied:
+            try:
+                rt.store.add_run(
+                    prompt=json.dumps(args)[:500] or f"{server}__{tool}",
+                    reply=text[:4000], status="error",
+                    started_at=started, finished_at=_time.time(),
+                    kind="mcp_tool", label=f"{server}__{tool}", model="MCP")
+            except Exception:  # noqa: BLE001
+                pass
+        status_code = 403 if denied else 502
+        return JSONResponse({"ok": False, "text": text,
+                             "permission_key": f"{server}__{tool}"},
+                            status_code=status_code)
+    run_id = None
+    experiment_id = None
+    if rt:
+        metrics = _parse_flat_metrics(text) if track else None
+        if track:
+            experiment_id = _tool_experiment(rt, server, tool)
+        try:
+            run_id = rt.store.add_run(
+                prompt=json.dumps(args)[:500] or f"{server}__{tool}",
+                reply=text[:4000], status="done",
+                started_at=started, finished_at=_time.time(),
+                metrics=metrics or None, kind="mcp_tool",
+                label=f"{server}__{tool}", model="MCP",
+                experiment_id=experiment_id)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "text": text, "tool": f"{server}__{tool}",
+            "run_id": run_id, "experiment_id": experiment_id}
+
+
+@router.post("/api/projects/{name}/mcp/artifacts")
+async def save_mcp_result_artifact(name: str, body: dict):
+    """Persist a direct MCP tool call's result as a project artifact."""
+    from ..artifacts.store import Artifact
+    rt = get_runtime(name)
+    text = body.get("text") or ""
+    title = (body.get("name") or "mcp-tool-result").strip() or "mcp-tool-result"
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+    art = Artifact(kind="data", name=title,
+                   description="Saved MCP tool call result",
+                   code="", env={}, message_id="", run_id="", data_type="text")
+    try:
+        rt.artifacts.add_artifact(art, data=text.encode(), data_type="text")
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+    return {"ok": True, "artifact_id": art.id, "name": title}
+
+
+@router.get("/api/projects/{name}/mcp/grants")
+async def mcp_tool_grants(name: str):
+    """Per-project MCP tool permission grants (kind=mcp_tool)."""
+    rt = get_runtime(name)
+    grants = {g["pattern"]: g["decision"]
+              for g in rt.store.list_grants() if g["kind"] == "mcp_tool"}
+    return {"grants": grants}
+
+
+@router.post("/api/projects/{name}/mcp/grants")
+async def set_mcp_tool_grant(name: str, body: dict):
+    """Grant/revoke an MCP tool permission: decision in {allow, deny, ask}."""
+    rt = get_runtime(name)
+    key = (body.get("key") or "").strip()
+    decision = (body.get("decision") or "").strip().lower()
+    if not key or decision not in ("allow", "deny", "ask"):
+        return JSONResponse({"error": "key + decision (allow|deny|ask) required"},
+                            status_code=400)
+    rt.permissions.record("mcp_tool", key, decision)
+    grants = {g["pattern"]: g["decision"]
+              for g in rt.store.list_grants() if g["kind"] == "mcp_tool"}
+    return {"ok": True, "grants": grants}
 
 
 @router.get("/api/models")
