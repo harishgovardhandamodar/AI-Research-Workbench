@@ -85,6 +85,19 @@ These messages replay on reload as assistant bubbles with a collapsible
 pipeline snapshot attached, so the finetune session history survives page
 refresh and project switches.
 
+## MCP servers
+
+The workbench ships **two MCP servers** for this feature, registered in the
+Agents tab (Settings → MCP):
+
+- **`dk_lora`** — Domain Knowledge LoRA fine-tuning (16 tools: ingest, chunk,
+  dataset, configure/start/cancel training, status, export, register + chat).
+- **`ft_validate`** — RAG verification (16 tools: build/list RAG indexes,
+  retrieve, generate eval sets incl. custom, run verification, reports).
+
+Both run as stdio servers (`python -m mcp_servers.dk_lora.server` /
+`mcp_servers.ft_validate.server`) with `PYTHONPATH` pointing at the repo.
+
 ## REST API
 
 | Method | Path | Purpose |

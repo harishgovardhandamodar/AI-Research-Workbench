@@ -81,6 +81,24 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    # ---- Domain Knowledge LoRA fine-tuning + RAG verification ----
+    # Packages use relative imports, so they run as modules (-m), not scripts.
+    {
+        "name": "dk_lora",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.dk_lora.server"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
+    {
+        "name": "ft_validate",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.ft_validate.server"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
     # ---- EDA suite (five servers sharing a disk-backed DatasetStore) ----
     {
         "name": "eda_profiler",
