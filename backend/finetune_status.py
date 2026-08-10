@@ -11,6 +11,7 @@ import re
 import time
 from pathlib import Path
 
+from .paths import PROJECTS_DIR
 from .state import CONFIG
 
 WORKSPACE_ENV = "FOX_DK_LORA_WORKSPACE"
@@ -84,6 +85,40 @@ def owns_finetune(session_name: str) -> bool:
     if not owner:
         return False
     return (session_name or "") == owner
+
+
+def purge_leaked_finetune(owner: str | None = None) -> dict:
+    """Remove finetune/verify messages + runs from every session that does NOT
+    own the finetune workspace. The finetune monitor used to run in all
+    sessions (before it was gated), so their stores accumulated quai-LoRA
+    history that leaks into chat + Experiments on session switch.
+
+    Returns {owner, cleaned_sessions, messages_deleted, runs_deleted}.
+    """
+    owner = owner or finetune_project()
+    if not owner or not PROJECTS_DIR.exists():
+        return {"owner": owner, "cleaned_sessions": 0,
+                "messages_deleted": 0, "runs_deleted": 0}
+    msg_deleted = run_deleted = cleaned = 0
+    for d in sorted(PROJECTS_DIR.iterdir()):
+        if not d.is_dir() or d.name == owner:
+            continue
+        db = d / "workbench.db"
+        if not db.exists():
+            continue
+        try:
+            from .store import ProjectStore
+            st = ProjectStore(d)
+            m = st.delete_finetune_messages()
+            r = st.delete_finetune_runs()
+            if m or r:
+                cleaned += 1
+                msg_deleted += m
+                run_deleted += r
+        except Exception:  # noqa: BLE001
+            continue
+    return {"owner": owner, "cleaned_sessions": cleaned,
+            "messages_deleted": msg_deleted, "runs_deleted": run_deleted}
 
 
 def jobs_dir() -> Path:

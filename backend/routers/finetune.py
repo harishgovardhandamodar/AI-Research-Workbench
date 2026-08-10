@@ -22,9 +22,12 @@ router = APIRouter()
 
 @router.get("/api/finetune/status")
 async def finetune_status():
-    """All dk-lora training jobs with live progress + last metrics."""
+    """All dk-lora training jobs with live progress + last metrics. ``owner``
+    is the session that owns this workspace — the UI hides finetune content in
+    every other session."""
     ws = fs.workspace_path()
     return {"workspace": str(ws), "workspace_ok": ws.is_dir(),
+            "owner": fs.finetune_project(),
             "jobs": fs.list_jobs()}
 
 
@@ -44,7 +47,6 @@ async def finetune_job(job_id: str):
 async def finetune_pipeline():
     """The quai-lora pipeline snapshot (stages 1-4) for the chat pipeline card."""
     return fs.pipeline_snapshot()
-
 
 @router.post("/api/finetune/workspace")
 async def finetune_set_workspace(body: dict):
@@ -83,4 +85,5 @@ async def finetune_stage_list():
 @router.get("/api/finetune/validate")
 async def finetune_validate_list():
     """RAG verification runs with progress + deltas + report text."""
-    return {"runs": fs.validate_runs()}
+    return {"runs": fs.validate_runs(),
+            "owner": fs.finetune_project()}

@@ -6900,8 +6900,16 @@ function renderFinetuneJobs(data) {
 }
 
 async function loadFinetuneStatus() {
+  // Only the session that owns the finetune workspace shows finetune jobs.
+  // Every other session keeps the section hidden so switching sessions doesn't
+  // leak another project's LoRA traces into the Experiments tab.
   try {
     const data = await api("/api/finetune/status");
+    if (data.owner && data.owner !== state.project) {
+      hideFinetuneSections();
+      return;
+    }
+    showFinetuneSections();
     renderFinetuneJobs(data);
     const running = (data.jobs || []).some((j) => j.status === "running");
     if (running && !finetunePollTimer) {
@@ -6911,6 +6919,31 @@ async function loadFinetuneStatus() {
       finetunePollTimer = null;
     }
   } catch (e) { /* silent */ }
+}
+
+// Hide the finetune + RAG-verification sections (and their nav chips) for
+// sessions that don't own the workspace, and stop their poll timers.
+function hideFinetuneSections() {
+  ["finetune", "finetune-validate"].forEach((t) => {
+    const sec = $("exp-section-" + t);
+    if (sec) sec.classList.add("hidden");
+    document.querySelectorAll(`.exp-nav-chip[data-target="${t}"]`).forEach((c) => {
+      c.classList.add("hidden");
+    });
+  });
+  if (finetunePollTimer) { clearInterval(finetunePollTimer); finetunePollTimer = null; }
+  if (validatePollTimer) { clearInterval(validatePollTimer); validatePollTimer = null; }
+}
+
+// Show them again for the owning session.
+function showFinetuneSections() {
+  ["finetune", "finetune-validate"].forEach((t) => {
+    const sec = $("exp-section-" + t);
+    if (sec) sec.classList.remove("hidden");
+    document.querySelectorAll(`.exp-nav-chip[data-target="${t}"]`).forEach((c) => {
+      c.classList.remove("hidden");
+    });
+  });
 }
 
 /* ---------- RAG verification (ft-validate) in the Experiments tab ---------- */
@@ -6984,8 +7017,14 @@ function renderFinetuneValidate(data) {
 }
 
 async function loadFinetuneValidate() {
+  // Owner-only: hide RAG verification in every other session.
   try {
     const data = await api("/api/finetune/validate");
+    if (data.owner && data.owner !== state.project) {
+      hideFinetuneSections();
+      return;
+    }
+    showFinetuneSections();
     renderFinetuneValidate(data);
   } catch (e) { /* silent */ }
 }

@@ -282,6 +282,22 @@ class ProjectStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def delete_finetune_messages(self) -> int:
+        """Delete chat messages that carry finetune/verify metadata (leaked from
+        a finetune monitor that ran in a non-owning session)."""
+        cur = self._conn.execute(
+            "DELETE FROM messages WHERE meta LIKE '%finetune%' OR meta LIKE '%\"pipeline\"%'")
+        self._conn.commit()
+        return cur.rowcount
+
+    def delete_finetune_runs(self) -> int:
+        """Delete runs recorded by the finetune/verify monitor (kind=finetune or
+        kind=verify) — these belong only to the session that owns the workspace."""
+        cur = self._conn.execute(
+            "DELETE FROM runs WHERE kind IN ('finetune','verify')")
+        self._conn.commit()
+        return cur.rowcount
+
     def _row_msg(self, row) -> dict:
         d = {"id": row["id"], "role": row["role"], "content": row["content"],
              "created_at": row["created_at"]}
