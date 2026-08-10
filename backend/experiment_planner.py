@@ -128,6 +128,7 @@ class PlanStore:
             "error": None,
             "artifact_ids": [],
             "metrics": None,
+            "_project_dir": str(self.path.parent),
         }
         data = self._load()
         data["plans"][plan_id] = plan
@@ -183,6 +184,43 @@ class PlanStore:
             status="APPROVED" if approve else "REJECTED",
             approval={"approved": bool(approve), "by": by or "user",
                       "at": time.time()})
+
+    def repropose(self, plan_id: str, *, dataset: str | None = None,
+                  seed: int | None = None, request: str | None = None) -> dict:
+        """Edit + re-propose a rejected/cancelled plan (back to DRAFT ->
+        WAITING_APPROVAL). Keeps the plan id so history is traceable."""
+        plan = self.get(plan_id)
+        if plan is None:
+            raise ValueError(f"plan not found: {plan_id}")
+        if plan["status"] not in ("REJECTED", "DRAFT", "FAILED"):
+            raise ValueError(f"plan is '{plan['status']}' — only rejected/failed "
+                             "plans can be re-proposed")
+        fields = {"status": "DRAFT", "approval": None, "result": None,
+                  "error": None, "metrics": None, "artifact_ids": []}
+        if dataset is not None:
+            fields["dataset"] = dataset
+        if seed is not None:
+            fields["seed"] = seed
+        if request is not None:
+            fields["request"] = request
+            defn = EXPERIMENT_REGISTRY.get(plan["experiment_id"]) or {}
+            sd = defn.get("plan_steps") or []
+            fields["steps"] = (list(sd(request or "", fields["dataset"]))
+                               if callable(sd) else list(sd))
+        plan = self.update(plan_id, **fields)
+        return self.propose(plan_id)
+
+    def clone(self, plan_id: str, *, seed: int | None = None,
+              dataset: str | None = None, request: str | None = None) -> dict:
+        """Clone a plan into a fresh DRAFT (for re-run / variant with new seed)."""
+        src = self.get(plan_id)
+        if src is None:
+            raise ValueError(f"plan not found: {plan_id}")
+        return self.create(
+            experiment_id=src["experiment_id"],
+            request=request if request is not None else src.get("request", ""),
+            dataset=dataset if dataset is not None else src.get("dataset", ""),
+            seed=seed if seed is not None else src.get("seed"))
 
 
 # ------------------------------------------------------------ execution -------

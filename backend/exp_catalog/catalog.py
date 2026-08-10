@@ -252,6 +252,138 @@ def _anom_figures(res):
     return figs
 
 
+# ---------------------------------------------------- privacy / PII ----
+def _pii_run(df, seed=42):
+    """Detect PII-like columns (emails, phones, ids, cards, addresses)."""
+    import re as _re
+    patterns = {
+        "email": r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        "phone": r"(?<!\d)[+]?[\d][\d\s\-()]{7,}\d(?!\d)",
+        "credit_card": r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)",
+        "ssn": r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)",
+        "uuid": r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    }
+    found = []
+    for col in df.columns:
+        sample = df[col].astype(str).head(2000)
+        for kind, rx in patterns.items():
+            hits = int(sample.str.contains(rx, regex=True).sum())
+            if hits:
+                found.append({"column": str(col), "kind": kind, "hits": hits,
+                              "pct": round(hits / max(len(sample), 1), 4)})
+    # Identifier-like columns: high-cardinality + unique-ish strings.
+    for col in df.columns:
+        try:
+            nuniq = df[col].nunique(dropna=True)
+            if nuniq > max(50, len(df) * 0.5) and "id" in str(col).lower():
+                found.append({"column": str(col), "kind": "identifier",
+                              "hits": int(nuniq), "pct": round(nuniq / max(len(df), 1), 4)})
+        except Exception:  # noqa: BLE001
+            continue
+    metrics = {"columns": int(len(df.columns)), "rows": int(len(df)),
+               "pii_columns": len(found)}
+    if found:
+        metrics["max_pii_pct"] = max(f["pct"] for f in found)
+    return {"n": int(len(df)), "found": found, "metrics": metrics}
+
+
+def _pii_report(res):
+    lines = ["# PII & identifier scan", "",
+             f"- **Rows:** {res['n']:,} · **Columns:** {res.get('metrics', {}).get('columns')}",
+             f"- **PII-like findings:** {len(res['found'])}", "",
+             "## Findings", "",
+             "| Column | Kind | Hits | % |",
+             "|--------|------|------|---|"]
+    if not res["found"]:
+        lines.append("_No PII-like patterns detected._")
+    else:
+        for f in res["found"][:20]:
+            lines.append(f"| {f['column']} | {f['kind']} | {f['hits']:,} | {f['pct']:.1%} |")
+    return "\n".join(lines)
+
+
+def _pii_figures(res):
+    figs = {}
+    found = res.get("found") or []
+    if found:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        kinds = {}
+        for f in found:
+            kinds[f["kind"]] = kinds.get(f["kind"], 0) + f["hits"]
+        names = list(kinds)
+        ax.bar(range(len(names)), [kinds[n] for n in names], color="#e05b5b")
+        ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=45, ha="right")
+        ax.set_ylabel("hits"); ax.set_title("PII hits by type")
+        fig.tight_layout()
+        _fig_bytes(fig, "pii_by_type.png", figs)
+        plt.close(fig)
+    return figs
+
+
+# ------------------------------------------- re-identification risk ----
+def _reid_run(df, seed=42):
+    """k-anonymity over quasi-identifiers: what share of rows is unique (k=1)?"""
+    num = _num_cols(df)
+    # Pick up to 4 quasi-identifier-ish categorical columns.
+    cands = [c for c in _cat_cols(df)
+             if c.lower() not in ("is_fraud", "fraud_flag", "transaction_status")]
+    qis = cands[:4]
+    rows, total = len(df), len(df)
+    metrics = {"rows": total, "qi_columns": len(qis),
+               "k_anonymity_1": None, "k_anonymity_5": None}
+    if qis:
+        counts = df.groupby(qis, dropna=False).size()
+        k1 = int((counts < 2).sum())
+        k5 = int((counts < 6).sum())
+        metrics["k_anonymity_1"] = round(k1 / max(total, 1), 4)
+        metrics["k_anonymity_5"] = round(k5 / max(total, 1), 4)
+        top = counts.sort_values().head(10)
+        res = {"n": total, "qis": qis, "counts": counts, "top": top,
+               "metrics": metrics}
+    else:
+        res = {"n": total, "qis": [], "counts": None, "top": None,
+               "metrics": metrics}
+    return res
+
+
+def _reid_report(res):
+    m = res["metrics"]
+    lines = ["# Re-identification risk (k-anonymity)", "",
+             f"- **Rows:** {res['n']:,}",
+             f"- **Quasi-identifiers:** {', '.join(res['qis']) or '—'}",
+             "",
+             "## k-anonymity",
+             "",
+             f"- **k=1 (uniquely identifiable):** "
+             f"{m.get('k_anonymity_1') if m.get('k_anonymity_1') is not None else '—'}",
+             f"- **k=5 (near-unique):** "
+             f"{m.get('k_anonymity_5') if m.get('k_anonymity_5') is not None else '—'}",
+             ""]
+    if res.get("counts") is not None:
+        lines += ["## Rarest QI combinations", "",
+                  "| Count | Combination |", "|-------|-------------|"]
+        for idx, count in res["top"].items():
+            combo = (" · ".join(str(x) for x in idx)
+                     if isinstance(idx, tuple) else str(idx))
+            lines.append(f"| {count} | {combo} |")
+    return "\n".join(lines)
+
+
+def _reid_figures(res):
+    figs = {}
+    if res.get("counts") is not None:
+        counts = res["counts"].head(30)
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ax.bar(range(len(counts)), counts.values, color="#b98cff")
+        ax.set_ylabel("rows per combination")
+        ax.set_title("QI-combination class sizes (lowest)")
+        ax.set_xticks([])
+        fig.tight_layout()
+        _fig_bytes(fig, "reid_class_sizes.png", figs)
+        plt.close(fig)
+    return figs
+
+
 # --------------------------------------------------------- catalog ----
 CATALOG = [
     {
@@ -325,5 +457,43 @@ CATALOG = [
         "run": _anom_run,
         "render_report": _anom_report,
         "render_figures": _anom_figures,
+    },
+    {
+        "id": "pii_scan",
+        "name": "PII & identifier scan",
+        "description": "Scan every column for PII-like patterns (emails, "
+                       "phones, cards, SSNs, UUIDs) and high-cardinality "
+                       "identifier columns.",
+        "needs_dataset": True,
+        "plan_steps": lambda req, ds: [
+            f"Load `{ds}` and sample columns",
+            "Scan for email / phone / card / SSN / UUID patterns",
+            "Flag high-cardinality identifier-like columns",
+            "Report hits per column + chart by PII type",
+        ],
+        "expected_outputs": lambda req, ds: [
+            "PII findings table", "PII-hits-by-type chart"],
+        "run": _pii_run,
+        "render_report": _pii_report,
+        "render_figures": _pii_figures,
+    },
+    {
+        "id": "reid_risk",
+        "name": "Re-identification risk (k-anonymity)",
+        "description": "Assess how uniquely identifiable rows are under "
+                       "k-anonymity over the dataset's quasi-identifiers "
+                       "(share of rows with k<2 and k<6).",
+        "needs_dataset": True,
+        "plan_steps": lambda req, ds: [
+            f"Load `{ds}` and pick quasi-identifier columns",
+            "Group by QI combination and compute class sizes",
+            "Report k=1 (unique) and k=5 (near-unique) shares",
+            "List the rarest QI combinations + chart class sizes",
+        ],
+        "expected_outputs": lambda req, ds: [
+            "k-anonymity summary", "rarest QI combinations", "class-size chart"],
+        "run": _reid_run,
+        "render_report": _reid_report,
+        "render_figures": _reid_figures,
     },
 ]

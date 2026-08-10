@@ -1700,19 +1700,35 @@ async def ws_chat(ws: WebSocket, name: str):
                             f"Experiment plan {payload['plan_id']} rejected — nothing ran."})
                         await emit("done", {})
                         return
+                    # Approved: run in a detached background task so the turn
+                    # doesn't block and the result posts even if the tab closes.
                     try:
                         pstore.decide(payload["plan_id"], True, by="user")
-                        plan = pstore.get(payload["plan_id"])
-                        await present_result(rt, plan, emit=emit)
-                    except Exception as e:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001
+                        pass
+                    run_plan = pstore.get(payload["plan_id"])
+
+                    async def _execute_plan(run_plan=run_plan):
                         try:
-                            pstore.update(payload["plan_id"], status="FAILED",
-                                          error=f"{type(e).__name__}: {e}")
-                        except Exception:  # noqa: BLE001
-                            pass
-                        await emit("error", {"message":
-                            f"Experiment failed: {type(e).__name__}: {e}"})
-                        await emit("done", {})
+                            from .routers.experiment_planner import present_result
+                            await present_result(rt, run_plan, emit=emit)
+                        except Exception as e:  # noqa: BLE001
+                            try:
+                                pstore.update(run_plan["id"], status="FAILED",
+                                              error=f"{type(e).__name__}: {e}")
+                            except Exception:  # noqa: BLE001
+                                pass
+                            try:
+                                await emit("error", {"message":
+                                    f"Experiment failed: {type(e).__name__}: {e}"})
+                                await emit("done", {})
+                            except Exception:  # noqa: BLE001
+                                pass
+
+                    asyncio.create_task(_execute_plan())
+                    await emit("status", {"message":
+                        "✅ Plan approved — executing in the background…"})
+                    await emit("done", {})
                     return
                 if intent == "plan_step":
                     # Round-30: run one experiment plan step. Resolve the
