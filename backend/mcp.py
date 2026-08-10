@@ -110,6 +110,15 @@ DEFAULT_SERVERS = [
         "env": {},
         "trusted": False,
     },
+    # ---- Experiment planner MCP (plan -> propose -> confirm -> execute) ----
+    {
+        "name": "experiment_planner",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.experiment_planner.server"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
     # ---- EDA suite (five servers sharing a disk-backed DatasetStore) ----
     {
         "name": "eda_profiler",
@@ -184,6 +193,11 @@ class MCPConnection:
 
                 env = dict(os.environ)
                 env.update(self.config.get("env") or {})
+                try:
+                    from .paths import PROJECTS_DIR
+                    env["FOX_PLAN_STORE"] = str(PROJECTS_DIR)
+                except Exception:  # noqa: BLE001
+                    pass
                 try:
                     from .state import CONFIG  # late import avoids a cycle
 

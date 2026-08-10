@@ -219,6 +219,25 @@ TEMPLATES = [
                    "{dataset}: identify which bank each transaction came from "
                    "and estimate other banks' share per segment or payment type."),
     },
+    {
+        "id": "experiment_planner",
+        "name": "Planned experiment",
+        "icon": "🧪",
+        "tagline": "Plan → confirm → execute a deterministic experiment safely.",
+        "mcp": ["experiment_planner"],
+        "tools": ["experiment_planner__plan_experiment",
+                  "experiment_planner__run_experiment"],
+        "needs_dataset": True,
+        "steps": [
+            "Upload the dataset the experiment will run on",
+            "A concrete plan is proposed in the chat (steps + dataset + seed)",
+            "Confirm to execute, or reject — nothing runs before approval",
+            "Result (figures + report) is presented back in the chat",
+        ],
+        "intent": "experiment_plan",
+        "prompt": ("Plan an experiment on {dataset} before running it — propose "
+                   "the plan, wait for my confirmation, then execute."),
+    },
 ]
 
 

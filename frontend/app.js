@@ -279,6 +279,7 @@ function handleEvent(type, p) {
     case "finetune_pipeline": renderFinetunePipelineCard(p.pipeline || p); break;
     case "finetune_log": appendFinetuneLog(p); break;
     case "finetune_report": renderFinetuneReport(p); break;
+    case "experiment_plan_proposal": renderExperimentPlanProposal(p); break;
     case "done": onTurnDone(); attachNextSteps(); loadExperiments(); loadSuggestions(); loadCampaigns(); break;
     case "error": onError(p.message); break;
   }
@@ -7472,6 +7473,38 @@ function renderFinetuneReport(p) {
   curAssistantEl = null;
   state.streaming = false;
   loadFinetuneStatus();
+  scrollBottom();
+}
+
+// A proposed experiment plan arrived: render a confirm/reject card in the chat.
+function renderExperimentPlanProposal(p) {
+  const el = ensureAssistant(["experiment_plan", "plan"], null);
+  const steps = (p.steps || []).map((s, i) =>
+    `<div class="plan-step-row"><span class="plan-step-n">${i + 1}</span><span>${esc(s)}</span></div>`).join("");
+  el.body.innerHTML = `
+    <div class="exp-plan-card">
+      <div class="exp-plan-head">🧪 <b>${esc(p.name || p.experiment_id || "Experiment")}</b>
+        <span class="muted">· plan <code>${esc(p.plan_id || "")}</code></span></div>
+      <div class="exp-plan-meta muted">
+        dataset <code>${esc(p.dataset || "—")}</code> · seed <code>${esc(p.seed ?? "—")}</code></div>
+      <div class="exp-plan-steps">${steps}</div>
+      <div class="exp-plan-note muted">Nothing has run yet — confirm to execute, or reject to cancel.</div>
+      <div class="exp-plan-actions">
+        <button class="btn danger small exp-plan-reject" data-plan="${esc(p.plan_id || "")}">✕ Reject</button>
+        <span class="spacer"></span>
+        <button class="btn primary small exp-plan-approve" data-plan="${esc(p.plan_id || "")}">✓ Confirm &amp; run</button>
+      </div>
+    </div>`;
+  el.div.querySelector(".exp-plan-approve").addEventListener("click", () => {
+    send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: true });
+    el.div.querySelector(".exp-plan-actions").innerHTML = '<span class="muted">⏳ Running…</span>';
+  });
+  el.div.querySelector(".exp-plan-reject").addEventListener("click", () => {
+    send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: false });
+    el.div.querySelector(".exp-plan-actions").innerHTML = '<span class="muted">Rejected.</span>';
+  });
+  curAssistantEl = null;
+  state.streaming = false;
   scrollBottom();
 }
 

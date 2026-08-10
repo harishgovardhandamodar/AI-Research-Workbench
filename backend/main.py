@@ -99,6 +99,10 @@ app.include_router(eda_router)
 from .routers.peer import router as peer_router
 
 app.include_router(peer_router)
+from .routers.experiment_planner import router as experiment_planner_router
+
+app.include_router(experiment_planner_router)
+import backend.experiment_registry  # noqa: F401  (registers deterministic experiments)
 from .routers.audit import router as audit_router
 
 app.include_router(audit_router)
@@ -142,6 +146,37 @@ _PEER_EXPERIMENT_WORDS = [
     "share per segment", "share per payment", "peer.*experiment",
     "which bank", "sender_bank",
 ]
+
+
+def _render_plan_md(payload: dict) -> str:
+    """Markdown for a proposed experiment plan (chat plan card body)."""
+    lines = [
+        f"- **Experiment:** {payload.get('name')} (`{payload.get('experiment_id')}`)",
+        f"- **Dataset:** `{payload.get('dataset') or '—'}` · seed `{payload.get('seed')}`",
+        f"- **Plan id:** `{payload.get('plan_id')}`",
+        "",
+        "**Steps**",
+    ]
+    for i, s in enumerate(payload.get("steps") or [], 1):
+        lines.append(f"{i}. {s}")
+    lines += ["", "Nothing has run yet — **confirm** to execute, or **reject** to cancel."]
+    return "\n".join(lines)
+
+
+_EXPERIMENT_PLAN_WORDS = [
+    "experiment plan", "plan an experiment", "plan the experiment",
+    "propose a plan", "propose plan", "plan before", "plan first",
+    "confirm before", "ask before running", "plan and confirm",
+    "experiment planner", "orchestrator", "peer experiment",
+    "plan for the experiment", "make a plan",
+]
+
+
+def _is_experiment_plan_request(text: str) -> bool:
+    """Detect requests to PLAN an experiment before running it (deterministic
+    planner flow: propose -> confirm -> execute)."""
+    low = (text or "").lower()
+    return any(w in low for w in _EXPERIMENT_PLAN_WORDS)
 
 
 def _is_peer_experiment_request(text: str) -> bool:
@@ -1214,6 +1249,8 @@ async def ws_chat(ws: WebSocket, name: str):
 
     broker = ApprovalBroker(emit, store=rt.store, audit=rt.audit_emitter,
                             session_id=rt.name, agent_id="Fox")
+    if not hasattr(rt, "_plan_approvals"):
+        rt._plan_approvals = {}
 
     def _record_run(r: dict) -> int:
         rid = rt.store.add_run(
@@ -1328,6 +1365,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     user_tags = ["experiment", "plan step"]
                 elif intent == "peer_experiment":
                     user_tags = ["peer experiment"]
+                elif intent == "experiment_plan":
+                    user_tags = ["experiment", "plan"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1343,6 +1382,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     if _is_peer_experiment_request(text):
                         intent = "peer_experiment"
                         user_tags = ["peer experiment"]
+                    elif _is_experiment_plan_request(text):
+                        intent = "experiment_plan"
+                        user_tags = ["experiment", "plan"]
                 if intent == "rerun_run":
                     # Revert-to-this-run: derive from the requested run and
                     # re-issue its prompt (if no explicit text was provided).
@@ -1550,6 +1592,127 @@ async def ws_chat(ws: WebSocket, name: str):
                         await emit("error", {"message":
                             f"Peer experiment failed: {type(e).__name__}: {e}"})
                     await emit("done", {})
+                    return
+                if intent == "experiment_plan":
+                    # Robust deterministic experiment planner: build a concrete
+                    # plan, propose it to the user in the chat (plan card),
+                    # wait for confirmation, then execute + present the result.
+                    from .experiment_planner import PlanStore, list_experiments
+                    from .routers.experiment_planner import \
+                        plan_proposal_payload, present_result
+                    pstore = PlanStore(rt.dir)
+
+                    experiment_id = (msg_extra.get("experiment_id") or "").strip()
+                    dataset = (msg_extra.get("dataset") or "").strip()
+                    request = text or msg_extra.get("request") or ""
+
+                    # If no explicit experiment id, try to match one from the
+                    # request text (e.g. "peer", "eda").
+                    if not experiment_id:
+                        low = request.lower()
+                        avail = list_experiments()
+                        for e in avail:
+                            if e["id"] in low or e["name"].lower() in low:
+                                experiment_id = e["id"]
+                                break
+                    if not experiment_id:
+                        # Default to the peer experiment when it's about banks.
+                        if any(w in low for w in ("bank", "peer", "upi")):
+                            experiment_id = "peer"
+                    if not experiment_id:
+                        await emit("error", {"message":
+                            "No experiment matched. Available: "
+                            + ", ".join(e["id"] for e in list_experiments())})
+                        await emit("done", {})
+                        return
+
+                    # Resolve the dataset: explicit, or auto-pick a UPI/banking CSV.
+                    if not dataset:
+                        cands = [p for p in rt.dir.iterdir()
+                                 if p.is_file() and p.suffix.lower() == ".csv"
+                                 and not p.name.lower().startswith("synthetic_")]
+                        if cands:
+                            import pandas as pd
+                            for p in cands:
+                                try:
+                                    if "upi" in p.name.lower() or "bank" in p.name.lower():
+                                        dataset = p.name
+                                        break
+                                    head = pd.read_csv(p, nrows=1)
+                                    if "sender_bank" in head.columns:
+                                        dataset = p.name
+                                        break
+                                except Exception:  # noqa: BLE001
+                                    continue
+                    if not dataset:
+                        await emit("error", {"message":
+                            "No dataset in the project — upload a CSV first."})
+                        await emit("done", {})
+                        return
+
+                    try:
+                        plan = pstore.create(
+                            experiment_id=experiment_id,
+                            request=request, dataset=dataset,
+                            seed=msg_extra.get("seed"))
+                        pstore.propose(plan["id"])
+                    except ValueError as e:
+                        await emit("error", {"message": str(e)})
+                        await emit("done", {})
+                        return
+
+                    payload = plan_proposal_payload(pstore.get(plan["id"]))
+                    # Persist + show the plan card in chat, then wait for the
+                    # user's approval via experiment_plan_decision (plan_id key).
+                    await emit("experiment_plan_proposal", payload)
+                    amid = rt.store.add_message(
+                        "assistant",
+                        "**🧪 Experiment plan proposed — confirm to execute**\n\n"
+                        + _render_plan_md(payload),
+                        {"tags": ["experiment_plan", "plan", "proposal"]})
+                    await emit("assistant_message", {"id": amid,
+                                                     "content": "**🧪 Experiment plan proposed — confirm to execute**\n\n" + _render_plan_md(payload),
+                                                     "tags": ["experiment_plan", "plan", "proposal"],
+                                                     "created_at": _msg_created_at(rt, amid)})
+                    await emit("status", {"message":
+                        "⏸ Awaiting your approval to run the experiment plan…"})
+                    fut = asyncio.get_event_loop().create_future()
+                    try:
+                        rt._plan_approvals[plan["id"]] = fut
+                    except Exception:  # noqa: BLE001
+                        pass
+                    ok = False
+                    try:
+                        ok = await asyncio.wait_for(fut, timeout=300)
+                    except asyncio.TimeoutError:
+                        ok = False
+                    try:
+                        rt._plan_approvals.pop(plan["id"], None)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    await emit("status", {"message": ""})
+                    if not ok:
+                        try:
+                            pstore.decide(payload["plan_id"], False, by="user")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        await emit("notice", {"message":
+                            f"Experiment plan {payload['plan_id']} rejected — nothing ran."})
+                        await emit("done", {})
+                        return
+                    try:
+                        pstore.decide(payload["plan_id"], True, by="user")
+                        plan = pstore.get(payload["plan_id"])
+                        await present_result(rt, plan, emit=emit)
+                    except Exception as e:  # noqa: BLE001
+                        try:
+                            pstore.update(payload["plan_id"], status="FAILED",
+                                          error=f"{type(e).__name__}: {e}")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        await emit("error", {"message":
+                            f"Experiment failed: {type(e).__name__}: {e}"})
+                        await emit("done", {})
                     return
                 if intent == "plan_step":
                     # Round-30: run one experiment plan step. Resolve the
@@ -1854,6 +2017,14 @@ async def ws_chat(ws: WebSocket, name: str):
                 if mtype == "approval":
                     broker.resolve(msg.get("request_id", ""), bool(msg.get("decision")),
                                    bool(msg.get("temporary", False)))
+                elif mtype == "experiment_plan_decision":
+                    # Resolve a pending experiment-plan approval (plan_id as key).
+                    try:
+                        fut = rt._plan_approvals.get(msg.get("plan_id", ""))
+                        if fut and not fut.done():
+                            fut.set_result(bool(msg.get("decision", False)))
+                    except Exception:  # noqa: BLE001
+                        pass
                 elif mtype == "ping":
                     await emit("pong", {})
                 elif mtype == "stop":
