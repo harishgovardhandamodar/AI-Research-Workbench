@@ -608,6 +608,13 @@ async def project_run_report(name: str, rid: int):
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     report = await build_run_report(rt, run)
+    # Round-15: append a Flint chart of the run's metrics when available.
+    try:
+        from ..flint_charts import run_metrics_spec
+        report = await _embed_chart(rt, report, run_metrics_spec(run),
+                                    f"run-{rid}-chart")
+    except Exception:  # noqa: BLE001
+        pass
     # Round-4: prefer the run's stored env (captured at run time); fall back to
     # the live kernel env only for runs recorded before the feature existed.
     env = run.get("env") or {}
@@ -749,6 +756,83 @@ def _schedule_experiment_report(rt, eid: int) -> None:
         pass
 
 
+async def _flint_chart_artifact(rt, spec: dict, name: str) -> str | None:
+    """Render a Flint chart spec via the flint MCP server and register it as a
+    figure artifact. Returns the artifact id, or None when flint is unavailable."""
+    try:
+        from ..state import mcp_registry
+        from ..flint_charts import chart_png
+        png = await chart_png(mcp_registry, spec)
+    except Exception:  # noqa: BLE001
+        return None
+    if not png:
+        return None
+    art = Artifact(kind="figure", name=name, description="Flint chart",
+                   code="", env={}, message_id="", run_id="", data_type="png")
+    try:
+        rt.artifacts.add_artifact(art, data=png, data_type="png")
+    except Exception:  # noqa: BLE001
+        return None
+    return art.id
+
+
+async def _embed_chart(rt, report: str, spec: dict, name: str) -> str:
+    """Append a Flint chart image reference to a report when flint is available."""
+    if not spec or not spec.get("data"):
+        return report
+    aid = await _flint_chart_artifact(rt, spec, name)
+    if not aid:
+        return report
+    return report + f"\n\n![{name}](/artifacts/{aid})"
+
+
+@router.post("/api/projects/{name}/experiments/{eid}/chart")
+async def experiment_chart(name: str, eid: int, metric: str = ""):
+    """Render an experiment's goal-metric evolution as a Flint chart artifact."""
+    from ..flint_charts import metric_evolution_spec
+    rt = get_runtime(name)
+    exp = rt.store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    gm = (metric or "").strip() or exp.get("goal_metric") or ""
+    if not gm:
+        return JSONResponse({"ok": False, "error": "no goal metric"},
+                            status_code=400)
+    runs = rt.store.experiment_runs(eid, limit=100)
+    spec = metric_evolution_spec(runs, gm)
+    if not spec.get("data"):
+        return JSONResponse({"ok": False,
+                             "error": f"no numeric {gm} values yet"},
+                            status_code=400)
+    aid = await _flint_chart_artifact(rt, spec, f"exp-{eid}-chart")
+    if not aid:
+        return JSONResponse({"ok": False,
+                             "error": "flint charts server unavailable"},
+                            status_code=503)
+    return {"ok": True, "artifact_id": aid, "metric": gm}
+
+
+@router.post("/api/projects/{name}/runs/{rid}/chart")
+async def run_chart(name: str, rid: int):
+    """Render a run's metrics as a Flint bar-chart artifact."""
+    from ..flint_charts import run_metrics_spec
+    rt = get_runtime(name)
+    run = rt.store.get_run(rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    spec = run_metrics_spec(run)
+    if not spec.get("data"):
+        return JSONResponse({"ok": False,
+                             "error": "run has no numeric metrics"},
+                            status_code=400)
+    aid = await _flint_chart_artifact(rt, spec, f"run-{rid}-chart")
+    if not aid:
+        return JSONResponse({"ok": False,
+                             "error": "flint charts server unavailable"},
+                            status_code=503)
+    return {"ok": True, "artifact_id": aid}
+
+
 @router.get("/api/projects/{name}/experiments/{eid}/report")
 async def get_experiment_report(name: str, eid: int):
     """The latest generated report artifact for an experiment, or generate one
@@ -774,6 +858,18 @@ async def publish_experiment_report(name: str, eid: int):
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     report = build_experiment_report(rt, exp)
+    # Round-15: append a Flint chart of the goal-metric evolution when available.
+    try:
+        from ..flint_charts import metric_evolution_spec
+        gm = exp.get("goal_metric") or ""
+        if gm:
+            runs_for_chart = rt.store.experiment_runs(eid, limit=100)
+            report = await _embed_chart(
+                rt, report,
+                metric_evolution_spec(runs_for_chart, gm),
+                f"exp-{eid}-chart")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         env = await rt.kernels.get_env()
     except Exception:  # noqa: BLE001

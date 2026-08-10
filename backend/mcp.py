@@ -240,7 +240,11 @@ class MCPConnection:
             self._tools = list(res.tools)
         return self._tools
 
-    async def call_tool(self, name: str, arguments: dict) -> tuple[str, bool]:
+    async def call_tool(self, name: str, arguments: dict) -> tuple[str, bool, list]:
+        """Call an MCP tool. Returns (text, is_error, images) where ``images``
+        is a list of (mime_type, bytes) captured from image/resource blocks —
+        so chart servers (e.g. Flint) can hand PNGs back to the host."""
+        import base64
         await self._connect()
         try:
             res = await asyncio.wait_for(
@@ -251,23 +255,46 @@ class MCPConnection:
             # agent indefinitely; it will reconnect on the next call.
             await self.close()
             return ("[error] MCP tool call timed out after 120s (server "
-                    "connection reset)"), True
+                    "connection reset)"), True, []
         parts = []
+        images: list = []
         for block in getattr(res, "content", []) or []:
             btype = getattr(block, "type", "text")
             if btype == "text":
                 parts.append(getattr(block, "text", ""))
             elif btype == "image":
-                parts.append(f"[image {getattr(block, 'mimeType', '')}]")
+                mime = getattr(block, "mimeType", "") or "image/png"
+                data = getattr(block, "data", "") or ""
+                if data:
+                    try:
+                        images.append((mime, base64.b64decode(data)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                parts.append(f"[image {mime}]")
             elif btype == "resource":
-                # Resource blocks may carry inline text — surface it rather than
-                # collapsing to a bare uri placeholder.
+                # Resource blocks may carry inline text OR a base64 blob.
                 rtext = getattr(block, "text", "") or ""
+                blob = getattr(block, "blob", "") or ""
+                if not blob:
+                    res_contents = getattr(block, "resource", None)
+                    blob = getattr(res_contents, "blob", "") or ""
+                    if not rtext:
+                        rtext = getattr(res_contents, "text", "") or ""
                 if rtext:
                     parts.append(rtext)
                 else:
-                    parts.append(f"[resource {getattr(block, 'uri', '')}]")
-        return "\n".join(p for p in parts if p), bool(getattr(res, "isError", False))
+                    uri = getattr(block, "uri", "") or ""
+                    if blob:
+                        mime = getattr(block, "mimeType", "") or \
+                            "application/octet-stream"
+                        try:
+                            images.append((mime, base64.b64decode(blob)))
+                        except Exception:  # noqa: BLE001
+                            pass
+                        parts.append(f"[resource {uri}]")
+                    else:
+                        parts.append(f"[resource {uri}]")
+        return "\n".join(p for p in parts if p), bool(getattr(res, "isError", False)), images
 
     async def close(self):
         if self._session is not None:
@@ -532,7 +559,7 @@ class MCPRegistry:
                 return (f"[error] {full_name} is missing required argument(s): "
                         f"{', '.join(missing)}")
             try:
-                text, is_err = await conn.call_tool(tool.name, args)
+                text, is_err, _images = await conn.call_tool(tool.name, args)
             except Exception as e:  # noqa: BLE001
                 return f"[error] MCP tool '{tool.name}' failed: {type(e).__name__}: {e}"
             if (sname == "arxiv" and tool.name in _PERSISTED_GRAPH_TOOLS
@@ -568,16 +595,17 @@ async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
     if server not in registry._servers:
         return (f"[error] unknown MCP server '{server}' — "
                 f"available: {list(registry._servers)}. Add it in Settings → MCP.",
-                True)
+                True, [])
     conn = registry.connection(server)
     try:
         tools = await conn.list_tools()
     except Exception as e:  # noqa: BLE001
         return (f"[error] MCP server '{server}' unreachable: {e} — check it's "
-                "enabled in Settings → MCP and that the command/URL is valid.", True)
+                "enabled in Settings → MCP and that the command/URL is valid.",
+                True, [])
     match = next((t for t in tools if t.name == tool), None)
     if match is None:
-        return (f"[error] tool '{server}__{tool}' not found on that server", True)
+        return (f"[error] tool '{server}__{tool}' not found on that server", True, [])
     # Basic input validation against the tool's JSON schema (required args).
     schema = getattr(match, "input_schema", None) or {}
     required = list(schema.get("required") or [])
@@ -587,7 +615,7 @@ async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
                  for k in required}
         return (f"[error] {server}__{tool} is missing required argument(s): "
                 f"{', '.join(missing)}. Expected: {json.dumps(props, default=str)}",
-                True)
+                True, [])
     annotations = getattr(match, "annotations", None)
     read_only = bool(getattr(annotations, "read_only_hint", None)) if annotations else False
     trusted = bool(registry._servers.get(server, {}).get("trusted", False))
@@ -597,7 +625,7 @@ async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
         if grant == "ask":
             if broker is None:
                 return (f"[denied] {key} may modify data or launch compute and "
-                        "requires your approval.", True)
+                        "requires your approval.", True, [])
             if emit:
                 try:
                     await emit("status", {"message":
@@ -609,12 +637,12 @@ async def call_mcp_tool(registry: MCPRegistry, server: str, tool: str,
                 f"MCP tool '{tool}' on server '{server}' may modify data or "
                 "launch compute. Approve?")
             if not ok:
-                return ("[denied by user]", True)
+                return ("[denied by user]", True, [])
             permissions.record("mcp_tool", key, "allow")
         elif grant == "deny":
-            return (f"[denied] {key} is blocked by the permission policy.", True)
+            return (f"[denied] {key} is blocked by the permission policy.", True, [])
     try:
-        text, is_err = await conn.call_tool(tool, args or {})
+        text, is_err, images = await conn.call_tool(tool, args or {})
     except Exception as e:  # noqa: BLE001
-        return (f"[error] MCP tool '{tool}' failed: {type(e).__name__}: {e}", True)
-    return (text or "(no output)", is_err)
+        return (f"[error] MCP tool '{tool}' failed: {type(e).__name__}: {e}", True, [])
+    return (text or "(no output)", is_err, images)

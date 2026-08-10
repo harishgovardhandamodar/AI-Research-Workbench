@@ -33,3 +33,9 @@ model needed).
 > pretty-printed into a code block); `@mcp bg …` runs it in the background and a
 > bare `@mcp` lists every connected server's tools. `/god`, `/sandbox` alias
 > `/godmode`. `/flat` and `/sets` toggle rendering mode.
+>
+> **Natural-language charting** (no model): a message like
+> `make a distribution of transaction type`, `histogram of <column>`,
+> `scatter <a> vs <b>` or `trend of <metric> over <x>` renders a Flint chart of
+> the project dataset inline (matplotlib fallback when the flint server is
+> absent).

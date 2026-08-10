@@ -16,14 +16,16 @@ class _FakeConn:
     def __init__(self, tools, replies=None):
         self._tools = tools
         self._replies = replies or {}
+        self.last_args = None
 
     async def list_tools(self):
         return self._tools
 
     async def call_tool(self, name, args):
+        self.last_args = (name, args)
         if name in self._replies:
-            return (self._replies[name], False)
-        return (f"ran {name} {args}", False)
+            return (self._replies[name], False, [])
+        return (f"ran {name} {args}", False, [])
 
     async def close(self):
         pass
@@ -111,25 +113,25 @@ class TestCallMcpTool(unittest.IsolatedAsyncioTestCase):
         self.r = _registry(enabled=True)
 
     async def test_read_only_runs_without_permissions(self):
-        text, err = await call_mcp_tool(self.r, "s", "ro", {"x": 1})
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "ro", {"x": 1})
         self.assertIn("ran ro", text)
         self.assertFalse(err)
 
     async def test_writable_permission_gates(self):
         # no permissions layer -> runs
-        text, err = await call_mcp_tool(self.r, "s", "wr", {})
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {})
         self.assertFalse(err)
         # ask + no broker -> denied with a clear message
-        text, err = await call_mcp_tool(self.r, "s", "wr", {},
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {},
                                         permissions=_Perms("ask"))
         self.assertTrue(err)
         self.assertIn("denied", text)
         # pre-granted allow -> runs
-        text, err = await call_mcp_tool(self.r, "s", "wr", {},
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {},
                                         permissions=_Perms("allow"))
         self.assertFalse(err)
         # policy deny -> blocked
-        text, err = await call_mcp_tool(self.r, "s", "wr", {},
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {},
                                         permissions=_Perms("deny"))
         self.assertTrue(err)
         self.assertIn("blocked", text)
@@ -137,7 +139,7 @@ class TestCallMcpTool(unittest.IsolatedAsyncioTestCase):
     async def test_broker_approval_flow(self):
         perms = _Perms("ask")
         broker = _Broker(approve=True)
-        text, err = await call_mcp_tool(self.r, "s", "wr", {},
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {},
                                         permissions=perms, broker=broker)
         self.assertEqual(broker.asked, 1)
         self.assertFalse(err)
@@ -146,16 +148,16 @@ class TestCallMcpTool(unittest.IsolatedAsyncioTestCase):
 
         perms2 = _Perms("ask")
         broker2 = _Broker(approve=False)
-        text, err = await call_mcp_tool(self.r, "s", "wr", {},
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "wr", {},
                                         permissions=perms2, broker=broker2)
         self.assertTrue(err)
         self.assertIn("denied by user", text)
 
     async def test_missing_tool_and_server(self):
-        text, err = await call_mcp_tool(self.r, "s", "nope", {})
+        text, err, _imgs = await call_mcp_tool(self.r, "s", "nope", {})
         self.assertTrue(err)
         self.assertIn("not found", text)
-        text, err = await call_mcp_tool(self.r, "ghost", "ro", {})
+        text, err, _imgs = await call_mcp_tool(self.r, "ghost", "ro", {})
         self.assertTrue(err)
 
     async def test_catalog_includes_params(self):
@@ -181,12 +183,12 @@ class TestCallMcpTool(unittest.IsolatedAsyncioTestCase):
         r = MCPRegistry([{"name": "s", "enabled": True}])
         r._available = True
         r._conns["s"] = _FakeConn([_tool("prof", True, schema=schema)])
-        text, err = await call_mcp_tool(r, "s", "prof", {"dataset": "d.csv"})
+        text, err, _imgs = await call_mcp_tool(r, "s", "prof", {"dataset": "d.csv"})
         self.assertTrue(err)
         self.assertIn("column", text)
         self.assertIn("required", text)
         # providing all required args runs
-        text, err = await call_mcp_tool(r, "s", "prof",
+        text, err, _imgs = await call_mcp_tool(r, "s", "prof",
                                         {"dataset": "d.csv", "column": "a"})
         self.assertFalse(err)
         self.assertIn("ran prof", text)

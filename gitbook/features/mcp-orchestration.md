@@ -41,6 +41,25 @@ Type in the chat box (deterministic — no model round-trip):
 Every direct call is recorded as a run (`kind="mcp_tool"`), so it appears in the
 Experiments timeline.
 
+## Natural-language charting
+
+Ask in plain words and the Flint charts MCP renders a chart of your project's
+dataset — no spec needed (deterministic, no model round-trip):
+
+```
+make a distribution of transaction type
+histogram of amount (INR)
+scatter amount (INR) vs sender_bank
+correlation between amount (INR) and sender_bank
+trend of amount (INR) over hour_of_day
+```
+
+The request is parsed to a Flint spec, rendered via `flint__render_chart`, and
+the PNG is registered as a figure artifact and posted inline in chat. If the
+Node-based flint server is unavailable it falls back to a deterministic
+matplotlib renderer, so charts always work. Unknown column names produce a
+helpful message listing the dataset's columns.
+
 ## Calling tools from the Experiments tab
 
 The **MCP** section shows every server (health, trust, enable/disable) and a

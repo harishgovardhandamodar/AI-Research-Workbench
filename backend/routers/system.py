@@ -348,7 +348,7 @@ async def call_tool(server: str, tool: str, body: dict):
 
         async def _bg():
             try:
-                btext, berr = await call_mcp_tool(
+                btext, berr, _bimg = await call_mcp_tool(
                     mcp_registry, server, tool, args,
                     permissions=permissions)
                 bmetrics = _parse_flat_metrics(btext) if track else None
@@ -366,7 +366,7 @@ async def call_tool(server: str, tool: str, body: dict):
         return {"ok": True, "run_id": run_id, "background": True,
                 "tool": f"{server}__{tool}", "experiment_id": experiment_id}
 
-    text, is_err = await call_mcp_tool(
+    text, is_err, _imgs = await call_mcp_tool(
         mcp_registry, server, tool, args, permissions=permissions)
     if is_err:
         denied = text.startswith("[denied]")

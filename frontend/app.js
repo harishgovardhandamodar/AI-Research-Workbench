@@ -5114,6 +5114,17 @@ function renderRuns() {
       sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
                "improve_loop", { experiment_id: b.dataset.eid });
     }));
+  el.querySelectorAll(".run-chart").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      b.disabled = true;
+      try {
+        const r = await api(`/api/projects/${state.project}/runs/${b.dataset.rid}/chart`, { method: "POST" });
+        if (r && r.artifact_id) { window.open(B("/artifacts/" + r.artifact_id), "_blank"); }
+        else toast(r.error || "Flint charts server unavailable", 4000);
+      } catch (e) { toast("Chart failed: " + e.message, 4000); }
+      b.disabled = false;
+    }));
   if (ordered.length > shown.length) {
     const more = document.createElement("div");
     more.className = "exp-more";
@@ -5204,6 +5215,7 @@ function runDetailHtml(r) {
     const nm = expName(r.experiment_id);
     acts.push(`<button class="btn subtle small run-improve-exp" data-eid="${r.experiment_id}" data-name="${esc(nm)}" title="Improve the owning experiment">🔁 improve</button>`);
   }
+  acts.push(`<button class="btn subtle small run-chart" data-rid="${r.id}" title="Render a Flint chart of this run's metrics">📊 Chart</button>`);
   if (acts.length) h += `<div class="run-actions">${acts.join("")}</div>`;
   return h;
 }
@@ -5384,6 +5396,7 @@ function renderExpList() {
         </select>
         <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}"${active ? "" : " disabled title=\"reopen the experiment first\""}>Improve</button>
         <button class="btn subtle small exp-report" data-id="${e.id}" title="Generate & publish the aggregate experiment report">📄</button>
+        <button class="btn subtle small exp-chart" data-id="${e.id}" title="Render a Flint chart of the goal-metric evolution">📊</button>
         <button class="btn subtle small exp-export" data-id="${e.id}" title="Export this experiment's runs as CSV">⬇</button>
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
@@ -5415,6 +5428,16 @@ function renderExpList() {
         loadReports();
       } catch (e) { toast("Report failed: " + e.message, 4000); }
       b.disabled = false; b.textContent = "📄";
+    }));
+  el.querySelectorAll(".exp-chart").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/${b.dataset.id}/chart`, { method: "POST" });
+        if (r && r.artifact_id) { window.open(B("/artifacts/" + r.artifact_id), "_blank"); }
+        else toast(r.error || "Flint charts server unavailable", 4000);
+      } catch (e) { toast("Chart failed: " + e.message, 4000); }
+      b.disabled = false;
     }));
   el.querySelectorAll(".exp-focus").forEach((b) =>
     b.addEventListener("click", async () => {

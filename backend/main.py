@@ -193,6 +193,25 @@ def _is_experiment_plan_request(text: str) -> bool:
     return any(w in low for w in _EXPERIMENT_PLAN_WORDS)
 
 
+_CHART_NOUNS = ("chart", "plot", "graph", "distribution", "histogram",
+                "scatter", "correlation", "trend", "bar chart", "line chart",
+                "pie chart", "barplot", "countplot", "visualize", "visualise")
+_CHART_PREPS = (" of ", " between ", " vs ", " by ", " over ", "against")
+
+
+def _is_chart_request(text: str) -> bool:
+    """Detect a natural-language chart request (e.g. "make a distribution of
+    transaction type") so it renders deterministically via the Flint charts MCP
+    instead of going through the (tool-light) LLM loop."""
+    low = (text or "").lower()
+    if not any(n in low for n in _CHART_NOUNS):
+        return False
+    if any(p in low for p in _CHART_PREPS):
+        return True
+    return bool(re.search(r"(make|draw|show|generate|plot|chart|visuali[sz]e)\b",
+                          low))
+
+
 def _is_peer_experiment_request(text: str) -> bool:
     """Detect a peer-identification / market-share experiment request so it runs
     deterministically instead of through the (often tool-less) LLM loop."""
@@ -899,7 +918,8 @@ HELP_TEXT = """\
 | `/godmode <request>` | Full access in a quarantined sandbox — run the experiment freely |
 | `/improve [name]` | Run the improve loop for the latest (or named) experiment |
 | `/experiments` | List experiments with status, goal and best metric |
-| `/complete` / `/cancel` / `/activate <name|id>` | Change an experiment's lifecycle status (complete also publishes its aggregate report) || `/compare <a> <b>` | Compare two runs by id (metric deltas) |
+| `/complete` / `/cancel` / `/activate <name|id>` | Change an experiment's lifecycle status (complete also publishes its aggregate report) |
+| `/chart <experiment|run_id> [metric]` | Render a Flint chart of a run's metrics or an experiment's goal-metric evolution || `/compare <a> <b>` | Compare two runs by id (metric deltas) |
 | `/report [run_id]` | Generate a lab-notebook report for the last (or given) run |
 | `/commit` | Commit this project's experiment artifacts to the management repo |
 | `/push` | Push the management repo to GitHub |
@@ -934,6 +954,73 @@ async def _mcp_tool_listing(limit: int = 120) -> str:
         if len(lines) >= limit:
             break
     return "\n".join(lines) if lines else "No MCP servers connected."
+
+
+async def _handle_chart_request(rt, emit, text: str,
+                                msg_extra: dict | None = None) -> None:
+    """Deterministic natural-language chart intent: load the project dataset,
+    build a Flint chart spec from the request, render it (flint MCP, with a
+    matplotlib fallback), register the PNG as an artifact and post it inline."""
+    import asyncio as _asyncio
+    from .flint_charts import chart_spec_from_request, render_chart_artifact
+    from .experiment_planner import load_dataset, is_dataset_file
+    from .state import mcp_registry
+    msg_extra = msg_extra or {}
+
+    dataset = (msg_extra.get("dataset") or "").strip()
+    cands = []
+    if dataset and (rt.dir / dataset).exists():
+        cands = [rt.dir / dataset]
+    else:
+        cands = sorted(p for p in rt.dir.iterdir()
+                       if p.is_file() and is_dataset_file(p.name)
+                       and not p.name.lower().startswith("synthetic_"))
+    if not cands:
+        await emit("notice", {"message":
+            "No dataset in the project — upload a CSV/Parquet/Excel file first."})
+        await emit("done", {})
+        return
+    try:
+        df = await _asyncio.to_thread(load_dataset, cands[0])
+    except Exception as e:  # noqa: BLE001
+        await emit("error", {"message": f"Could not load dataset: {e}"})
+        await emit("done", {})
+        return
+    spec = chart_spec_from_request(text, df)
+    if not spec:
+        cols = ", ".join(str(c) for c in df.columns[:24])
+        content = ("I can chart your dataset. Try:\n\n"
+                   "- `make a distribution of <column>`\n"
+                   "- `histogram of <numeric column>`\n"
+                   "- `scatter <a> vs <b>`\n"
+                   "- `trend of <metric> over <x>`\n\n"
+                   f"**Columns:** {cols}")
+        amid = rt.store.add_message("assistant", content, {"tags": ["chart", "help"]})
+        await emit("assistant_message", {"id": amid, "content": content,
+                                         "tags": ["chart", "help"],
+                                         "created_at": _msg_created_at(rt, amid)})
+        await emit("done", {})
+        return
+    fname = f"chart-{int(time.time())}.png"
+    aid = await render_chart_artifact(rt, mcp_registry, spec, fname)
+    if not aid:
+        await emit("error", {"message":
+            "Chart rendering failed — the flint server is unavailable and the "
+            "matplotlib fallback errored."})
+        await emit("done", {})
+        return
+    content = (f"📊 **{spec.get('title', 'Chart')}** — dataset "
+               f"`{cands[0].name}`\n\n![chart](/artifacts/{aid})")
+    amid = rt.store.add_message("assistant", content, {"tags": ["chart", "figure"]})
+    await emit("assistant_message", {"id": amid, "content": content,
+                                     "tags": ["chart", "figure"],
+                                     "created_at": _msg_created_at(rt, amid)})
+    try:
+        art = rt.artifacts.get(aid)
+        await emit("artifact", {"artifact": art.to_dict()})
+    except Exception:  # noqa: BLE001
+        pass
+    await emit("done", {})
 
 
 async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
@@ -985,7 +1072,7 @@ async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
 
         async def _bg_run():
             try:
-                btext, berr = await call_mcp_tool(
+                btext, berr, _bimg = await call_mcp_tool(
                     mcp_registry, server, tool, args,
                     permissions=rt.permissions, broker=broker, emit=emit)
                 rt.store.update_run(
@@ -1018,7 +1105,7 @@ async def _handle_mcp_command(rt, emit, broker, text: str) -> None:
         await emit("done", {})
         return
 
-    res_text, is_err = await call_mcp_tool(
+    res_text, is_err, _imgs = await call_mcp_tool(
         mcp_registry, server, tool, args,
         permissions=rt.permissions, broker=broker, emit=emit)
     if is_err and "not found" in res_text:
@@ -1118,6 +1205,42 @@ async def _run_slash_command(rt: ProjectRuntime, emit, coordinator,
             lines.append(f"- **{e['name']}** (#{e['id']}, {e.get('status')}) — "
                          f"{goal} · best {best_txt}")
         await reply("\n".join(lines), ["experiments"])
+        return True
+
+    if cmd == "/chart":
+        if not arg:
+            await reply("Usage: `/chart <experiment|run_id> [metric]` — chart a "
+                        "run's metrics or an experiment's goal-metric evolution "
+                        "with Flint.", ["experiments", "chart"])
+            return True
+        parts = arg.split()
+        target = parts[0].lstrip("#")
+        metric = parts[1] if len(parts) > 1 else ""
+        from .routers.runs import run_chart, experiment_chart
+        res = None
+        label = ""
+        if target.isdigit():
+            res = await run_chart(rt.name, int(target))
+            label = f"Run #{target} metrics"
+        else:
+            eid = _resolve_experiment_id(rt, target, "")
+            e = rt.store.get_experiment(eid) if eid is not None else None
+            if e is None:
+                await reply(f"No experiment matched “{target}”.", ["experiments"])
+                return True
+            res = await experiment_chart(rt.name, eid, metric)
+            label = (f"{e['name']} — "
+                     f"{res.get('metric') or metric or e.get('goal_metric') or 'metric'}"
+                     " across runs") if isinstance(res, dict) \
+                else f"{e['name']} chart"
+        if isinstance(res, dict) and res.get("ok"):
+            content = (f"📊 {label}\n\n"
+                       f"![chart](/artifacts/{res['artifact_id']})")
+            await reply(content, ["experiments", "chart"])
+        else:
+            detail = getattr(res, "body", b"").decode("utf-8", "replace") \
+                if hasattr(res, "body") else "flint charts server unavailable"
+            await reply(f"❌ Chart failed: {detail}", ["experiments", "chart"])
         return True
 
     if cmd in ("/complete", "/cancel", "/activate"):
@@ -1555,6 +1678,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     user_tags = ["peer experiment"]
                 elif intent == "experiment_plan":
                     user_tags = ["experiment", "plan"]
+                elif intent == "chart":
+                    user_tags = ["chart"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1573,6 +1698,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     elif _is_experiment_plan_request(text):
                         intent = "experiment_plan"
                         user_tags = ["experiment", "plan"]
+                    elif _is_chart_request(text):
+                        intent = "chart"
+                        user_tags = ["chart"]
                 if intent == "rerun_run":
                     # Revert-to-this-run: derive from the requested run and
                     # re-issue its prompt (if no explicit text was provided).
@@ -1583,6 +1711,9 @@ async def ws_chat(ws: WebSocket, name: str):
                             coordinator.ctx.parent_run_id = int(rid)
                             if not (text or "").strip():
                                 text = target.get("prompt") or text
+                if intent == "chart":
+                    await _handle_chart_request(rt, emit, text, msg_extra)
+                    return
                 if intent == "autoresearch":
                     from .autoresearch import run_autoresearch_loop
 
