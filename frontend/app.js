@@ -4006,13 +4006,17 @@ function renderExpDetailBody(eid, meta, exp) {
         return `<div class="learning-row"><span class="run-id">#${r.id}</span><span>${esc((r.label || "").slice(0, 30))} · ${esc(mstr.slice(0, 140))}</span></div>`;
       }
       const ftSeries = (r.config && r.config.metric_series) || null;
+      const vReport = (r.kind === "verify" && r.config && r.config.report)
+        ? `<div class="finetune-report">${renderMarkdown(r.config.report)}</div>` : "";
       return `<details class="pipe-wrap expd-pipe"><summary><span class="run-id">#${r.id}</span>`
         + `<span>${esc((r.label || "").slice(0, 30))}</span>`
         + (r.model ? `<span class="run-ds-chip">🤖 ${esc(r.model)}</span>` : "")
         + (r.dataset ? `<span class="run-ds-chip">🧬 ${esc(r.dataset)}</span>` : "")
         + `<span class="muted">${esc(mstr.slice(0, 90))}</span><span class="pipe-sum">🛠 pipeline</span></summary>`
         + (ftSeries && ftSeries.length ? ftMetricChartBlock(ftSeries, r.id) : "")
-        + pipelineHtml(r, meta) + `</details>`;
+        + pipelineHtml(r, meta)
+        + vReport
+        + `</details>`;
     }).join("");
   } else {
     h += `<div class="exp-empty">No runs yet — improve this experiment or run variants in chat.</div>`;
@@ -6792,19 +6796,25 @@ function renderFinetuneValidate(data) {
           ${deltaBits ? `<span class="muted" style="margin-left:12px">Δ adapter−base</span> ${deltaBits}` : ""}
         </div>
         ${prog.total ? `<div class="finetune-progress"><div class="finetune-progress-bar" style="width:${prog.pct}%"></div></div>` : ""}
-        <pre class="finetune-log hidden"></pre>
+        <div class="finetune-report hidden"></div>
       </div>
     </div>`;
   }
   host.innerHTML = h;
   host.querySelectorAll(".finetune-verify-toggle").forEach((b) =>
     b.addEventListener("click", () => {
-      const body = b.closest(".finetune-job").querySelector(".finetune-log");
+      const body = b.closest(".finetune-job").querySelector(".finetune-report");
       const show = body.classList.toggle("hidden");
       b.textContent = show ? "▾" : "▸";
-      if (show && !body.textContent.trim()) {
+      if (show && !body.dataset.loaded) {
+        body.dataset.loaded = "1";
         const run = runs.find((x) => x.id === b.dataset.id) || {};
-        body.textContent = run.report || "(no report text yet)";
+        if (run.report && run.report.trim()) {
+          body.innerHTML = renderMarkdown(run.report);
+          enhanceCodeBlocks(body);
+        } else {
+          body.textContent = "(no report text yet)";
+        }
       }
     }));
   const running = runs.some((r) => r.status === "running");

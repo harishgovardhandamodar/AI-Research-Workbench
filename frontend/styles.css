@@ -985,6 +985,14 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
   border: 1px solid var(--border); border-radius: 4px; }
 .ft-chart-label { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; margin-top: 2px; }
 .ft-chart-empty { font-size: 10.5px; padding: 8px 0; }
+.finetune-report { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 6px; background: rgba(0,0,0,.22); font-size: 12.5px; max-height: 420px; overflow: auto; }
+.finetune-report h1, .finetune-report h2, .finetune-report h3 { margin: 10px 0 6px; }
+.finetune-report h1 { font-size: 17px; } .finetune-report h2 { font-size: 15px; } .finetune-report h3 { font-size: 13.5px; }
+.finetune-report table { border-collapse: collapse; margin: 6px 0; }
+.finetune-report th, .finetune-report td { border: 1px solid var(--border); padding: 3px 8px; font-size: 12px; }
+.finetune-report th { background: var(--bg-2); }
+.finetune-report pre { font-size: 11px; }
 
 /* ---------- finetune live pipeline card in the chat ---------- */
 .ft-pipe-card {
