@@ -115,6 +115,7 @@
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
         <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="mcp">MCP</button>
+        <button class="exp-nav-chip" data-target="reports">Reports</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
       </nav>
 
@@ -380,6 +381,15 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <input id="mcp-filter" class="exp-search" placeholder="filter servers / tools… (e.g. eda, profile, github)" />
         <div id="mcp-recent" class="finetune-jobs"></div>
         <div id="mcp-server-cards" class="finetune-jobs"></div>
+      </section>
+
+      <section id="exp-section-reports" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Published reports <span class="muted exp-hint">run lab-notebooks · planner reports · EDA — browse, re-publish, re-generate</span></span>
+          <span class="spacer"></span>
+          <button id="reports-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div id="reports-list" class="finetune-jobs"></div>
       </section>
 
       <section id="exp-section-runs" class="exp-section">

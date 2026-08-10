@@ -622,6 +622,48 @@ async def project_run_report(name: str, rid: int):
     return {"report": report, "artifact_id": art.id, "message_id": mid}
 
 
+@router.get("/api/projects/{name}/reports")
+async def project_reports(name: str):
+    """Published report artifacts (run lab-notebook, planner report.md, EDA)
+    consolidated for browsing / re-publishing from the Experiments tab."""
+    rt = get_runtime(name)
+    out = []
+    for art in rt.artifacts.list(limit=500):
+        kind = art.kind or ""
+        aname = art.name or ""
+        if kind != "report" and "report" not in aname.lower():
+            continue
+        out.append({
+            "id": art.id, "name": aname, "kind": kind,
+            "description": art.description or "",
+            "created_at": art.created_at, "size": art.size,
+            "run_id": art.run_id or "",
+            "url": f"/artifacts/{art.id}",
+        })
+    out.sort(key=lambda r: -(r.get("created_at") or 0))
+    return {"reports": out}
+
+
+@router.post("/api/projects/{name}/reports/{artifact_id}/publish")
+async def publish_report(name: str, artifact_id: str):
+    """Post an existing report artifact's text to the project chat."""
+    rt = get_runtime(name)
+    art = rt.artifacts.get(artifact_id)
+    if art is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    try:
+        data = rt.artifacts.data(artifact_id)
+    except Exception:  # noqa: BLE001
+        data = None
+    text = (data or b"").decode("utf-8", errors="replace") if data else ""
+    if not text.strip():
+        return JSONResponse({"error": "artifact has no text content"},
+                            status_code=400)
+    amid = rt.store.add_message(
+        "assistant", text, {"tags": ["report", f"artifact:{artifact_id}"]})
+    return {"message_id": amid, "artifact_id": artifact_id}
+
+
 @router.get("/api/projects/{name}/goals")
 async def project_goals(name: str):
     return {"goals": get_runtime(name).store.list_goals()}

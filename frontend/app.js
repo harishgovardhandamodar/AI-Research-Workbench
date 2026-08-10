@@ -3576,6 +3576,7 @@ async function loadExperiments() {
   if (typeof loadFinetuneValidate === "function") loadFinetuneValidate();
   if (typeof loadExperimentPlans === "function") loadExperimentPlans();
   loadMcpServers();
+  loadReports();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -5179,6 +5180,9 @@ function runDetailHtml(r) {
   if (r.prompt) {
     h += `<div class="run-detail-sec">Prompt</div><div class="run-prompt-full">${esc(r.prompt)}</div>`;
   }
+  if (r.reply && r.reply.trim()) {
+    h += `<div class="run-detail-sec">Result</div><div class="run-reply">${renderMarkdown(r.reply)}</div>`;
+  }
   h += `<div class="run-detail-sec">Dataset</div><div class="run-ds-row">`
     + `<input class="run-ds-input" data-rid="${r.id}" value="${esc(r.dataset || "")}" placeholder="e.g. real / synthetic" title="Tag which dataset this run used (for dataset comparison)">`
     + `<button class="btn subtle small run-ds-save" data-rid="${r.id}" title="Save dataset tag">Set</button></div>`;
@@ -5329,6 +5333,13 @@ function renderExpList() {
         (target != null ? ` / ${_fmtNum(target)}` : "")
       : (best != null ? `best ${_fmtNum(best)}` : "");
     const series = e.goal_metric ? expSeries(e.id, e.goal_metric) : [];
+    // Most recent run for status tracking + live-running pulse.
+    const expRuns = (state.agentRuns || []).filter((r) => String(r.experiment_id) === String(e.id));
+    const lastRun = expRuns.length ? expRuns[expRuns.length - 1] : null;
+    const isRunningNow = runningExpIds().has(e.id);
+    const lastRunLine = lastRun
+      ? `last run <span class="run-status-chip${lastRun.status === "error" ? " fail" : ""}">${esc(lastRun.status || "done")}</span> · ${timeAgo(lastRun.finished_at || lastRun.started_at)}`
+      : "no runs yet";
     const deltaBest = (best != null && series.length)
       ? series[series.length - 1] - best : null;
     const trend = series.length >= 2 ? seriesTrend(series) : null;
@@ -5350,7 +5361,7 @@ function renderExpList() {
     const badgeCls = active ? "det" : (status === "completed" ? "ok" : "warn");
     const focused = state.focusExperiment === e.id;
     card.innerHTML = `<div class="exp-card-head">
-        <b class="exp-card-name" data-id="${e.id}" title="Open experiment detail">${esc(e.name)}</b>
+        <b class="exp-card-name" data-id="${e.id}" title="Open experiment detail">${esc(e.name)}${isRunningNow ? ' <span class="exp-live" title="Agent is working on this experiment">◔</span>' : ""}</b>
         <span class="exp-badge ${badgeCls}">${esc(status)}</span>
         ${reached ? `<span class="rank-reached" title="Goal reached">✓</span>` : ""}
         <span class="muted exp-card-runs">${e.runs} run(s)</span>
@@ -5367,6 +5378,7 @@ function renderExpList() {
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
       ${goalLine ? `<div class="exp-card-sum muted">${goalLine}</div>` : ""}
+      <div class="exp-card-row muted exp-lastrun">${lastRunLine}</div>
       ${advisorHint ? `<div class="exp-card-row">${advisorHint}</div>` : ""}
       ${(series.length >= 2 || deltaBest != null || trend) ? `<div class="exp-card-row">${sparklineSvg(series, 110, 26, expColor(e.id))}${trendChipHtml(trend)}${deltaBestChip(deltaBest)}</div>` : ""}
       ${(best != null && target) ? `<div class="exp-goal-bar"><div class="exp-goal-fill ${reached ? "reached" : ""}" style="width:${pct}%"></div></div>` : ""}
@@ -5558,6 +5570,14 @@ function _fmtNum(v) {
   if (v == null || Number.isNaN(Number(v))) return "—";
   const n = Number(v);
   return n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(3);
+}
+function timeAgo(ts) {
+  if (!ts) return "—";
+  const s = Math.max(0, (Date.now() / 1000) - Number(ts));
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
 }
 function _metricColor(v, min, max) {
   const t = (v - min) / ((max - min) || 1);
@@ -7583,6 +7603,99 @@ if ($("mcp-filter")) {
     const data = state._mcpData || { servers: [], grants: {} };
     renderMcpServers(data.servers, data.grants);
   });
+}
+
+/* ---------- Published reports hub ---------- */
+async function loadReports() {
+  try {
+    const r = await api(`/api/projects/${state.project}/reports`);
+    renderReports(r.reports || []);
+  } catch (e) { /* silent */ }
+}
+
+function renderReports(reports) {
+  const host = $("reports-list");
+  if (!host) return;
+  if (!reports.length) {
+    host.innerHTML = '<div class="exp-empty">No published reports yet — generate one from a run (Runs tab → Report), a plan, or EDA.</div>';
+    return;
+  }
+  host.innerHTML = reports.map((rep) => {
+    const kindBadge = rep.kind === "report" ? "ok" : "det";
+    const regen = rep.run_id
+      ? `<button class="btn subtle small rep-regen" data-run="${esc(rep.run_id)}" title="Regenerate the lab-notebook report">⚡ Regenerate</button>` : "";
+    return `<div class="finetune-job rep-card">
+      <div class="finetune-job-head">
+        <span class="finetune-job-id">📄 ${esc(rep.name)}</span>
+        <span class="exp-badge ${kindBadge}">${esc(rep.kind)}</span>
+        <span class="spacer"></span>
+        <span class="muted">${timeAgo(rep.created_at)} · ${rep.size || 0} B</span>
+      </div>
+      <div class="finetune-job-body">
+        <div class="finetune-job-row muted">${esc(rep.description || "")}</div>
+        <div class="finetune-job-actions">
+          <button class="btn subtle small rep-open" data-id="${esc(rep.id)}" title="Open the raw report">📄 Open</button>
+          <button class="btn subtle small rep-view" data-id="${esc(rep.id)}" title="Preview inline">👁 Preview</button>
+          <button class="btn subtle small rep-copy" data-id="${esc(rep.id)}" title="Copy markdown to clipboard">📋 Copy</button>
+          ${regen}
+          <button class="btn subtle small rep-publish" data-id="${esc(rep.id)}" title="Post the report to chat">📨 Publish</button>
+        </div>
+        <div class="rep-preview hidden"></div>
+      </div>
+    </div>`;
+  }).join("");
+  host.querySelectorAll(".rep-open").forEach((b) =>
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      window.open(B("/artifacts/" + b.dataset.id), "_blank");
+    }));
+  host.querySelectorAll(".rep-view").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const card = b.closest(".rep-card");
+      const pre = card.querySelector(".rep-preview");
+      if (!pre.classList.contains("hidden")) { pre.classList.add("hidden"); return; }
+      pre.innerHTML = "…";
+      pre.classList.remove("hidden");
+      try {
+        const text = await (await fetch(B("/artifacts/" + b.dataset.id))).text();
+        pre.innerHTML = `<div class="rep-preview-body">${renderMarkdown(text)}</div>`;
+      } catch (e) { pre.textContent = "Could not preview: " + e.message; }
+    }));
+  host.querySelectorAll(".rep-copy").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try {
+        const text = await (await fetch(B("/artifacts/" + b.dataset.id))).text();
+        await navigator.clipboard.writeText(text);
+        toast("Report markdown copied.");
+      } catch (e) { toast("Copy failed: " + e.message, 4000); }
+    }));
+  host.querySelectorAll(".rep-regen").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      b.disabled = true; b.textContent = "…";
+      try {
+        await api(`/api/projects/${state.project}/runs/${b.dataset.run}/report`, { method: "POST" });
+        toast("Report regenerated.");
+        loadReports();
+      } catch (e) { toast("Regenerate failed: " + e.message, 4000); }
+      b.disabled = false; b.textContent = "⚡ Regenerate";
+    }));
+  host.querySelectorAll(".rep-publish").forEach((b) =>
+    b.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      b.disabled = true;
+      try {
+        await api(`/api/projects/${state.project}/reports/${b.dataset.id}/publish`, { method: "POST" });
+        toast("Report published to chat.");
+      } catch (e) { toast("Publish failed: " + e.message, 4000); }
+      b.disabled = false;
+    }));
+}
+
+if ($("reports-refresh")) {
+  $("reports-refresh").addEventListener("click", loadReports);
 }
 
 /* ---------- experiment plans manager (planner) ---------- */
