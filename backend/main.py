@@ -899,7 +899,7 @@ HELP_TEXT = """\
 | `/godmode <request>` | Full access in a quarantined sandbox — run the experiment freely |
 | `/improve [name]` | Run the improve loop for the latest (or named) experiment |
 | `/experiments` | List experiments with status, goal and best metric |
-| `/compare <a> <b>` | Compare two runs by id (metric deltas) |
+| `/complete` / `/cancel` / `/activate <name|id>` | Change an experiment's lifecycle status (complete also publishes its aggregate report) || `/compare <a> <b>` | Compare two runs by id (metric deltas) |
 | `/report [run_id]` | Generate a lab-notebook report for the last (or given) run |
 | `/commit` | Commit this project's experiment artifacts to the management repo |
 | `/push` | Push the management repo to GitHub |
@@ -1118,6 +1118,30 @@ async def _run_slash_command(rt: ProjectRuntime, emit, coordinator,
             lines.append(f"- **{e['name']}** (#{e['id']}, {e.get('status')}) — "
                          f"{goal} · best {best_txt}")
         await reply("\n".join(lines), ["experiments"])
+        return True
+
+    if cmd in ("/complete", "/cancel", "/activate"):
+        status = {"complete": "completed", "cancel": "cancelled",
+                  "activate": "active"}[cmd[1:]]
+        if not arg:
+            await reply(f"Usage: `{cmd} <name|id>` — mark an experiment "
+                        f"`{status}`.", ["experiments"])
+            return True
+        eid = int(arg) if arg.isdigit() else _resolve_experiment_id(rt, arg, "")
+        e = rt.store.get_experiment(eid) if eid is not None else None
+        if e is None:
+            await reply(f"No experiment matched “{arg}”.", ["experiments"])
+            return True
+        rt.store.update_experiment_status(eid, status)
+        note = f"**{e['name']}** (#{eid}) → `{status}`."
+        if status == "completed":
+            note += " Publishing the aggregate report…"
+            try:
+                from .routers.runs import publish_experiment_report
+                await publish_experiment_report(rt.name, eid)
+            except Exception:  # noqa: BLE001
+                pass
+        await reply(note, ["experiments"])
         return True
 
     if cmd == "/focus":

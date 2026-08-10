@@ -13,6 +13,9 @@ deterministically (no model needed for most).
 | `/godmode <request>` | **God mode** — full access (shell / network / MCP all auto-approved) inside a quarantined sandbox folder `<project>/godmode/<timestamp>/`. The agent must do all work there. |
 | `/improve [experiment]` | Run the improve loop for the latest experiment (or one you name). |
 | `/experiments` | List experiments with id, status, goal metric/target and best value. |
+| `/complete <name|id>` | Mark an experiment **completed** — publishes its aggregate report. |
+| `/cancel <name|id>` | Mark an experiment **cancelled**. |
+| `/activate <name|id>` | Reopen an experiment (**active**). |
 | `/compare <a> <b>` | Compare two runs by id (metric deltas + %). Bare `/compare` uses the last two runs. |
 | `/report [run_id]` | Generate a lab-notebook report for the last run (or a specific one) and post it to the chat. |
 | `/commit` | Commit this project's experiment artifacts to the **experiment management repo**. |
@@ -24,6 +27,19 @@ deterministically (no model needed for most).
 
 > `/godmode`, `/god`, `/sandbox` are aliases. `/improve` with no argument uses the
 > most recently created experiment.
+
+## Inline commands (no model)
+
+| Command | What it does |
+|---|---|
+| `@mcp <server>__<tool> [json]` | Deterministically call an MCP tool (JSON pretty-printed into a code block). Read-only tools run freely; writable tools ask for approval. |
+| `@mcp bg <server>__<tool> [json]` | Run the tool in the background (returns a run id; posts a notice when done). |
+| `@mcp` | List every connected server's tools with required-arg signatures. |
+| `@schema <file>` | Show a file's columns + dtypes inline. |
+| `@load <file> [var]` | Load a data file into the Python kernel as a DataFrame (default var = file stem) and show a preview card. |
+
+MCP direct calls are recorded as `kind="mcp_tool"` runs, so they appear in the
+Experiments timeline and its MCP section (Recent MCP calls).
 
 ## UI switches
 

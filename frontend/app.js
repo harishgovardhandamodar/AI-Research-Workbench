@@ -5183,6 +5183,15 @@ function runDetailHtml(r) {
   if (r.reply && r.reply.trim()) {
     h += `<div class="run-detail-sec">Result</div><div class="run-reply">${renderMarkdown(r.reply)}</div>`;
   }
+  const figArts = (r.artifact_ids || []).map((aid) => {
+    const a = (state.artifacts || []).find((x) => String(x.id) === String(aid));
+    return { id: aid, a };
+  }).filter((f) => f.a && ["png", "svg", "html"].includes(f.a.data_type));
+  if (figArts.length) {
+    h += `<div class="run-detail-sec">Figures (${figArts.length})</div><div class="eda-figs">` +
+      figArts.map((f) => `<figure class="chat-fig-wrap"><img class="chat-fig" src="${B("/artifacts/" + f.id)}" alt="${esc(f.a.name || f.id)}" data-art-id="${esc(f.id)}"><figcaption>${esc((f.a.name || "").replace(/_/g, " "))}</figcaption></figure>`).join("") +
+      `</div>`;
+  }
   h += `<div class="run-detail-sec">Dataset</div><div class="run-ds-row">`
     + `<input class="run-ds-input" data-rid="${r.id}" value="${esc(r.dataset || "")}" placeholder="e.g. real / synthetic" title="Tag which dataset this run used (for dataset comparison)">`
     + `<button class="btn subtle small run-ds-save" data-rid="${r.id}" title="Save dataset tag">Set</button></div>`;
@@ -5374,6 +5383,7 @@ function renderExpList() {
           <option value="cancelled"${status === "cancelled" ? " selected" : ""}>cancelled</option>
         </select>
         <button class="btn subtle small exp-improve" data-id="${e.id}" data-name="${esc(e.name)}"${active ? "" : " disabled title=\"reopen the experiment first\""}>Improve</button>
+        <button class="btn subtle small exp-report" data-id="${e.id}" title="Generate & publish the aggregate experiment report">📄</button>
         <button class="btn subtle small exp-export" data-id="${e.id}" title="Export this experiment's runs as CSV">⬇</button>
         <button class="btn subtle small exp-details" data-id="${e.id}" title="Toggle details">Details ▸</button>
       </div>
@@ -5395,6 +5405,16 @@ function renderExpList() {
     b.addEventListener("click", () => {
       sendChat(`Improve the experiment "${b.dataset.name}" — run the next variant toward its goal.`,
                "improve_loop", { experiment_id: b.dataset.id });
+    }));
+  el.querySelectorAll(".exp-report").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true; b.textContent = "…";
+      try {
+        const r = await api(`/api/projects/${state.project}/experiments/${b.dataset.id}/report`, { method: "POST" });
+        toast(`Experiment report published (artifact ${(r.artifact_id || "").slice(0, 8)}).`);
+        loadReports();
+      } catch (e) { toast("Report failed: " + e.message, 4000); }
+      b.disabled = false; b.textContent = "📄";
     }));
   el.querySelectorAll(".exp-focus").forEach((b) =>
     b.addEventListener("click", async () => {

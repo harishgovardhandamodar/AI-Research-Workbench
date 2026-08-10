@@ -19,6 +19,10 @@ produced the reply. Tags are clickable to filter the chat.
 - **Stop** cancels the current turn cooperatively; progress so far is saved.
 - **Edit / retry / copy / delete** per message.
 - **Attach** files to a turn; `@schema <file>` renders a schema card inline.
+- **`@mcp`** deterministically invokes MCP tools without the model (see
+  [MCP servers: management & orchestration](../features/mcp-orchestration.md)):
+  `@mcp <server>__<tool> [json]`, `@mcp bg …` for background, and a bare `@mcp`
+  to list tools.
 
 ## Permissions & approvals
 

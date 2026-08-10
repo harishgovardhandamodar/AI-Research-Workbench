@@ -2,14 +2,15 @@
 
 The 🧪 **Experiments** tab is the tracking home. It is organized into sections
 with a sticky nav (Overview · Goals · Chart · Experiments · Campaigns ·
-Benchmarks · Runs).
+Benchmarks · Plans · Datasets · MCP · Reports · Runs).
 
 ![Experiments overview](../assets/screenshots/experiments.png)
 
 ## Overview
 
 - **KPI cards** — experiments, runs, campaigns, benchmarks, learnings, open
-  goals. Click a card to jump to its section.
+  goals, and **MCP** server health (`ok/total`). Click a card to jump to its
+  section.
 - **Running now** — while the agent is working, a strip at the top lists the
   experiments currently running (the live turn's experiment, the current step of
   a background campaign, or a running benchmark's `[Eval]` experiments); the
@@ -46,9 +47,11 @@ Runs list (no 50-run truncation):
 Each card shows: name (click → **detail modal**), status badge, ✓ reached, run
 count, goal + best, a **trend sparkline** of the goal metric across runs with
 **trend stats** (μ · σ · slope per run), a **Δ best** chip, and a progress bar.
-A 🔬 **next-steps** chip appears when the reviewer has pending suggestions.
-Actions: ★ focus, ✎ edit, status select, **🔁 Improve**, **⬇ export** (this
-experiment's runs as CSV), and **Details** (hypothesis, model pin, plan,
+The card also shows **last run** (status + time-ago) and a pulsing **◔ live**
+marker while the agent is working on it. A 🔬 **next-steps** chip appears when
+the reviewer has pending suggestions. Actions: ★ focus, ✎ edit, status select,
+**🔁 Improve**, **📄** (publish the aggregate experiment report), **⬇ export**
+(this experiment's runs as CSV), and **Details** (hypothesis, model pin, plan,
 learnings, leaderboard). Search + sort (recently active / best / name / runs).
 Experiments render in a **horizontal slider** (‹ › arrows, trackpad / scrollbar),
 so older experiments are always reachable — the "Show more" paging is gone.
@@ -62,6 +65,35 @@ data pipeline, model selection and a finetune-readiness checklist. See
 [Research advisor](../features/research-advisor.md).
 
 ![Experiment detail](../assets/screenshots/experiment-detail.png)
+
+## Plans
+
+The **deterministic experiment planner** lifecycle lives here: every plan goes
+through **propose → confirm → execute** (nothing runs until you approve). The
+section shows a **💡 Suggested next** list — ranked, explainable next steps
+derived from your prior runs (see
+[Deterministic experiment planner](../features/experiment-planner-mcp.md)) —
+with one-click **Plan**, **↻ Retry** (failed plans), **Clone & verify** (new
+seed), and **✕** dismiss. Below it, each plan card shows its status
+(DRAFT → WAITING_APPROVAL → APPROVED → RUNNING → DONE/FAILED/REJECTED), steps,
+expected outputs, metrics, and actions (✓ approve & run, ▶ run, 📄 result,
+re-propose, clone, 🗑). The section auto-refreshes while any plan is active.
+
+## MCP
+
+The **MCP** section manages and orchestrates the workbench's MCP servers:
+health + trust + enable/disable per server, a filterable tool catalog (with
+required-arg hints), **Recent MCP calls**, and per-tool **▶ Call** with a
+schema-driven form, background mode, grant-on-demand, save-as-artifact, and
+track-as-experiment. See
+[MCP servers: management & orchestration](../features/mcp-orchestration.md).
+
+## Published reports
+
+The **Reports** section consolidates every published report (run lab-notebooks,
+planner `report.md`, EDA, experiment reports) with **Open**, **👁 Preview**
+(inline markdown), **📋 Copy**, **⚡ Regenerate** (run reports) and **📨 Publish**
+to chat. See [Reports, export & next steps](reports.md).
 
 ## Sweep & Finetune
 
@@ -99,8 +131,9 @@ Every recorded turn, filterable by experiment, text, and **time** (the toolbar
 time filter also narrows the charts). Each row has a **checkbox** for selecting
 runs, shows its goal-metric value with a **Δ best** chip, and the row head is
 keyboard-focusable. Click a run to expand: metrics (goal ★ highlighted), config,
-tool trail, full prompt, and actions (**Report**, **↶ revert**, **↶ restore**
-from its git commit when available, **🔁 improve**).
+tool trail, full prompt, the run's **Result** (its reply rendered as markdown,
+figures inline) and its registered **Figures**, and actions (**Report**,
+**↶ revert**, **↶ restore** from its git commit when available, **🔁 improve**).
 
 - **⬇ CSV** exports the filtered list; **⬇ Sel CSV** exports only selected runs.
 - **⇄ Compare N** opens an N-way side-by-side comparison of the selected runs

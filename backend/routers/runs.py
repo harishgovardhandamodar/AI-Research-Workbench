@@ -166,7 +166,8 @@ async def update_project_experiment(name: str, eid: int, body: dict):
     refine the goal without recreating the experiment."""
     from ..store import _UNSET
 
-    store = get_runtime(name).store
+    rt = get_runtime(name)
+    store = rt.store
     exp = store.get_experiment(eid)
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
@@ -176,7 +177,10 @@ async def update_project_experiment(name: str, eid: int, body: dict):
             raise HTTPException(
                 status_code=400,
                 detail=f"status must be one of {', '.join(EXPERIMENT_STATUSES)}")
+        prev = exp.get("status")
         store.update_experiment_status(eid, status)
+        if status == "completed" and prev != "completed":
+            _schedule_experiment_report(rt, eid)
         return {"experiment": store.get_experiment(eid)}
 
     target = body.get("goal_target")
@@ -662,6 +666,129 @@ async def publish_report(name: str, artifact_id: str):
     amid = rt.store.add_message(
         "assistant", text, {"tags": ["report", f"artifact:{artifact_id}"]})
     return {"message_id": amid, "artifact_id": artifact_id}
+
+
+def build_experiment_report(rt, exp: dict) -> str:
+    """Aggregate lab-notebook report for an experiment: goal, best/current vs
+    target, run table, learnings and review highlights. Deterministic."""
+    eid = exp["id"]
+    runs = rt.store.experiment_runs(eid, limit=100)
+    gm = exp.get("goal_metric") or ""
+    target = exp.get("goal_target")
+    higher = exp.get("higher_better") is not False
+    lines = [f"# {exp.get('name') or f'Experiment #{eid}'}", "",
+             f"- **Status:** {exp.get('status') or 'active'}",
+             f"- **Created:** {_fmt_ts(exp.get('created_at'))}",
+             f"- **Hypothesis:** {(exp.get('hypothesis') or '—')[:300]}"]
+    if gm:
+        lines.append(f"- **Goal:** `{gm}` "
+                     f"({'↑ higher better' if higher else '↓ lower better'})"
+                     + (f" · target `{target:.4g}`" if target is not None else ""))
+    best = None
+    if gm and runs:
+        vals = [(r.get("metrics") or {}).get(gm) for r in runs]
+        vals = [v for v in vals if isinstance(v, (int, float))]
+        if vals:
+            best = (max if higher else min)(vals)
+            reached = (target is not None and
+                       ((higher and best >= target) or (not higher and best <= target)))
+            lines.append(f"- **Best `{gm}`:** `{best:.4g}`"
+                         + (f" / target `{target:.4g}` ({100.0 * best / target:.0f}%)"
+                            if target else "")
+                         + (" — **goal reached ✓**" if reached else ""))
+    lines += ["", f"## Runs ({len(runs)})", "",
+              "| # | run | status | goal | prompt |",
+              "|---|-----|--------|------|--------|"]
+    for i, r in enumerate(reversed(runs), 1):
+        m = r.get("metrics") or {}
+        gv = m.get(gm) if gm else None
+        gs = f"{gv:.4g}" if isinstance(gv, (int, float)) else "—"
+        lines.append(f"| {i} | #{r['id']} | {r.get('status') or '—'} | {gs} | "
+                     f"{(r.get('prompt') or '')[:60]}")
+    learn = rt.store.list_learnings(experiment_id=eid, limit=10)
+    if learn:
+        lines += ["", "## Learnings", ""]
+        for l in learn:
+            d = l.get("delta")
+            dstr = f"{d:+.4g}" if isinstance(d, (int, float)) else ""
+            flag = "✓" if l.get("improved") else "✗"
+            lines.append(f"- {flag} **{l.get('metric') or l.get('source') or 'run'}** "
+                         f"{dstr} — {(l.get('summary') or '')[:160]}")
+    # Review highlights from the best-scoring run.
+    best_run = None
+    if best is not None:
+        for r in reversed(runs):
+            gv = (r.get("metrics") or {}).get(gm) if gm else None
+            if isinstance(gv, (int, float)) and abs(gv - best) < 1e-12:
+                best_run = r
+                break
+    elif runs:
+        best_run = runs[-1]
+    if best_run:
+        review = best_run.get("review") or {}
+        findings = review.get("findings") or []
+        if findings:
+            lines += ["", "## Review highlights", ""]
+            for f in findings[:6]:
+                lines.append(f"- **{f.get('severity')}**: {f.get('message')}")
+    return "\n".join(lines)
+
+
+def _schedule_experiment_report(rt, eid: int) -> None:
+    """Background-publish the aggregate report when an experiment completes."""
+    import asyncio
+
+    async def _run():
+        try:
+            await publish_experiment_report(rt.name, eid)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
+@router.get("/api/projects/{name}/experiments/{eid}/report")
+async def get_experiment_report(name: str, eid: int):
+    """The latest generated report artifact for an experiment, or generate one
+    on demand (if none exists) without publishing it to chat."""
+    rt = get_runtime(name)
+    exp = rt.store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    for art in rt.artifacts.list(limit=300):
+        if art.kind == "report" and art.name == f"exp-{eid}-report":
+            data = rt.artifacts.data(art.id) or b""
+            return {"report": data.decode("utf-8", errors="replace"),
+                    "artifact_id": art.id}
+    return {"report": build_experiment_report(rt, exp), "artifact_id": None}
+
+
+@router.post("/api/projects/{name}/experiments/{eid}/report")
+async def publish_experiment_report(name: str, eid: int):
+    """Generate an aggregate experiment report, save it as an artifact, and
+    publish it to the project chat."""
+    rt = get_runtime(name)
+    exp = rt.store.get_experiment(eid)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    report = build_experiment_report(rt, exp)
+    try:
+        env = await rt.kernels.get_env()
+    except Exception:  # noqa: BLE001
+        env = {}
+    art = Artifact(kind="report", name=f"exp-{eid}-report",
+                   description=f"Aggregate report for experiment #{eid}",
+                   code="# auto-generated experiment report", env=env,
+                   run_id="")
+    try:
+        rt.artifacts.add_artifact(art, data=report.encode(), data_type="text")
+    except Exception:  # noqa: BLE001
+        pass
+    mid = rt.store.add_message(
+        "assistant", report, {"tags": ["report", f"experiment #{eid}"]})
+    return {"report": report, "artifact_id": art.id, "message_id": mid}
 
 
 @router.get("/api/projects/{name}/goals")

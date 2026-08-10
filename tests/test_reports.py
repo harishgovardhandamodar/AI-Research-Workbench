@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,6 +78,65 @@ class TestReportsHub(unittest.IsolatedAsyncioTestCase):
         self.assertIn("rows", res["report"])
         self.assertTrue(res["artifact_id"])
         self.assertTrue(res["message_id"])
+
+    def _exp_with_runs(self, goal="accuracy", target=0.9, higher=True):
+        eid = self.rt.store.create_experiment(
+            "Round-13 exp", "hypothesis", goal, target, higher)
+        for i, v in enumerate([0.5, 0.7, 0.95]):
+            self.rt.store.add_run(f"run {i}", "ok", "done", 0.0, float(i + 1),
+                                  metrics={goal: float(v)},
+                                  experiment_id=eid, kind="agent_run")
+        self.rt.store.add_learning(
+            eid, None, goal, 0.5, 0.95, 0.45, True,
+            "raising epochs helped", "suggestion")
+        return eid
+
+    async def test_publish_experiment_report(self):
+        eid = self._exp_with_runs()
+        res = await self.runsmod.publish_experiment_report("repproj", eid)
+        self.assertIn("Round-13 exp", res["report"])
+        self.assertIn("`accuracy`", res["report"])
+        self.assertIn("goal reached ✓", res["report"])
+        self.assertIn("## Runs (3)", res["report"])
+        self.assertIn("## Learnings", res["report"])
+        self.assertTrue(res["artifact_id"])
+        self.assertTrue(res["message_id"])
+        art = self.rt.artifacts.get(res["artifact_id"])
+        self.assertEqual(art.kind, "report")
+        self.assertEqual(art.name, f"exp-{eid}-report")
+
+    async def test_get_experiment_report_on_demand(self):
+        eid = self._exp_with_runs()
+        res = await self.runsmod.get_experiment_report("repproj", eid)
+        self.assertIsNone(res["artifact_id"])  # generated, not yet published
+        self.assertIn("Round-13 exp", res["report"])
+        # after publishing, GET returns the stored artifact
+        await self.runsmod.publish_experiment_report("repproj", eid)
+        res2 = await self.runsmod.get_experiment_report("repproj", eid)
+        self.assertTrue(res2["artifact_id"])
+        # unknown experiment -> 404
+        with self.assertRaises(Exception) as ctx:
+            await self.runsmod.publish_experiment_report("repproj", 99999)
+        self.assertIn("404", str(ctx.exception))
+
+    async def test_status_complete_auto_publishes_report(self):
+        eid = self._exp_with_runs()
+        res = await self.runsmod.update_project_experiment(
+            "repproj", eid, {"status": "completed"})
+        self.assertEqual(res["experiment"]["status"], "completed")
+        # background task publishes the report artifact
+        for _ in range(100):
+            arts = [a for a in self.rt.artifacts.list()
+                    if a.name == f"exp-{eid}-report"]
+            if arts:
+                break
+            await asyncio.sleep(0.05)
+        self.assertTrue(arts)
+        self.assertEqual(arts[0].kind, "report")
+        # invalid status -> 400
+        with self.assertRaises(Exception) as ctx:
+            await self.runsmod.update_project_experiment("repproj", eid, {"status": "banana"})
+        self.assertIn("400", str(ctx.exception))
 
 
 if __name__ == "__main__":

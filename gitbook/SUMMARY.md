@@ -26,6 +26,8 @@
 
 * [Goal-first experimentation](features/goal-first-experimentation.md)
 * [Experiment planning](features/experiment-planning.md)
+* [Deterministic experiment planner](features/experiment-planner-mcp.md)
+* [MCP servers: management & orchestration](features/mcp-orchestration.md)
 * [The improve loop](features/improve-loop.md)
 * [Parameter sweeps](features/parameter-sweeps.md)
 * [Finetune launch](features/finetune-launch.md)
