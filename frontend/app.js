@@ -1597,7 +1597,8 @@ async function sendChat(textOverride, intent, extra) {
     else toast("Usage: @load <filename> [var] (e.g. @load data.csv df)", 4000);
     return;
   }
-  // Begin a fresh session: "/session <name>" creates + switches to it.
+  // Begin a fresh session: "/session <name>" creates + switches to it;
+  // bare "/session" opens the session planner (templates + dataset step).
   if (/^\/session\b/i.test(t)) {
     const name = t.replace(/^\/session\b/i, "").trim();
     if (textOverride === undefined) {
@@ -1605,7 +1606,7 @@ async function sendChat(textOverride, intent, extra) {
       autoResize(input);
     }
     if (name) await createSession(name);
-    else toast("Usage: /session <name> (e.g. /session my-analysis)", 4000);
+    else openSessionPlanner();
     return;
   }
   if (textOverride !== undefined) {
@@ -2022,6 +2023,123 @@ async function createSession(name) {
     toast("Could not create session: " + e.message, 4000);
   }
 }
+
+/* ===================== session planner ===================== */
+// A modal shown on "new session" that offers agentic workflow templates (EDA,
+// LoRA fine-tune, Autoresearch, improve loop, campaigns, benchmarks, privacy,
+// sweeps, notebooks). Each template names the MCP servers/tools it uses and a
+// step flow, plus an optional dataset-location step. "Begin session" creates
+// the session, uploads/loads the dataset, and kicks off the template's prompt.
+
+let plannerTemplates = [];
+let plannerSelected = null;
+
+async function openSessionPlanner() {
+  try {
+    const r = await api("/api/planner/templates");
+    plannerTemplates = r.templates || [];
+  } catch (e) { plannerTemplates = []; }
+  plannerSelected = null;
+  $("session-planner-name").value = "";
+  $("session-planner-name").focus();
+  $("session-planner-status").textContent = "";
+  $("session-planner-file").value = "";
+  $("session-planner-file-hint").textContent = "";
+  renderPlannerTemplates();
+  $("session-planner-detail").classList.add("hidden");
+  $("session-planner-modal").classList.remove("hidden");
+}
+
+function renderPlannerTemplates() {
+  const host = $("session-planner-templates");
+  if (!host) return;
+  host.innerHTML = plannerTemplates.length
+    ? plannerTemplates.map((t) => `
+      <button class="planner-tpl" data-id="${esc(t.id)}">
+        <span class="planner-tpl-ico">${t.icon || "🧩"}</span>
+        <span class="planner-tpl-name">${esc(t.name)}</span>
+        <span class="planner-tpl-tag">${esc(t.tagline || "")}</span>
+      </button>`).join("")
+    : '<div class="empty">No templates available.</div>';
+  host.querySelectorAll(".planner-tpl").forEach((b) =>
+    b.addEventListener("click", () => selectPlannerTemplate(b.dataset.id)));
+}
+
+function selectPlannerTemplate(id) {
+  const t = plannerTemplates.find((x) => x.id === id);
+  if (!t) return;
+  plannerSelected = t;
+  document.querySelectorAll(".planner-tpl").forEach((b) =>
+    b.classList.toggle("active", b.dataset.id === id));
+  $("planner-detail-name").textContent = (t.icon || "🧩") + " " + t.name;
+  $("planner-detail-tagline").textContent = t.tagline || "";
+  $("planner-detail-mcp").innerHTML = (t.mcp || []).map((m) =>
+    `<span class="planner-chip mcp">🔌 ${esc(m)}</span>`).join("")
+    + (t.tools || []).map((m) => `<span class="planner-chip tool">${esc(m)}</span>`).join("");
+  $("planner-detail-steps").innerHTML =
+    `<div class="planner-steps-title">Workflow steps</div>`
+    + (t.steps || []).map((s, i) => `<div class="planner-step"><span class="planner-step-n">${i + 1}</span><span>${esc(s)}</span></div>`).join("");
+  const dsWrap = $("planner-detail-dataset");
+  dsWrap.classList.toggle("hidden", !t.needs_dataset);
+  $("session-planner-detail").classList.remove("hidden");
+}
+
+async function beginPlannedSession() {
+  const name = ($("session-planner-name").value || "").trim();
+  if (!name) { $("session-planner-status").textContent = "Session name is required."; return; }
+  const t = plannerSelected;
+  if (!t) { $("session-planner-status").textContent = "Pick a workflow template first."; return; }
+  const btn = $("session-planner-begin");
+  btn.disabled = true;
+  $("session-planner-status").textContent = "Creating session…";
+  try {
+    await api("/api/projects", { method: "POST", body: JSON.stringify({ name }) });
+    await loadProjects();
+    await switchProject(name);
+    $("session-planner-modal").classList.add("hidden");
+  } catch (e) {
+    btn.disabled = false;
+    $("session-planner-status").textContent = "Failed to create session: " + e.message;
+    return;
+  }
+
+  // Optional dataset location: upload the picked file into the new session,
+  // then load it into the kernel if the template needs a dataset.
+  let datasetName = "";
+  const file = $("session-planner-file").files && $("session-planner-file").files[0];
+  if (file) {
+    $("session-planner-status").textContent = "Uploading dataset…";
+    try {
+      const fd = new FormData();
+      fd.append("upload", file, file.name);
+      await fetch(B(`/api/projects/${state.project}/files`), { method: "POST", body: fd });
+      datasetName = file.name;
+      loadFiles();
+    } catch (e) { /* keep going without the dataset */ }
+  }
+
+  const prompt = (t.prompt || "").replace("{dataset}", datasetName || "the dataset");
+  if (datasetName && (t.needs_dataset || /@load/i.test(t.prompt))) {
+    // Load the uploaded dataset into the kernel (inline card appears in chat).
+    await loadDatasetInline(datasetName);
+  }
+  const userNote = `Session "${name}" started — workflow: ${t.name}.`;
+  // Kick off the template through the normal chat pipeline.
+  if (t.intent) {
+    sendChat(prompt || t.name, t.intent, t.extra ? JSON.parse(JSON.stringify(t.extra)) : null);
+  } else {
+    sendChat(prompt || `Start the ${t.name} workflow.`, "", null);
+  }
+  toast(userNote);
+  btn.disabled = false;
+}
+
+$("session-planner-close").addEventListener("click", () => $("session-planner-modal").classList.add("hidden"));
+$("session-planner-begin").addEventListener("click", beginPlannedSession);
+$("session-planner-file").addEventListener("change", () => {
+  const f = $("session-planner-file").files && $("session-planner-file").files[0];
+  $("session-planner-file-hint").textContent = f ? `Will upload ${f.name} to the new session.` : "";
+});
 
 /* ---- Kaggle dataset import ---- */
 
@@ -2884,8 +3002,7 @@ if ($ftDocs) $ftDocs.addEventListener("click", (e) => {
 const $newSession = $("quick-new-session");
 if ($newSession) $newSession.addEventListener("click", (e) => {
   e.preventDefault();
-  const name = prompt("New session name:");
-  if (name) sendChat("/session " + name, "", null);
+  openSessionPlanner();
 });
 const $loadDs = $("quick-load-dataset");
 if ($loadDs) $loadDs.addEventListener("click", (e) => {
@@ -3050,14 +3167,8 @@ function applyTagFilter() {
 }
 $("session-switch").addEventListener("click", (e) => { e.stopPropagation(); toggleSessionMenu(); });
 $("session-new").addEventListener("click", async () => {
-  const name = prompt("New session name:");
-  if (!name) return;
-  try {
-    await api("/api/projects", { method: "POST", body: JSON.stringify({ name }) });
-    await loadProjects();
-    await switchProject(name);
-    closeSessionMenu();
-  } catch (e) { toast(e.message); }
+  closeSessionMenu();
+  openSessionPlanner();
 });
 $("session-fork").addEventListener("click", async () => {
   const name = prompt("Fork '" + state.project + "' as (new session name):", state.project + "-fork");

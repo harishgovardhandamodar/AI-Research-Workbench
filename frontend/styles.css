@@ -830,6 +830,30 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .modal-actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
 .spacer { flex: 1; }
 
+/* ---------- session planner ---------- */
+.planner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 8px; }
+.planner-tpl { display: flex; flex-direction: column; gap: 4px; text-align: left;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; cursor: pointer; color: var(--text); }
+.planner-tpl:hover { border-color: var(--accent); }
+.planner-tpl.active { border-color: var(--accent); background: rgba(53,196,182,.08); }
+.planner-tpl-ico { font-size: 20px; }
+.planner-tpl-name { font-size: 12.5px; font-weight: 700; }
+.planner-tpl-tag { font-size: 11px; color: var(--text-dim); line-height: 1.35; }
+.planner-detail { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.planner-detail-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.planner-detail-name { font-size: 14px; font-weight: 700; }
+.planner-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.planner-chip { font-size: 10px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.planner-chip.mcp { color: var(--violet, #a974ff); border-color: var(--violet, #a974ff); }
+.planner-chip.tool { color: var(--accent-2, #4d9fff); border-color: var(--accent-2, #4d9fff); }
+.planner-steps { display: flex; flex-direction: column; gap: 5px; }
+.planner-steps-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-bottom: 2px; }
+.planner-step { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; }
+.planner-step-n { flex: 0 0 18px; height: 18px; border-radius: 50%; background: var(--accent);
+  color: #041016; font-size: 10.5px; font-weight: 800; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.planner-dataset { margin-top: 10px; }
+
 .art-view { background: #0a0e13; border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .art-view img { max-width: 100%; max-height: 52vh; border-radius: 6px; }
 .art-view pre { max-height: 40vh; overflow: auto; text-align: left; }

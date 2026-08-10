@@ -89,6 +89,9 @@ app.include_router(notebooks.router)
 from .routers.dataset import router as dataset_router
 
 app.include_router(dataset_router)
+from .routers.planner import router as planner_router
+
+app.include_router(planner_router)
 from .routers.audit import router as audit_router
 
 app.include_router(audit_router)

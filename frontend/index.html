@@ -907,6 +907,47 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
   </div>
 </div>
 
+<!-- Session planner modal -->
+<div id="session-planner-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <h3>🧭 New session planner</h3>
+      <button class="btn subtle" id="session-planner-close">✕</button>
+    </div>
+    <div class="modal-body form">
+      <label>Session name</label>
+      <input id="session-planner-name" placeholder="e.g. quai-token-analysis" autocomplete="off">
+      <div class="form-section">
+        <span class="plabel">Pick a workflow template — it wires the right MCP tools, shortcuts &amp; steps</span>
+        <div id="session-planner-templates" class="planner-grid"></div>
+      </div>
+      <div id="session-planner-detail" class="hidden">
+        <div class="planner-detail">
+          <div class="planner-detail-head">
+            <span id="planner-detail-name" class="planner-detail-name"></span>
+            <span id="planner-detail-tagline" class="muted"></span>
+          </div>
+          <div id="planner-detail-mcp" class="planner-chips"></div>
+          <div id="planner-detail-steps" class="planner-steps"></div>
+          <div id="planner-detail-dataset" class="hidden planner-dataset">
+            <span class="plabel">Dataset location</span>
+            <div class="mgmt-row">
+              <input id="session-planner-file" type="file" class="file-input">
+              <span class="spacer"></span>
+              <span class="muted" id="session-planner-file-hint"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <span class="muted" id="session-planner-status"></span>
+        <span class="spacer"></span>
+        <button id="session-planner-begin" class="btn primary">Begin session</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Notebook editor modal -->
 <div id="notebook-modal" class="modal hidden">
   <div class="modal-box nb">
