@@ -391,6 +391,7 @@ CATALOG = [
         "name": "EDA — dataset overview",
         "description": "Profile the dataset: numeric stats, missing values, "
                        "duplicates, and histograms.",
+        "goal_metric": "duplicates",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and infer schema/column types",
@@ -410,6 +411,7 @@ CATALOG = [
         "description": "Estimate a numeric column's mean under the Laplace "
                        "mechanism at several ε and show the privacy-utility "
                        "tradeoff.",
+        "goal_metric": "min_mae",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and pick a numeric target column",
@@ -428,6 +430,7 @@ CATALOG = [
         "name": "Correlation analysis",
         "description": "Compute the Pearson correlation matrix over numeric "
                        "columns and list the strongest pairs.",
+        "goal_metric": "max_abs_corr",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and select numeric columns",
@@ -446,6 +449,7 @@ CATALOG = [
         "name": "Outlier detection (IQR)",
         "description": "Flag IQR outliers (1.5×) per numeric column and report "
                        "their share + bounds.",
+        "goal_metric": "max_outlier_pct",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and select numeric columns",
@@ -464,6 +468,7 @@ CATALOG = [
         "description": "Scan every column for PII-like patterns (emails, "
                        "phones, cards, SSNs, UUIDs) and high-cardinality "
                        "identifier columns.",
+        "goal_metric": "pii_columns",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and sample columns",
@@ -483,6 +488,7 @@ CATALOG = [
         "description": "Assess how uniquely identifiable rows are under "
                        "k-anonymity over the dataset's quasi-identifiers "
                        "(share of rows with k<2 and k<6).",
+        "goal_metric": "k_anonymity_1",
         "needs_dataset": True,
         "plan_steps": lambda req, ds: [
             f"Load `{ds}` and pick quasi-identifier columns",

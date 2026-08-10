@@ -7272,7 +7272,45 @@ async function loadExperimentPlans() {
   try {
     const r = await api(`/api/projects/${state.project}/experiment-plans`);
     renderExperimentPlans(r.plans || []);
+    api(`/api/projects/${state.project}/experiment-plans/suggestions`).then((s) => {
+      renderPlanSuggestions(s.suggestions || []);
+    }).catch(() => {});
   } catch (e) { /* silent */ }
+}
+
+function renderPlanSuggestions(suggestions) {
+  const host = $("plans-suggestions");
+  if (!host) return;
+  if (!suggestions.length) {
+    host.innerHTML = '<div class="exp-empty">No suggestions yet — run a couple of experiments and the planner will propose the next steps.</div>';
+    return;
+  }
+  host.innerHTML = '<div class="exp-runs-title">💡 Suggested next</div>'
+    + suggestions.map((s) => `<div class="finetune-job suggestion-job" data-sug="${esc(s.id)}">
+        <div class="finetune-job-head">
+          <span class="finetune-job-id">${esc(s.name)}</span>
+          <span class="exp-badge det">score ${esc(s.score)}</span>
+          <span class="spacer"></span>
+          <button class="btn subtle small sug-plan" data-exp="${esc(s.id)}" title="Plan this experiment">🧪 Plan</button>
+        </div>
+        <div class="finetune-job-body"><div class="finetune-job-row muted">${esc(s.reason)}</div></div>
+      </div>`).join("");
+  host.querySelectorAll(".sug-plan").forEach((b) =>
+    b.addEventListener("click", () => planSuggested(b.dataset.exp)));
+}
+
+// One-click: propose a suggested experiment (needs a dataset in the project).
+async function planSuggested(experimentId) {
+  try {
+    const files = await api(`/api/projects/${state.project}/files`);
+    const csv = (files.files || []).filter((f) => f.name.endsWith(".csv")
+      && !f.name.startsWith("synthetic_"));
+    if (!csv.length) { toast("Upload a CSV dataset first.", 4000); return; }
+    const dataset = csv.find((f) => /upi/i.test(f.name))?.name || csv[0].name;
+    sendChat("Plan and run " + experimentId, "experiment_plan",
+             { experiment_id: experimentId, dataset });
+    toast(`Proposing ${experimentId}…`);
+  } catch (e) { toast("Could not propose: " + e.message, 4000); }
 }
 
 function renderExperimentPlans(plans) {
@@ -7349,8 +7387,11 @@ async function planAction(planId, act) {
 function renderPlanResultModal(result) {
   const box = $("plans-result");
   if (!box) return;
+  const figs = (result.artifact_links || []).map((f) =>
+    `<figure class="chat-fig-wrap"><img class="chat-fig" src="${B("/artifacts/" + f.id)}" alt="${esc(f.name)}" data-art-id="${esc(f.id)}"><figcaption>${esc(f.name.replace(/\.png$/, "").replace(/_/g, " "))}</figcaption></figure>`).join("");
   box.innerHTML = `<div class="plans-result-inner"><div class="plans-result-close">✕</div>
-    <div class="plans-result-body">${renderMarkdown(result.report || "")}</div></div>`;
+    <div class="plans-result-body">${figs ? `<div class="eda-figs">${figs}</div>` : ""}
+      ${renderMarkdown(result.report || "")}</div></div>`;
   box.classList.remove("hidden");
   box.querySelector(".plans-result-close").addEventListener("click", () => box.classList.add("hidden"));
 }
@@ -7581,6 +7622,8 @@ function renderExperimentPlanProposal(p) {
     `<div class="plan-step-row"><span class="plan-step-n">${i + 1}</span><span>${esc(s)}</span></div>`).join("");
   const outputs = (p.expected_outputs || []).length
     ? `<div class="exp-plan-outputs muted"><b>Expected outputs:</b> ${esc((p.expected_outputs || []).join(" · "))}</div>` : "";
+  const dsInfo = (p.dataset_info && p.dataset_info.columns && p.dataset_info.columns.length)
+    ? `<div class="exp-plan-ds muted"><b>Dataset:</b> ${esc(p.dataset_info.shape[0] + " rows × " + p.dataset_info.shape[1] + " cols")} — <code>${esc(p.dataset_info.columns.slice(0, 12).join(", ") + (p.dataset_info.columns.length > 12 ? "…" : ""))}</code></div>` : "";
   el.body.innerHTML = `
     <div class="exp-plan-card">
       <div class="exp-plan-head">🧪 <b>${esc(p.name || p.experiment_id || "Experiment")}</b>
@@ -7588,6 +7631,7 @@ function renderExperimentPlanProposal(p) {
       ${p.description ? `<div class="exp-plan-desc muted">${esc(p.description)}</div>` : ""}
       <div class="exp-plan-meta muted">
         dataset <code>${esc(p.dataset || "—")}</code> · seed <code>${esc(p.seed ?? "—")}</code></div>
+      ${dsInfo}
       <div class="exp-plan-steps">${steps}</div>
       ${outputs}
       <div class="exp-plan-note muted">Nothing has run yet — confirm to execute, or reject to cancel.</div>

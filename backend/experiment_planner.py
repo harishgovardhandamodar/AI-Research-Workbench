@@ -306,3 +306,132 @@ def _default_metrics(res: dict) -> dict:
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             out[k] = round(float(v), 6)
     return out
+
+
+# ------------------------------------------------------- suggestions --------
+# Incremental suggestions: given prior DONE plans (and their metrics), recommend
+# the next experiment to run and concrete follow-up actions. Rule-based and
+# deterministic so results are reproducible and explainable.
+
+def _run_latest(plans: list[dict]) -> dict:
+    """Latest DONE plan per (dataset, experiment_id)."""
+    out = {}
+    for p in (plans or []):
+        if p.get("status") != "DONE":
+            continue
+        key = (p.get("dataset"), p.get("experiment_id"))
+        prev = out.get(key)
+        if prev is None or p.get("updated_at", 0) > prev.get("updated_at", 0):
+            out[key] = p
+    return out
+
+
+def _plan_hint(experiment_id: str) -> dict | None:
+    defn = EXPERIMENT_REGISTRY.get(experiment_id)
+    if defn is None:
+        return None
+    return {"id": experiment_id, "name": defn.get("name", experiment_id),
+            "description": defn.get("description", ""),
+            "needs_dataset": defn.get("needs_dataset", True)}
+
+
+def _suggestion(experiment_id, score, reason, based_on=None, action="plan"):
+    hint = _plan_hint(experiment_id)
+    if hint is None:
+        return None
+    return {**hint, "score": score, "reason": reason,
+            "based_on": based_on or [], "action": action}
+
+
+def build_suggestions(plans: list[dict]) -> list[dict]:
+    """Derive ranked, incremental next-step suggestions from prior runs.
+
+    Rules (deterministic):
+      - cover the full privacy/EDA scenario set per dataset (missing scenarios)
+      - react to findings: PII found -> re-identification + DP; high re-id risk
+        -> DP protection; strong correlations -> anomaly/clean; DP error high
+        -> anomaly first; outliers -> clean + re-run DP; duplicates -> clean.
+    """
+    latest = _run_latest(plans)
+    suggestions: list[dict] = []
+    datasets = sorted({k[0] for k in latest if k[0]})
+    seen: set = set()
+
+    for ds in datasets:
+        done_ids = {k[1] for k in latest if k[0] == ds}
+        m = {k[1]: latest.get((ds, k[1]), {}).get("metrics") or {}
+             for k in latest if k[0] == ds}
+
+        # 1) PII found -> run reid + dp on the same dataset.
+        pii = m.get("pii_scan", {})
+        if pii.get("pii_columns", 0) > 0:
+            if "reid_risk" not in done_ids:
+                s = _suggestion("reid_risk", 5,
+                    f"PII scan on `{ds}` found {pii['pii_columns']} identifier-like "
+                    "columns — run re-identification risk to quantify uniqueness.",
+                    based_on=[ds, "pii_scan"])
+                if s: suggestions.append(s); seen.add(("reid_risk", ds))
+            if "dp_privacy" not in done_ids:
+                s = _suggestion("dp_privacy", 5,
+                    f"PII scan on `{ds}` found {pii['pii_columns']} identifier-like "
+                    "columns — evaluate DP protection for numeric aggregates.",
+                    based_on=[ds, "pii_scan"])
+                if s: suggestions.append(s); seen.add(("dp_privacy", ds))
+
+        # 2) Re-identification risk high -> DP protection.
+        reid = m.get("reid_risk", {})
+        k1 = reid.get("k_anonymity_1", 0) or 0
+        if k1 > 0.02:
+            if "dp_privacy" not in done_ids and ("dp_privacy", ds) not in seen:
+                s = _suggestion("dp_privacy", 4,
+                    f"Re-id risk on `{ds}` shows {k1:.1%} of rows uniquely "
+                    "identifiable — DP on numeric aggregates mitigates inference.",
+                    based_on=[ds, "reid_risk"])
+                if s: suggestions.append(s); seen.add(("dp_privacy", ds))
+
+        # 3) Strong correlations -> anomaly (outliers distort correlations).
+        corr = m.get("correlation", {})
+        mc = corr.get("max_abs_corr", 0) or 0
+        if mc > 0.5 and "anomaly" not in done_ids:
+            s = _suggestion("anomaly", 3,
+                f"Correlation on `{ds}` peaks at |r|={mc:.2f} — outliers can "
+                "inflate that; check anomalies first.",
+                based_on=[ds, "correlation"])
+            if s: suggestions.append(s); seen.add(("anomaly", ds))
+
+        # 4) Anomalies found -> clean then re-run DP / correlation.
+        anom = m.get("anomaly", {})
+        if anom.get("outlier_cols", 0) > 0:
+            if "dp_privacy" in done_ids and ("dp_privacy", ds) not in seen:
+                dp = m.get("dp_privacy", {})
+                s = _suggestion("dp_privacy", 3,
+                    f"Outliers on `{ds}` (in {anom['outlier_cols']} column(s)) "
+                    "raise DP sensitivity — re-run DP after cleaning "
+                    + (f"(prior min MAE {dp.get('min_mae', 0):.2f})." if dp.get("min_mae") is not None else "."),
+                    based_on=[ds, "anomaly", "dp_privacy"])
+                if s: suggestions.append(s); seen.add(("dp_privacy", ds))
+
+        # 5) DP error high -> anomaly first (outliers raise sensitivity).
+        dp = m.get("dp_privacy", {})
+        if dp.get("min_mae") is not None and dp["min_mae"] > 1.0:
+            if "anomaly" not in done_ids and ("anomaly", ds) not in seen:
+                s = _suggestion("anomaly", 3,
+                    f"DP mean error on `{ds}` is high (MAE {dp['min_mae']:.2f}) "
+                    "— outliers inflate sensitivity; clean first.",
+                    based_on=[ds, "dp_privacy"])
+                if s: suggestions.append(s); seen.add(("anomaly", ds))
+
+        # 6) Fill coverage: recommend any privacy scenario not yet run here.
+        for eid, gm in (("pii_scan", "pii_columns"), ("reid_risk", "k_anonymity_1"),
+                        ("dp_privacy", "min_mae"), ("anomaly", "max_outlier_pct"),
+                        ("correlation", "max_abs_corr")):
+            if eid not in done_ids and (eid, ds) not in seen:
+                s = _suggestion(eid, 2,
+                    f"`{ds}` hasn't had a {EXPERIMENT_REGISTRY[eid]['name']} run "
+                    "yet — add it for full scenario coverage.",
+                    based_on=[ds])
+                if s: suggestions.append(s); seen.add((eid, ds))
+
+    # Sort by score desc.
+    suggestions.sort(key=lambda s: -s.get("score", 0))
+    return suggestions[:10]

@@ -25,6 +25,28 @@ def _store(rt):
     return PlanStore(rt.dir)
 
 
+def create_or_get_experiment(rt, plan: dict, goal_metric: str = "") -> int | None:
+    """Create (or find) the Experiments-tab experiment for a plan. Uses a
+    meaningful goal metric when available (falls back to the registry hint)."""
+    try:
+        from ..experiment_planner import EXPERIMENT_REGISTRY
+        defn = EXPERIMENT_REGISTRY.get(plan.get("experiment_id")) or {}
+        hint = (defn.get("goal_metric") or "").strip() or goal_metric
+        exps = rt.store.list_experiments()
+        for e in exps:
+            if (e.get("name") or "").startswith(f"🧪 {plan['name']} · {plan['id']}"):
+                if hint and not (e.get("goal_metric") or ""):
+                    rt.store.update_experiment(e["id"], goal_metric=hint)
+                return e["id"]
+        return rt.store.create_experiment(
+            name=f"🧪 {plan['name']} · {plan['id']}",
+            hypothesis=(plan.get("request") or plan.get("description") or "")[:200],
+            goal_metric=hint,
+            higher_better=True)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # Track in-flight plan runs per project: plan_id -> asyncio.Task. Prevents
 # double-execution and enables cancel.
 _run_tasks: dict[str, "asyncio.Task"] = {}
@@ -74,8 +96,15 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     from ..experiment_planner import execute_plan
     import pandas as pd
 
-    path = rt.dir / plan["dataset"]
-    df = pd.read_csv(path, low_memory=False)
+    # Run the (potentially heavy) compute in a worker thread so the event loop
+    # stays responsive during long experiments.
+    import asyncio
+
+    async def _load_df():
+        return await asyncio.to_thread(pd.read_csv, rt.dir / plan["dataset"],
+                                       low_memory=False)
+
+    df = await _load_df()
 
     async def _prog(i, message):
         if emit:
@@ -87,7 +116,8 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
             except Exception:  # noqa: BLE001
                 pass
 
-    done = execute_plan(plan, df, project_dir=rt.dir, progress=progress or _prog)
+    done = await asyncio.to_thread(
+        execute_plan, plan, df, rt.dir, progress or _prog)
     if done["status"] != "DONE":
         raise RuntimeError(done.get("error") or "experiment failed")
 
@@ -124,24 +154,9 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         report_id = art.id
         artifact_ids.append(art.id)
 
-    # Record a run in the project's table (Experiments tab), attached to a
-    # plan experiment (created once per plan so it shows in Experiments).
-    experiment_id = None
-    try:
-        exps = rt.store.list_experiments()
-        for e in exps:
-            if (e.get("name") or "").startswith(f"🧪 {plan['name']} · {plan['id']}"):
-                experiment_id = e["id"]
-                break
-        if experiment_id is None:
-            experiment_id = rt.store.create_experiment(
-                name=f"🧪 {plan['name']} · {plan['id']}",
-                hypothesis=(plan.get("request") or plan.get("description") or "")[:200],
-                goal_metric=(next(iter(plan.get("metrics") or {}), "") or ""),
-                higher_better=True)
-    except Exception:  # noqa: BLE001
-        experiment_id = None
-
+    # Record a run in the project's table (Experiments tab), attached to the
+    # plan's experiment (created at proposal time).
+    experiment_id = create_or_get_experiment(rt, plan)
     rt.store.add_run(
         prompt=(f"[Plan {plan['id']}] {plan['name']} on {plan['dataset']}"),
         reply=report_md[:3000], status="done",
@@ -191,7 +206,17 @@ def _fmt_metrics(m: dict | None) -> str:
 @router.get("/api/projects/{name}/experiment-plans")
 async def list_plans(name: str, status: str = ""):
     rt = get_runtime(name)
-    return {"plans": _store(rt).list(status=status or None)}
+    plans = _store(rt).list(status=status or None)
+    return {"plans": plans}
+
+
+@router.get("/api/projects/{name}/experiment-plans/suggestions")
+async def plan_suggestions(name: str):
+    """Incremental next-step suggestions derived from prior plan runs."""
+    rt = get_runtime(name)
+    from ..experiment_planner import build_suggestions
+    plans = _store(rt).list()
+    return {"suggestions": build_suggestions(plans)}
 
 
 @router.get("/api/experiments/catalog")
@@ -232,6 +257,7 @@ async def get_plan_result(name: str, plan_id: str):
                 "message": "Plan not executed yet."}
     result_dir = plan.get("result_dir")
     figures, report_md = [], ""
+    artifact_links = []
     if result_dir:
         d = Path(result_dir)
         report_path = d / "report.md"
@@ -239,8 +265,15 @@ async def get_plan_result(name: str, plan_id: str):
             report_md = report_path.read_text(encoding="utf-8", errors="replace")
         figures = [p.name for p in sorted(d.iterdir())
                    if p.suffix.lower() in (".png", ".svg")]
+        # Link figures to registered artifacts so the UI can show them inline.
+        for name in figures:
+            for a in rt.artifacts.list(limit=500):
+                if a.get("name") == name and a.get("data_type") == "png":
+                    artifact_links.append({"name": name, "id": a.get("id")})
+                    break
     return {"plan": plan, "result": {"figures": figures,
                                      "report": report_md,
+                                     "artifact_links": artifact_links,
                                      "metrics": plan.get("metrics")},
             "message": "Plan result (persisted)."}
 
@@ -256,6 +289,9 @@ async def create_plan(name: str, body: dict):
             dataset=body.get("dataset") or "",
             seed=body.get("seed"))
         proposed = _store(rt).propose(plan["id"])
+        # Create the Experiments-tab experiment up front so the plan is visible
+        # and trackable before it runs.
+        create_or_get_experiment(rt, proposed)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"plan": plan_proposal_payload(proposed),
