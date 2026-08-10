@@ -96,6 +96,9 @@ app.include_router(planner_router)
 from .routers.eda import router as eda_router
 
 app.include_router(eda_router)
+from .routers.peer import router as peer_router
+
+app.include_router(peer_router)
 from .routers.audit import router as audit_router
 
 app.include_router(audit_router)

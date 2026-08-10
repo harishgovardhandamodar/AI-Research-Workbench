@@ -569,6 +569,10 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .eda-figs figure { margin: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .eda-figs .chat-fig { width: 100%; height: auto; display: block; cursor: zoom-in; }
 .eda-figs figcaption { font-size: 10px; color: var(--text-dim); padding: 3px 6px; }
+.peer-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.peer-kpi { background: var(--bg-3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; text-align: center; }
+.peer-kpi-v { font-size: 18px; font-weight: 700; }
+.peer-kpi-k { font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-dim); }
 
 /* ---------- composer context (active experiment goal) ---------- */
 .composer-ctx { flex: 0 0 auto; padding: 6px 16px 0; }

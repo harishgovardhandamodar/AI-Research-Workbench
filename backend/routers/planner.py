@@ -200,6 +200,25 @@ TEMPLATES = [
         "intent": "",
         "prompt": ("Run the project notebook and report what it produced."),
     },
+    {
+        "id": "peer",
+        "name": "Bank peer identification",
+        "icon": "🏦",
+        "tagline": "Identify banks & estimate market share per segment/payment type.",
+        "mcp": ["privacy"],
+        "tools": ["privacy__generate_synthetic_tabular"],
+        "needs_dataset": True,
+        "steps": [
+            "Upload a UPI/banking CSV with sender_bank",
+            "Each bank classifies unseen transactions from its own data",
+            "Report identification accuracy + confusion matrix",
+            "Estimate other banks' market share per segment & payment type (MAE)",
+        ],
+        "intent": "",
+        "prompt": ("Run the peer-identification / market-share experiment on "
+                   "{dataset}: identify which bank each transaction came from "
+                   "and estimate other banks' share per segment or payment type."),
+    },
 ]
 
 

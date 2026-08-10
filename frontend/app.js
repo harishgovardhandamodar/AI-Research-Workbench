@@ -1612,6 +1612,16 @@ async function sendChat(textOverride, intent, extra) {
     else toast("Usage: @eda <filename> (e.g. @eda data.csv)", 4000);
     return;
   }
+  // Run the peer-identification / market-share experiment: "@peer [file]".
+  if (/^@peer\b/i.test(t)) {
+    const fname = t.replace(/^@peer\b/i, "").trim().split(/\s+/)[0] || "";
+    if (textOverride === undefined) {
+      input.value = "";
+      autoResize(input);
+    }
+    await runPeerInline(fname);
+    return;
+  }
   // Begin a fresh session: "/session <name>" creates + switches to it;
   // bare "/session" opens the session planner (templates + dataset step).
   if (/^\/session\b/i.test(t)) {
@@ -2054,6 +2064,49 @@ async function runEdaInline(fname) {
   } catch (e) {
     box.classList.add("schema-err");
     box.innerHTML = `<span class="sev">error</span>${esc(e.message || "EDA failed")}`;
+  }
+  scrollBottom();
+}
+
+// Run the peer-identification / market-share experiment and show results inline.
+async function runPeerInline(fname) {
+  const userMsg = { content: "@peer " + fname, created_at: null };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const uel = msgContainer("user", [], null, set.body);
+  uel.body.textContent = "@peer " + fname;
+  const ael = msgContainer("assistant", [], null, set.body, "Fox · peer experiment");
+  const box = document.createElement("div");
+  box.className = "schema-card";
+  box.innerHTML = '<div class="empty">Running peer identification & market-share experiment…</div>';
+  ael.body.appendChild(box);
+  scrollBottom();
+  try {
+    const r = await api(`/api/projects/${state.project}/peer/run`, {
+      method: "POST", body: JSON.stringify({ filename: fname || "" }),
+    });
+    const s = r.summary || {};
+    let h = `<div class="ds-card"><div class="schema-head">
+        <span class="sc-file">🏦 Peer experiment · ${esc(r.filename)}</span>
+        <span class="sc-rows">${s.n != null ? esc(s.n.toLocaleString() + " txn · " + (s.banks || []).length + " banks") : ""}</span>
+      </div>`;
+    h += `<div class="peer-kpis">`
+      + `<div class="peer-kpi"><div class="peer-kpi-v">${s.identification_accuracy != null ? (s.identification_accuracy * 100).toFixed(1) + "%" : "—"}</div><div class="peer-kpi-k">identification accuracy</div></div>`
+      + `<div class="peer-kpi"><div class="peer-kpi-v">${s.segment_mae != null ? s.segment_mae.toFixed(3) : "—"}</div><div class="peer-kpi-k">share MAE / segment</div></div>`
+      + `<div class="peer-kpi"><div class="peer-kpi-v">${s.type_mae != null ? s.type_mae.toFixed(3) : "—"}</div><div class="peer-kpi-k">share MAE / payment type</div></div>`
+      + `</div>`;
+    const figs = (r.figures || []).map((f) =>
+      `<figure class="chat-fig-wrap"><img class="chat-fig" src="${B("/artifacts/" + f.id)}" alt="${esc(f.name)}" data-art-id="${esc(f.id)}"><figcaption>${esc(f.name.replace(/\.png$/, "").replace(/_/g, " "))}</figcaption></figure>`).join("");
+    if (figs) h += `<div class="eda-figs">${figs}</div>`;
+    if (r.report_id) {
+      h += `<a class="btn subtle small" href="${B("/artifacts/" + r.report_id)}" target="_blank" rel="noopener">📄 View report</a>`;
+    }
+    h += `<div class="ds-msg">${esc(r.message || "Experiment complete.")}</div></div>`;
+    box.innerHTML = h;
+    refreshState();
+  } catch (e) {
+    box.classList.add("schema-err");
+    box.innerHTML = `<span class="sev">error</span>${esc(e.message || "peer experiment failed")}`;
   }
   scrollBottom();
 }
