@@ -31,16 +31,18 @@ def plan_proposal_payload(plan: dict) -> dict:
         "plan_id": plan.get("id"),
         "experiment_id": plan.get("experiment_id"),
         "name": plan.get("name"),
+        "description": plan.get("description"),
         "request": plan.get("request"),
         "dataset": plan.get("dataset"),
         "seed": plan.get("seed"),
         "steps": plan.get("steps") or [],
+        "expected_outputs": plan.get("expected_outputs") or [],
         "status": plan.get("status"),
         "created_at": plan.get("created_at"),
     }
 
 
-async def present_result(rt, plan: dict, emit=None) -> None:
+async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     """Register the executed plan's artifacts + run, and (if emit) post an
     assistant message with the report + figures to the chat."""
     from ..experiment_planner import execute_plan
@@ -48,14 +50,26 @@ async def present_result(rt, plan: dict, emit=None) -> None:
 
     path = rt.dir / plan["dataset"]
     df = pd.read_csv(path, low_memory=False)
-    done = execute_plan(plan, df)
+
+    async def _prog(i, message):
+        if emit:
+            try:
+                await emit("workflow", {
+                    "status": "running", "title": f"Plan {plan['id']}",
+                    "message": message, "pct": round(i / max(len(plan.get("steps") or []), 1) * 100),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+
+    done = execute_plan(plan, df, project_dir=rt.dir, progress=progress or _prog)
     if done["status"] != "DONE":
         raise RuntimeError(done.get("error") or "experiment failed")
 
     # Persist the executed plan (with result).
     _store(rt).update(
         done["id"], status=done["status"], result=done["result"],
-        metrics=done["metrics"], error=done.get("error"))
+        metrics=done["metrics"], error=done.get("error"),
+        result_dir=done.get("result_dir"))
 
     # Register figures + report as artifacts.
     artifact_ids = []
@@ -136,6 +150,23 @@ async def list_plans(name: str, status: str = ""):
     return {"plans": _store(rt).list(status=status or None)}
 
 
+@router.get("/api/experiments/catalog")
+async def experiment_catalog():
+    """The available deterministic experiments (planner catalog)."""
+    from ..experiment_planner import list_experiments, EXPERIMENT_REGISTRY
+    out = []
+    for e in list_experiments():
+        defn = EXPERIMENT_REGISTRY.get(e["id"]) or {}
+        steps = defn.get("plan_steps") or []
+        expected = defn.get("expected_outputs") or []
+        out.append({**e,
+                    "requires_columns": defn.get("requires_columns") or [],
+                    "steps": list(steps("", "")) if callable(steps) else list(steps),
+                    "expected_outputs": (list(expected("", ""))
+                                         if callable(expected) else list(expected))})
+    return {"experiments": out}
+
+
 @router.get("/api/projects/{name}/experiment-plans/{plan_id}")
 async def get_plan(name: str, plan_id: str):
     rt = get_runtime(name)
@@ -143,6 +174,31 @@ async def get_plan(name: str, plan_id: str):
     if plan is None:
         raise HTTPException(status_code=404, detail="plan not found")
     return {"plan": plan}
+
+
+@router.get("/api/projects/{name}/experiment-plans/{plan_id}/result")
+async def get_plan_result(name: str, plan_id: str):
+    """Re-fetch a DONE plan's result (figures + report) from its persisted dir."""
+    rt = get_runtime(name)
+    plan = _store(rt).get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="plan not found")
+    if plan.get("status") != "DONE":
+        return {"plan": plan_proposal_payload(plan), "result": None,
+                "message": "Plan not executed yet."}
+    result_dir = plan.get("result_dir")
+    figures, report_md = [], ""
+    if result_dir:
+        d = Path(result_dir)
+        report_path = d / "report.md"
+        if report_path.exists():
+            report_md = report_path.read_text(encoding="utf-8", errors="replace")
+        figures = [p.name for p in sorted(d.iterdir())
+                   if p.suffix.lower() in (".png", ".svg")]
+    return {"plan": plan, "result": {"figures": figures,
+                                     "report": report_md,
+                                     "metrics": plan.get("metrics")},
+            "message": "Plan result (persisted)."}
 
 
 @router.post("/api/projects/{name}/experiment-plans")

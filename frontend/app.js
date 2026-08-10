@@ -3537,6 +3537,7 @@ async function loadExperiments() {
   if (typeof finetuneExpOptions === "function") finetuneExpOptions();
   if (typeof loadFinetuneStatus === "function") loadFinetuneStatus();
   if (typeof loadFinetuneValidate === "function") loadFinetuneValidate();
+  if (typeof loadExperimentPlans === "function") loadExperimentPlans();
   loadGoals();
   refreshExpContext();
   renderExpKpis();
@@ -7261,8 +7262,105 @@ async function loadFinetuneValidate() {
   } catch (e) { /* silent */ }
 }
 
+/* ---------- experiment plans manager (planner) ---------- */
+const PLAN_BADGE = {
+  DRAFT: "warn", WAITING_APPROVAL: "det", APPROVED: "det",
+  RUNNING: "det", DONE: "ok", FAILED: "danger", REJECTED: "warn",
+};
+
+async function loadExperimentPlans() {
+  try {
+    const r = await api(`/api/projects/${state.project}/experiment-plans`);
+    renderExperimentPlans(r.plans || []);
+  } catch (e) { /* silent */ }
+}
+
+function renderExperimentPlans(plans) {
+  const host = $("plans-list");
+  if (!host) return;
+  if (!plans.length) {
+    host.innerHTML = '<div class="exp-empty">No experiment plans yet — ask in chat to "plan an experiment" (it proposes a plan, then runs after you confirm).</div>';
+    return;
+  }
+  let h = "";
+  for (const p of [...plans].reverse()) {
+    const steps = (p.steps || []).length
+      ? `<div class="exp-plan-steps">${(p.steps || []).map((s, i) =>
+          `<div class="plan-step-row"><span class="plan-step-n">${i + 1}</span><span>${esc(s)}</span></div>`).join("")}</div>` : "";
+    const outputs = (p.expected_outputs || []).length
+      ? `<div class="exp-plan-outputs muted"><b>Outputs:</b> ${esc((p.expected_outputs || []).join(" · "))}</div>` : "";
+    const metrics = p.metrics && Object.keys(p.metrics).length
+      ? `<div class="finetune-job-row">metrics: ${Object.entries(p.metrics).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" · ")}</div>` : "";
+    const err = p.error ? `<div class="finetune-job-error">${esc(String(p.error).slice(-400))}</div>` : "";
+    const acts = [];
+    if (p.status === "WAITING_APPROVAL")
+      acts.push(`<button class="btn subtle small plan-act" data-plan="${esc(p.id)}" data-act="approve">✓ Approve &amp; run</button>`);
+    if (p.status === "APPROVED")
+      acts.push(`<button class="btn subtle small plan-act" data-plan="${esc(p.id)}" data-act="run">▶ Run</button>`);
+    if (p.status === "DONE" && p.result_dir)
+      acts.push(`<button class="btn subtle small plan-act" data-plan="${esc(p.id)}" data-act="result">📄 Result</button>`);
+    acts.push(`<button class="btn subtle small plan-act" data-plan="${esc(p.id)}" data-act="delete">🗑</button>`);
+    h += `<div class="finetune-job" data-plan-id="${esc(p.id)}">
+      <div class="finetune-job-head">
+        <span class="finetune-job-id">${esc(p.name || p.experiment_id)}</span>
+        <span class="exp-badge ${PLAN_BADGE[p.status] || "warn"}">${esc(p.status)}</span>
+        <span class="spacer"></span>
+        <span class="muted">plan <code>${esc(p.id)}</code></span>
+      </div>
+      <div class="finetune-job-body">
+        <div class="finetune-job-row muted">dataset <code>${esc(p.dataset || "—")}</code> · seed <code>${esc(p.seed ?? "—")}</code>${p.description ? " · " + esc(p.description) : ""}</div>
+        ${steps}
+        ${outputs}
+        ${metrics}
+        ${err}
+        <div class="finetune-job-actions">${acts.join("")}</div>
+      </div>
+    </div>`;
+  }
+  host.innerHTML = h;
+  host.querySelectorAll(".plan-act").forEach((b) =>
+    b.addEventListener("click", () => planAction(b.dataset.plan, b.dataset.act)));
+}
+
+async function planAction(planId, act) {
+  const P = `${state.project}`;
+  try {
+    if (act === "approve") {
+      await api(`/api/projects/${P}/experiment-plans/${planId}/decide`, {
+        method: "POST", body: JSON.stringify({ approve: true }) });
+      const r = await api(`/api/projects/${P}/experiment-plans/${planId}/run`, { method: "POST" });
+      toast(r.message || "Plan executed.");
+    } else if (act === "run") {
+      const r = await api(`/api/projects/${P}/experiment-plans/${planId}/run`, { method: "POST" });
+      toast(r.message || "Plan executed.");
+    } else if (act === "result") {
+      const r = await api(`/api/projects/${P}/experiment-plans/${planId}/result`);
+      if (r.result && r.result.report) renderPlanResultModal(r.result);
+      else toast("No result stored for this plan.", 4000);
+    } else if (act === "delete") {
+      if (!confirm("Delete this plan?")) return;
+      await api(`/api/projects/${P}/experiment-plans/${planId}`, { method: "DELETE" });
+      toast("Plan deleted.");
+    }
+    loadExperimentPlans();
+  } catch (e) { toast("Plan action failed: " + e.message, 4000); }
+}
+
+function renderPlanResultModal(result) {
+  const box = $("plans-result");
+  if (!box) return;
+  box.innerHTML = `<div class="plans-result-inner"><div class="plans-result-close">✕</div>
+    <div class="plans-result-body">${renderMarkdown(result.report || "")}</div></div>`;
+  box.classList.remove("hidden");
+  box.querySelector(".plans-result-close").addEventListener("click", () => box.classList.add("hidden"));
+}
+
 if ($("finetune-validate-refresh")) {
   $("finetune-validate-refresh").addEventListener("click", loadFinetuneValidate);
+}
+
+if ($("plans-refresh")) {
+  $("plans-refresh").addEventListener("click", loadExperimentPlans);
 }
 
 // Test the finetuned LLM with custom questions: queue stage 5 for the worker.
@@ -7481,13 +7579,17 @@ function renderExperimentPlanProposal(p) {
   const el = ensureAssistant(["experiment_plan", "plan"], null);
   const steps = (p.steps || []).map((s, i) =>
     `<div class="plan-step-row"><span class="plan-step-n">${i + 1}</span><span>${esc(s)}</span></div>`).join("");
+  const outputs = (p.expected_outputs || []).length
+    ? `<div class="exp-plan-outputs muted"><b>Expected outputs:</b> ${esc((p.expected_outputs || []).join(" · "))}</div>` : "";
   el.body.innerHTML = `
     <div class="exp-plan-card">
       <div class="exp-plan-head">🧪 <b>${esc(p.name || p.experiment_id || "Experiment")}</b>
         <span class="muted">· plan <code>${esc(p.plan_id || "")}</code></span></div>
+      ${p.description ? `<div class="exp-plan-desc muted">${esc(p.description)}</div>` : ""}
       <div class="exp-plan-meta muted">
         dataset <code>${esc(p.dataset || "—")}</code> · seed <code>${esc(p.seed ?? "—")}</code></div>
       <div class="exp-plan-steps">${steps}</div>
+      ${outputs}
       <div class="exp-plan-note muted">Nothing has run yet — confirm to execute, or reject to cancel.</div>
       <div class="exp-plan-actions">
         <button class="btn danger small exp-plan-reject" data-plan="${esc(p.plan_id || "")}">✕ Reject</button>

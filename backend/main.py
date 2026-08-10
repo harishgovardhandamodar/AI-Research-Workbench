@@ -2083,6 +2083,13 @@ async def ws_chat(ws: WebSocket, name: str):
     finally:
         recv_task.cancel()
         broker.reject_all()  # don't let the agent hang on a vanished client
+        # Reject any pending experiment-plan approvals so they don't hang.
+        try:
+            for fut in getattr(rt, "_plan_approvals", {}).values():
+                if not fut.done():
+                    fut.set_result(False)
+        except Exception:  # noqa: BLE001
+            pass
         rt.workflow.unsubscribe(emit)
         rt.unsubscribe_events(emit)
 # ------------------------------------------------------------ static files ---

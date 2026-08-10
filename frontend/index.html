@@ -111,6 +111,7 @@
         <button class="exp-nav-chip" data-target="sweeps">Sweep & Finetune</button>
         <button class="exp-nav-chip" data-target="finetune">Finetune status</button>
         <button class="exp-nav-chip" data-target="finetune-validate">RAG verification</button>
+        <button class="exp-nav-chip" data-target="plans">Plans</button>
         <button class="exp-nav-chip" data-target="benchmarks">Benchmarks</button>
         <button class="exp-nav-chip" data-target="datasets">Datasets</button>
         <button class="exp-nav-chip" data-target="runs">Runs</button>
@@ -317,6 +318,15 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
           </div>
         </div>
         <div id="finetune-validate" class="finetune-jobs"></div>
+      </section>
+
+      <section id="exp-section-plans" class="exp-section">
+        <div class="exp-runs-head">
+          <span class="exp-runs-title">Experiment plans <span class="muted exp-hint">deterministic planner · propose → confirm → execute</span></span>
+          <span class="spacer"></span>
+          <button id="plans-refresh" class="btn subtle small">Refresh</button>
+        </div>
+        <div id="plans-list" class="finetune-jobs"></div>
       </section>
 
       <section id="exp-section-benchmarks" class="exp-section">
@@ -949,6 +959,9 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
     </div>
   </div>
 </div>
+
+<!-- Experiment plans result modal -->
+<div id="plans-result" class="hidden"></div>
 
 <!-- Notebook editor modal -->
 <div id="notebook-modal" class="modal hidden">

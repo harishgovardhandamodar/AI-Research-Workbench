@@ -84,19 +84,42 @@ class PlanStore:
                              f"available: {list(EXPERIMENT_REGISTRY)}")
         if defn.get("needs_dataset") and not dataset:
             raise ValueError(f"experiment '{experiment_id}' needs a dataset file")
+        # Validate the dataset file exists + required columns, if we can.
+        if dataset:
+            ds_path = self.path.parent / dataset
+            if not ds_path.exists():
+                raise ValueError(f"dataset file not found: {dataset}")
+            req_cols = defn.get("requires_columns") or []
+            if req_cols:
+                import pandas as pd
+                try:
+                    head = pd.read_csv(ds_path, nrows=1)
+                    missing = [c for c in req_cols if c not in head.columns]
+                    if missing:
+                        raise ValueError(
+                            f"dataset '{dataset}' is missing required column(s): "
+                            f"{', '.join(missing)}")
+                except ValueError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    pass
         plan_id = uuid.uuid4().hex[:12]
         seed = seed if seed is not None else int(time.time()) % (2 ** 31)
-        steps = [s for s in (defn.get("plan_steps") or [])]
-        if callable(steps):
-            steps = [s for s in steps(request or "", dataset)]
+        steps_def = defn.get("plan_steps") or []
+        steps = list(steps_def(request or "", dataset)) if callable(steps_def) else list(steps_def)
+        expected_def = defn.get("expected_outputs") or []
+        expected = (list(expected_def(request or "", dataset))
+                    if callable(expected_def) else list(expected_def))
         plan = {
             "id": plan_id,
             "experiment_id": experiment_id,
             "name": defn.get("name", experiment_id),
+            "description": defn.get("description", ""),
             "request": request or "",
             "dataset": dataset,
             "seed": seed,
             "steps": steps,
+            "expected_outputs": expected,
             "status": "DRAFT",
             "created_at": time.time(),
             "updated_at": time.time(),
@@ -163,9 +186,21 @@ class PlanStore:
 
 
 # ------------------------------------------------------------ execution -------
-def execute_plan(plan: dict, df) -> dict:
+def plan_result_dir(project_dir: Path, plan_id: str) -> Path:
+    """Where a plan's persistent outputs (report + figures) are stored."""
+    d = project_dir / "plans" / plan_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def execute_plan(plan: dict, df, project_dir: Path | None = None,
+                 progress=None) -> dict:
     """Run an approved plan deterministically. Returns an updated plan dict
-    (status DONE/FAILED, result, metrics, artifact-less res dict for the UI)."""
+    (status DONE/FAILED, result, metrics). ``progress(step_index, message)``
+    receives per-step updates during execution. When ``project_dir`` is given,
+    figures + report are persisted under <project>/plans/<id>/ so a DONE plan
+    survives restart and can be re-presented.
+    """
     if plan.get("status") != "APPROVED":
         raise ValueError(f"plan is '{plan.get('status')}' — approve it first")
     defn = EXPERIMENT_REGISTRY.get(plan["experiment_id"])
@@ -173,24 +208,58 @@ def execute_plan(plan: dict, df) -> dict:
         raise ValueError(f"unknown experiment '{plan.get('experiment_id')}'")
     plan = dict(plan)
     plan["status"] = "RUNNING"
+    steps = plan.get("steps") or []
     try:
+        if progress:
+            for i, s in enumerate(steps):
+                await_progress(progress, i, f"{i + 1}/{len(steps)} {s}")
         res = defn["run"](df, seed=plan.get("seed"))
         report_md = defn["render_report"](res)
         figures = defn["render_figures"](res) if "render_figures" in defn else {}
         metrics = res.get("metrics") or _default_metrics(res)
+
+        # Persist figures + report when a project dir is provided.
+        persisted = []
+        if project_dir is not None:
+            out_dir = plan_result_dir(project_dir, plan["id"])
+            for name_, data in figures.items():
+                (out_dir / name_).write_bytes(data)
+                persisted.append(name_)
+            if report_md:
+                (out_dir / "report.md").write_text(report_md, encoding="utf-8")
+                persisted.append("report.md")
+
         plan.update({
             "status": "DONE",
             "result": {"report": report_md, "figures": list(figures),
-                       "n": res.get("n")},
+                       "persisted": persisted, "n": res.get("n")},
             "metrics": metrics,
             "error": None,
         })
+        if project_dir is not None:
+            plan["result_dir"] = str(plan_result_dir(project_dir, plan["id"]))
         plan["_figures_bytes"] = figures
         plan["_report_md"] = report_md
+        if progress:
+            await_progress(progress, len(steps), "done")
         return plan
     except Exception as e:  # noqa: BLE001
         plan.update({"status": "FAILED", "error": f"{type(e).__name__}: {e}"})
         return plan
+
+
+def await_progress(progress, i, message):
+    """Call a progress callback if it's async or sync."""
+    if progress is None:
+        return
+    try:
+        import asyncio
+        if asyncio.iscoroutinefunction(progress):
+            asyncio.get_event_loop().create_task(progress(i, message))
+        else:
+            progress(i, message)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _default_metrics(res: dict) -> dict:
