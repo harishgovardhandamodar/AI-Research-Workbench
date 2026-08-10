@@ -136,6 +136,28 @@ GODMODE_SYSTEM = (
 )
 
 
+_PEER_EXPERIMENT_WORDS = [
+    "peer identification", "peer-identification", "identify.*bank", "market share",
+    "market-share", "estimating other", "other's share", "bank.*share",
+    "share per segment", "share per payment", "peer.*experiment",
+    "which bank", "sender_bank",
+]
+
+
+def _is_peer_experiment_request(text: str) -> bool:
+    """Detect a peer-identification / market-share experiment request so it runs
+    deterministically instead of through the (often tool-less) LLM loop."""
+    low = (text or "").lower()
+    if not any(w in low for w in ("bank", "peer", "upi")):
+        return False
+    import re as _re
+    hits = 0
+    for w in _PEER_EXPERIMENT_WORDS:
+        if _re.search(w, low):
+            hits += 1
+    return hits >= 2
+
+
 def match_workflow(text: str) -> str | None:
     """Detect a workflow-intent prompt (e.g. the privacy peer-exploitation prompt).
 
@@ -1304,6 +1326,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 elif intent == "plan_step":
                     # Round-30: run one experiment plan step as a chat turn.
                     user_tags = ["experiment", "plan step"]
+                elif intent == "peer_experiment":
+                    user_tags = ["peer experiment"]
                 else:
                     rcc = rerun_compare_requested(text)
                     workflow_mode = bool(match_workflow(text) or
@@ -1312,6 +1336,13 @@ async def ws_chat(ws: WebSocket, name: str):
                     fresh_mode = fresh_requested(text) or rcc
                     if rcc:
                         user_tags = ["privacy workflow", "fresh rerun", "compare runs"]
+                    # Deterministic routing for the peer-identification /
+                    # market-share experiment — the agent's free-form version
+                    # was producing empty replies with no tool calls, so detect
+                    # the request and run the deterministic experiment instead.
+                    if _is_peer_experiment_request(text):
+                        intent = "peer_experiment"
+                        user_tags = ["peer experiment"]
                 if intent == "rerun_run":
                     # Revert-to-this-run: derive from the requested run and
                     # re-issue its prompt (if no explicit text was provided).
@@ -1424,6 +1455,100 @@ async def ws_chat(ws: WebSocket, name: str):
                     await emit("assistant_message", {"id": amid, "content": content,
                                                      "tags": ["finetune", "report", "summary"],
                                                      "created_at": _msg_created_at(rt, amid)})
+                    await emit("done", {})
+                    return
+                if intent == "peer_experiment":
+                    # Deterministic bank peer-identification / market-share
+                    # experiment — runs directly (no LLM loop), posts results.
+                    from .routers.peer import run_peer_share_experiment, \
+                        render_report, render_figures
+                    filename = (msg_extra.get("filename") or "").strip()
+                    try:
+                        import pandas as pd
+                        from pathlib import Path as _P
+                        if filename:
+                            path = _P(filename)
+                            if not path.is_absolute():
+                                path = rt.dir / filename
+                        else:
+                            cands = [p for p in rt.dir.iterdir()
+                                     if p.is_file() and p.suffix.lower() == ".csv"
+                                     and not p.name.lower().startswith("synthetic_")]
+                            upi = [p for p in cands if "upi" in p.name.lower()]
+                            cands = upi or cands
+                            if not cands:
+                                raise FileNotFoundError("no CSV dataset in this project")
+                            path = cands[0]
+                            for p in cands:
+                                try:
+                                    head = pd.read_csv(p, nrows=1)
+                                    if "sender_bank" in head.columns:
+                                        path = p
+                                        break
+                                except Exception:  # noqa: BLE001
+                                    continue
+                            filename = path.name
+                        df = pd.read_csv(path, low_memory=False)
+                        if "sender_bank" not in df.columns:
+                            raise ValueError("dataset has no 'sender_bank' column")
+                        res = run_peer_share_experiment(df)
+                        report_md = render_report(res)
+                        figures = render_figures(res)
+                        # Register figures + report as artifacts.
+                        artifact_ids = []
+                        env = {}
+                        try:
+                            env = await rt.kernels.get_env()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        from .artifacts.store import Artifact
+                        for name_, data in figures.items():
+                            art = Artifact(kind="figure", name=name_,
+                                           description=f"Peer experiment figure: {name_}",
+                                           code=f"peer({filename})", env=env,
+                                           message_id="", run_id="", data_type="png")
+                            rt.artifacts.add_artifact(art, data=data, data_type="png")
+                            artifact_ids.append(art.id)
+                            await emit("artifact", {"artifact": art.to_dict()})
+                        rep_art = Artifact(kind="report",
+                                           name=f"peer-report-{_P(filename).stem}",
+                                           description=f"Peer identification report for {filename}",
+                                           code=f"peer({filename})", env=env,
+                                           message_id="", run_id="", data_type="text")
+                        rt.artifacts.add_artifact(rep_art, data=report_md.encode(),
+                                                  data_type="text")
+                        artifact_ids.append(rep_art.id)
+                        await emit("artifact", {"artifact": rep_art.to_dict()})
+                        rt.store.add_run(
+                            prompt=f"Peer identification & market-share experiment on {filename}",
+                            reply=report_md[:3000], status="done",
+                            started_at=time.time(), finished_at=time.time(),
+                            artifact_ids=artifact_ids,
+                            metrics={
+                                "identification_accuracy": res["identification"]["overall_accuracy"],
+                                "segment_mae": res["segments_error"]["mae"],
+                                "type_mae": res["types_error"]["mae"],
+                            },
+                            kind="peer_experiment", label=f"peer:{filename}",
+                            model=None, dataset=filename)
+                        content = (
+                            f"**🏦 Peer identification & market-share experiment — `{filename}`**\n\n"
+                            f"- Transactions: {res['n']:,} · Banks: {', '.join(res['banks'])}\n"
+                            f"- **Identification accuracy:** {res['identification']['overall_accuracy']:.1%}\n"
+                            f"- **Share-estimation MAE:** {res['segments_error']['mae']:.3f} per segment · "
+                            f"{res['types_error']['mae']:.3f} per payment type\n"
+                            f"- Confusion matrix, segment/type error, and bank volumes "
+                            f"registered as artifacts.\n\n"
+                            + report_md)
+                        amid = rt.store.add_message(
+                            "assistant", content,
+                            {"tags": ["peer", "experiment", "report"]})
+                        await emit("assistant_message", {"id": amid, "content": content,
+                                                         "tags": ["peer", "experiment", "report"],
+                                                         "created_at": _msg_created_at(rt, amid)})
+                    except Exception as e:  # noqa: BLE001
+                        await emit("error", {"message":
+                            f"Peer experiment failed: {type(e).__name__}: {e}"})
                     await emit("done", {})
                     return
                 if intent == "plan_step":

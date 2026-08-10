@@ -258,17 +258,27 @@ async def peer_run(name: str, body: dict):
     if filename:
         path = _resolve_project_file(rt, filename)
     else:
-        # Auto-pick the first UPI/banking CSV in the project.
-        cands = sorted(p for p in rt.dir.iterdir()
-                       if p.is_file() and p.suffix.lower() == ".csv"
-                       and ("upi" in p.name.lower() or "bank" in p.name.lower()))
+        # Auto-pick: prefer a UPI/banking CSV that actually has sender_bank;
+        # skip synthetic_* derivatives.
+        csvs = [p for p in rt.dir.iterdir()
+                if p.is_file() and p.suffix.lower() == ".csv"
+                and not p.name.lower().startswith("synthetic_")]
+        cands = [p for p in csvs if "upi" in p.name.lower()]
         if not cands:
-            cands = sorted(p for p in rt.dir.iterdir()
-                           if p.is_file() and p.suffix.lower() == ".csv")
+            cands = csvs
         if not cands:
             raise HTTPException(status_code=404,
                                 detail="no CSV dataset in this project")
+        # Prefer the file with a sender_bank column.
         path = cands[0]
+        for p in cands:
+            try:
+                head = pd.read_csv(p, nrows=1)
+                if "sender_bank" in head.columns:
+                    path = p
+                    break
+            except Exception:  # noqa: BLE001
+                continue
         filename = path.name
 
     try:
