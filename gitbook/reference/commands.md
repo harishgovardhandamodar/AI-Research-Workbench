@@ -18,7 +18,12 @@ model needed).
 | `/push` | Push the management repo to its GitHub remote |
 | `/kaggle <owner/dataset>` | Import a public Kaggle dataset |
 | `/notebook <name>` | Run a project notebook |
+| `/session <name>` | Begin a fresh session (create + switch) from the chat window |
 | `/status` | Model, gateway, reviewer, max-iters, repo status |
 | `/clear` | Clear this project's conversation |
 
+> Inline commands (no model needed): `@schema <file>` shows a file's columns +
+> dtypes; `@load <file> [var]` loads a data file into the Python kernel as a
+> DataFrame (default var = file stem) and shows a shape/preview card. Use
+> `@load data.csv df` to load a CSV as `df`, then ask Fox to analyze it.
 > `/god`, `/sandbox` alias `/godmode`. `/flat` and `/sets` toggle rendering mode.

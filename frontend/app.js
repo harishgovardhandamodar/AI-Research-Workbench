@@ -1582,6 +1582,32 @@ async function sendChat(textOverride, intent, extra) {
     else toast("Usage: @schema <filename> (e.g. @schema data.csv)", 4000);
     return;
   }
+  // Load a dataset into the kernel: "@load data.csv [var=df]" shows an inline
+  // card (shape/columns/preview) and makes the DataFrame live in the kernel.
+  if (/^@load\b/i.test(t)) {
+    const parts = t.replace(/^@load\b/i, "").trim().split(/\s+/).filter(Boolean);
+    const fname = parts[0] || "";
+    let varName = "";
+    if (parts[1] && /^[A-Za-z_]\w*$/.test(parts[1])) varName = parts[1];
+    if (textOverride === undefined) {
+      input.value = "";
+      autoResize(input);
+    }
+    if (fname) await loadDatasetInline(fname, varName || undefined);
+    else toast("Usage: @load <filename> [var] (e.g. @load data.csv df)", 4000);
+    return;
+  }
+  // Begin a fresh session: "/session <name>" creates + switches to it.
+  if (/^\/session\b/i.test(t)) {
+    const name = t.replace(/^\/session\b/i, "").trim();
+    if (textOverride === undefined) {
+      input.value = "";
+      autoResize(input);
+    }
+    if (name) await createSession(name);
+    else toast("Usage: /session <name> (e.g. /session my-analysis)", 4000);
+    return;
+  }
   if (textOverride !== undefined) {
     input.value = "";
     autoResize(input);
@@ -1919,6 +1945,82 @@ async function showSchemaInline(fname) {
   const copyBtn = box.querySelector(".schema-copy");
   if (copyBtn) copyBtn.addEventListener("click", () => copyText(box.innerText));
   scrollBottom();
+}
+
+// Inline "loaded dataset" card: shows the DataFrame shape/columns/preview and
+// confirms it is live in the kernel.
+function datasetCardHtml(d) {
+  const shape = d.shape && d.shape.length === 2
+    ? `${d.shape[0]} rows × ${d.shape[1]} columns` : "";
+  const head = `<div class="schema-head">
+      <span class="sc-file">📊 ${esc(d.file)} → <code>${esc(d.var)}</code></span>
+      ${shape ? `<span class="sc-rows">${esc(shape)}</span>` : ""}
+      <span class="spacer"></span>
+      <button class="btn subtle small ds-copy" title="Copy load command">⧉</button>
+    </div>`;
+  const cols = (d.columns || []).map((c) => `
+    <div class="sc-col">
+      <span class="sc-name">${esc(c)}</span>
+      <span class="sc-dtype">${esc((d.dtypes && d.dtypes[c]) || "")}</span>
+    </div>`).join("");
+  const prev = (d.preview && d.preview.length) ? `
+    <table class="schema-preview"><thead><tr>
+      ${(d.columns || []).map((c) => `<th>${esc(c)}</th>`).join("")}
+    </tr></thead><tbody>
+      ${d.preview.map((row) => `<tr>${(d.columns || []).map((c) => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>` : "";
+  return `<div class="ds-card">${head}
+    ${cols ? `<div class="schema-cols">${cols}</div>` : ""}
+    ${prev}
+    <div class="ds-msg">${esc(d.message || `Loaded ${d.file} as ${d.var}`)}</div>
+  </div>`;
+}
+
+async function loadDatasetInline(fname, varName) {
+  const userMsg = { content: "@load " + fname + (varName ? " " + varName : ""), created_at: null };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const uel = msgContainer("user", [], null, set.body);
+  uel.body.textContent = "@load " + fname;
+  const ael = msgContainer("assistant", [], null, set.body, "Fox · dataset");
+  const box = document.createElement("div");
+  box.className = "schema-card";
+  box.innerHTML = '<div class="empty">Loading dataset into the kernel…</div>';
+  ael.body.appendChild(box);
+  scrollBottom();
+  try {
+    const r = await api(`/api/projects/${state.project}/dataset/load`, {
+      method: "POST", body: JSON.stringify({ filename: fname, var: varName || "" }),
+    });
+    box.innerHTML = datasetCardHtml(r);
+  } catch (e) {
+    box.classList.add("schema-err");
+    box.innerHTML = `<span class="sev">error</span>${esc(e.message || "failed to load dataset")}`;
+  }
+  const copyBtn = box.querySelector(".ds-copy");
+  if (copyBtn) copyBtn.addEventListener("click", () => copyText(`@load ${fname} ${varName || ""}`.trim()));
+  loadFiles();
+  scrollBottom();
+}
+
+// Create + switch to a fresh session from the chat window.
+async function createSession(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) { toast("Session name required", 4000); return; }
+  const userMsg = { content: "/session " + trimmed, created_at: null };
+  const set = msgSetCreate(userMsg, true);
+  state._currentSet = set;
+  const uel = msgContainer("user", [], null, set.body);
+  uel.body.textContent = "/session " + trimmed;
+  scrollBottom();
+  try {
+    await api("/api/projects", { method: "POST", body: JSON.stringify({ name: trimmed }) });
+    await loadProjects();
+    await switchProject(trimmed);
+    toast(`Session "${trimmed}" created.`);
+  } catch (e) {
+    toast("Could not create session: " + e.message, 4000);
+  }
 }
 
 /* ---- Kaggle dataset import ---- */
@@ -2777,6 +2879,23 @@ const $ftDocs = $("quick-ft-docs");
 if ($ftDocs) $ftDocs.addEventListener("click", (e) => {
   e.preventDefault();
   window.open(B("/gitbook/#/features/finetuning"), "_blank", "noopener");
+});
+// New session / load dataset quick controls (chat window).
+const $newSession = $("quick-new-session");
+if ($newSession) $newSession.addEventListener("click", (e) => {
+  e.preventDefault();
+  const name = prompt("New session name:");
+  if (name) sendChat("/session " + name, "", null);
+});
+const $loadDs = $("quick-load-dataset");
+if ($loadDs) $loadDs.addEventListener("click", (e) => {
+  e.preventDefault();
+  api(`/api/projects/${state.project}/dataset/list`).then((d) => {
+    const files = (d.files || []).filter((f) => f.name.endsWith(".csv") || f.name.endsWith(".json") || f.name.endsWith(".tsv") || f.name.endsWith(".parquet") || f.name.endsWith(".xlsx"));
+    if (!files.length) { toast("No tabular data files in this session — upload one with 📎 or the Files tab.", 4000); return; }
+    const name = prompt("Dataset file to load:\n" + files.map((f) => "• " + f.name).join("\n"), files[0].name);
+    if (name) sendChat("@load " + name, "", null);
+  }).catch(() => toast("Could not list datasets.", 4000));
 });
 // Clicking a figure rendered inside a chat message opens its artifact modal.
 $("messages").addEventListener("click", (e) => {

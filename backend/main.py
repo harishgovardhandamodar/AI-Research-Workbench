@@ -86,6 +86,9 @@ app.include_router(finetune.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
 app.include_router(notebooks.router)
+from .routers.dataset import router as dataset_router
+
+app.include_router(dataset_router)
 from .routers.audit import router as audit_router
 
 app.include_router(audit_router)
