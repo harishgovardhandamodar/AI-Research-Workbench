@@ -453,10 +453,13 @@ async def run_privacy_workflow(rt: ProjectRuntime, emit,
         args.append("--compare")
     else:
         # Attach the project's data file (first tabular file at the project
-        # root or data/) so the workflow runs on the real source.
+        # root or data/) so the workflow runs on the real source — or, if none
+        # is usable, so the privacy MCP's synthetic generator can build a
+        # population from the real schema instead of the bundled generator.
         data_file = _project_tabular_file(rt)
         if data_file:
             args += ["--data", str(data_file)]
+            args += ["--real-data", str(data_file)]
     wf = getattr(rt, "workflow", None)
     if wf is not None and not compare:
         from .workflows import PRIVACY_STAGES
