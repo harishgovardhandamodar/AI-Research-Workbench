@@ -144,6 +144,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 /* expanded experiments panel (main view) */
 #exp-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
 #exp-panel.hidden { display: none; }
+#audit-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
+#audit-panel.hidden { display: none; }
 
 /* agent dashboard (main view) */
 #agent-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
