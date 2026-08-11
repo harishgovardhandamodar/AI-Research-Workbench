@@ -294,3 +294,36 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
 - [x] **R20 — Enriched run audit** (`routers/runs.py`): `GET /runs/{rid}/audit`
   includes plan_id, error and status. `237a8c0`
 - [x] Full suite after these 10 rounds: **760 passed**.
+
+## Phase 12 — thirty more improvement rounds (each committed)
+
+- [x] **R21** paginated `/messages` endpoint (`5bfd063`)
+- [x] **R22** experiment detail returns suggestions+goals (`de1dcac`)
+- [x] **R23** runs list `kind` filter (`552518e`)
+- [x] **R24** `light` project-state variant (`9ee5d07`)
+- [x] **R25** LLM model-catalog TTL cache (`bde308e`)
+- [x] **R26** workflow snapshot message/detail cap (`250470f`)
+- [x] **R27** audit CSV export includes run_id/trace_id (`4bd245c`)
+- [x] **R28** audit timeline includes run_id/trace_id (`e5af262`)
+- [x] **R29** MCP refresh drops cached tool schemas (`456e7f6`)
+- [x] **R30** R kernel output/stderr cap (`84559b7`)
+- [x] **R31** tool_sequence per-tool artifact count (`b7dab06`)
+- [x] **R32** single-pass goal_notices (`ed529a8`)
+- [x] **R33** sweep cap notification (`d06c49c`)
+- [x] **R34** eval drops failed model's empty experiment (`ec6988b`)
+- [x] **R35** sweep label disambiguation (`f910daf`)
+- [x] **R36** plan mirror backfill on startup (`96e02e5`)
+- [x] **R37** project list `busy` flag (`cf16a7d`)
+- [x] **R38** notebook DELETE endpoint (`a6f6337`)
+- [x] **R39** paginated artifacts list (`ec7e941`)
+- [x] **R40** status message/run/experiment counts (`d096507`)
+- [x] **R41** MCP circuit breaker reset on close (`dc372a9`)
+- [x] **R42** configurable LLM request timeout (`2f2b674`)
+- [x] **R43** cap recorded run prompt (`f015e26`)
+- [x] **R44** experiments list run_count (`3e61fdb`)
+- [x] **R45** approval timeout chat notice (`35e2ffd`)
+- [x] **R46** deviation scanner logs new findings (`fab9bef`)
+- [x] **R47** kernel reset audit includes reason/restarts (`eefeb1d`)
+- [x] **R48** sanitize drops orphaned tool results (`3cb61c7`)
+- [x] **R49** `/projects` no longer spawns kernels for unopened projects (`54a94d6`)
+- [x] Full suite after these 30 rounds: **760 passed**.
