@@ -181,6 +181,50 @@ class CampaignLoopTests(unittest.IsolatedAsyncioTestCase):
         # Only the resumed step created an experiment.
         self.assertEqual(len(rt.store.list_experiments()), 1)
 
+    def _flaky(self, fails: int):
+        class Ctx:
+            experiment_id = ""
+            parent_run_id = None
+            message_id = ""
+
+        class Flaky:
+            def __init__(self):
+                self.calls = 0
+                self.check_abort = None
+                self.ctx = Ctx()
+
+            async def run_turn(self, messages):
+                self.calls += 1
+                if self.calls <= fails:
+                    raise RuntimeError("transient failure")
+                return {"text": "step result"}
+
+        return Flaky()
+
+    async def test_campaign_retries_step_on_transient_failure(self):
+        rt = self._rt()
+        cid = rt.store.create_campaign("Study", "Q", "acc", True)
+        plan = [{"title": "Baseline", "kind": "experiment", "hypothesis": "", "plan": "p1"}]
+        coord = self._flaky(fails=1)  # fails once, then succeeds
+        result = await run_campaign(rt, coord, self._build_llm_messages,
+                                    cid, emit=self._emit, plan_steps=plan)
+        self.assertEqual(result["campaign"]["status"], "done")
+        self.assertEqual(coord.calls, 2)
+        steps = rt.store.list_campaign_steps(cid)
+        self.assertEqual(steps[0]["status"], "done")
+
+    async def test_campaign_gives_up_after_retries(self):
+        rt = self._rt()
+        cid = rt.store.create_campaign("Study", "Q", "acc", True)
+        plan = [{"title": "Baseline", "kind": "experiment", "hypothesis": "", "plan": "p1"}]
+        coord = self._flaky(fails=99)  # always fails
+        result = await run_campaign(rt, coord, self._build_llm_messages,
+                                    cid, emit=self._emit, plan_steps=plan)
+        self.assertEqual(result["campaign"]["status"], "failed")
+        self.assertIn("step 1 failed", result["stopped_reason"])
+        steps = rt.store.list_campaign_steps(cid)
+        self.assertEqual(steps[0]["status"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()

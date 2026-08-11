@@ -176,7 +176,8 @@ def _campaign_report(store, c: dict, steps: list[dict]) -> str:
 async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
                        emit=None, workflow=None, resume_step: int = 1,
                        plan_steps: list[dict] | None = None,
-                       timeout_sec: float | None = None) -> dict:
+                       timeout_sec: float | None = None,
+                       step_retries: int = 2) -> dict:
     """Run a research campaign: plan → execute each step → synthesize.
 
     Returns {"campaign", "steps", "report", "stopped_reason"}. Steps run as their
@@ -251,10 +252,28 @@ async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
                                     "tags": ["campaign"], "experiment_id": eid,
                                     "created_at": _created(store, mid)})
 
-        try:
-            result = await coordinator.run_turn(build_llm_messages())
-        except Exception as e:  # noqa: BLE001
-            stopped_reason = f"step {idx} failed: {type(e).__name__}: {e}"
+        step_ok = False
+        last_err = None
+        for attempt in range(max(0, int(step_retries or 0)) + 1):
+            if coordinator.check_abort is not None and coordinator.check_abort():
+                last_err = None
+                break
+            try:
+                result = await coordinator.run_turn(build_llm_messages())
+                step_ok = True
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if attempt < max(0, int(step_retries or 0)):
+                    log.warning("campaign %s step %d attempt %d failed (%s); retrying",
+                                campaign_id, idx, attempt + 1, type(e).__name__)
+                    await emit("notice", {"message": (
+                        f"Campaign step {idx} attempt {attempt + 1} failed "
+                        f"({type(e).__name__}) — retrying…")})
+                    continue
+        if not step_ok and last_err is not None:
+            stopped_reason = f"step {idx} failed: {type(last_err).__name__}: {last_err}"
             store.update_campaign_step(step["id"], status="failed",
                                        note=stopped_reason)
             if workflow is not None:
