@@ -592,6 +592,14 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
                 *[one(k, i, c) for i, (k, c) in enumerate(
                     zip(kernels, configs[:parallel_n]), 1)])
         for i, cfg in enumerate(configs[parallel_n:], parallel_n + 1):
+            if i == parallel_n + 1 and parallel_n and ctx.emit is not None:
+                # Let the user know the pool was capped and the rest run serially.
+                try:
+                    await ctx.emit("notice", {"message": (
+                        f"Sweep pool capped at {parallel_n} — the remaining "
+                        f"{len(configs) - parallel_n} point(s) run sequentially.")})
+                except Exception:  # noqa: BLE001
+                    pass
             if ctx.check_abort is not None and ctx.check_abort():
                 if i <= 1:
                     return "[error] aborted before the sweep started"
