@@ -17,6 +17,10 @@ class RUnavailableError(RuntimeError):
 
 
 class RKernel:
+    """Run R code via a fresh `Rscript --vanilla` subprocess per call."""
+
+    OUTPUT_CAP = 50_000
+
     def __init__(self, cwd: Path | None = None):
         self.cwd = cwd or Path.cwd()
         self._rscript = shutil.which("Rscript")
@@ -45,6 +49,11 @@ class RKernel:
                 raise
             text = out.decode(errors="replace")
             err_text = err.decode(errors="replace")
+            # Cap output so a chatty R call can't balloon memory/DB.
+            if len(text) > self.OUTPUT_CAP:
+                text = text[:self.OUTPUT_CAP] + "\n…[R output truncated]"
+            if len(err_text) > self.OUTPUT_CAP:
+                err_text = err_text[:self.OUTPUT_CAP] + "\n…[R stderr truncated]"
             return {
                 "ok": proc.returncode == 0,
                 "output": text,
