@@ -671,12 +671,22 @@ class Coordinator:
             "tool_call_id": tc.get("id", ""),
             "content": result,
         })
-        self.persist("tool", result, self._exp_meta(
+        self.persist("tool", self._capped_tool_result(result), self._exp_meta(
             {"name": name,
              "mcp": tool_mcp_action(name)[0],
              "action": tool_mcp_action(name)[1],
              "tool_call_id": tc.get("id", "")}))
         return ok
+
+    @staticmethod
+    def _capped_tool_result(result: str, limit: int = 50_000) -> str:
+        """Cap the tool output persisted to the messages table (DB hygiene). The
+        in-memory result the model sees this turn stays complete; later turns
+        read the capped copy."""
+        if len(result) <= limit:
+            return result
+        return (result[:limit] +
+                f"\n…[tool output truncated: {len(result) - limit} chars]")
 
     def _tool_summary(self) -> list[dict]:
         """The turn's tool trail, namespaced into (mcp, action) pairs so the
