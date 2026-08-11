@@ -99,6 +99,8 @@ async def audit_timeline(name: str, agent: str | None = None, source: str | None
             "method": e.get("method"),
             "severity": e.get("severity"),
             "duration_ms": e.get("duration_ms"),
+            "run_id": e.get("run_id"),
+            "trace_id": e.get("trace_id"),
             "policy": (e.get("policy_decision") or {}).get("outcome"),
             "network": bool(e.get("network")),
             "filesystem": bool(e.get("filesystem")),
