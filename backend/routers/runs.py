@@ -166,12 +166,22 @@ async def set_project_experiment_focus(name: str, body: dict):
 
 @router.get("/api/projects/{name}/experiments/{eid}")
 async def project_experiment(name: str, eid: int):
-    """One experiment with its runs (config + metrics per run)."""
+    """One experiment with its runs (config + metrics per run), suggestions and
+    goals."""
     store = get_runtime(name).store
     exp = store.get_experiment(eid)
     if exp is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     exp["runs"] = store.experiment_runs(eid)
+    try:
+        exp["suggestions"] = store.list_suggestions(eid)
+    except Exception:  # noqa: BLE001
+        exp["suggestions"] = []
+    try:
+        exp["goals"] = [g for g in store.list_goals()
+                        if g.get("experiment_id") in (None, eid)]
+    except Exception:  # noqa: BLE001
+        exp["goals"] = []
     return {"experiment": exp}
 
 
