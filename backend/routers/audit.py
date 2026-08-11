@@ -206,7 +206,7 @@ async def audit_export(name: str, fmt: str = "json", agent: str | None = None,
         buf = io.StringIO()
         fields = ["event_id", "timestamp", "agent_id", "source", "method",
                   "tool_name", "severity", "duration_ms", "policy_decision",
-                  "event_hash"]
+                  "run_id", "trace_id", "event_hash"]
         writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for e in events:
