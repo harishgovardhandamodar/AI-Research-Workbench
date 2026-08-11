@@ -64,6 +64,14 @@ async def save_notebook(name: str, nbname: str, body: dict):
     return {"notebook": nb}
 
 
+@router.delete("/api/projects/{name}/notebooks/{nbname}")
+async def delete_notebook(name: str, nbname: str):
+    rt = get_runtime(name)
+    if not rt.notebooks.delete(nbname):
+        raise HTTPException(status_code=404, detail="notebook not found")
+    return {"deleted": nbname}
+
+
 @router.post("/api/projects/{name}/notebooks/{nbname}/execute")
 async def execute_notebook(name: str, nbname: str, body: dict):
     rt = get_runtime(name)

@@ -207,6 +207,14 @@ class NotebookService:
         path.write_text(json.dumps(nb, indent=1))
         return nb
 
+    def delete(self, name: str) -> bool:
+        """Delete a notebook file; returns False if it didn't exist."""
+        path, _ = self.resolve_path(name)
+        if not path.exists():
+            return False
+        path.unlink(missing_ok=True)
+        return True
+
     # -- execution ----------------------------------------------------------
     async def execute(self, name: str, indices: list[int] | None = None,
                       on_artifact: ArtifactFn | None = None,
