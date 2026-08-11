@@ -637,6 +637,10 @@ class Coordinator:
             "result": _snippet(result, 300),
             "duration_ms": round(duration_ms, 1),
         })
+        # Artifact count per tool call (for the Experiments timeline).
+        produced = list(getattr(self.ctx, "last_artifact_ids", []) or [])
+        if produced:
+            self._run_seq[-1]["artifacts"] = len(produced)
         # Round-4 provenance: keep the FULL executed code per tool call
         # (index-aligned with _run_seq) so runs are reproducible and diffable.
         full_code = ""
