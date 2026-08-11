@@ -565,6 +565,14 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
     t0 = time.time()
     rows = []
     parallel_n = 0
+    # Sequential points run on the main kernel and overwrite its `config`
+    # variable; capture the prior value so it can be restored afterwards.
+    prev_config = None
+    try:
+        _vars = await ctx.kernels.python.list_variables()
+        prev_config = _vars.get("config")
+    except Exception:  # noqa: BLE001
+        prev_config = None
     try:
         if ctx.check_abort is not None and ctx.check_abort():
             return "[error] aborted before the sweep started"
@@ -599,6 +607,16 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
             stop = getattr(ctx.kernels, "stop_pool", None)
             if stop:
                 await asyncio.shield(stop(kernels))
+        # Undo config pollution on the main kernel from sequential points.
+        if parallel_n < len(configs):
+            try:
+                if prev_config is None:
+                    await ctx.kernels.python.run_code("config = None")
+                else:
+                    await ctx.kernels.python.run_code(
+                        "config = " + json.dumps(prev_config, default=str))
+            except Exception:  # noqa: BLE001
+                pass
 
     if parallel_n and parallel_n < len(configs):
         mode = f"parallel {parallel_n} + sequential {len(configs) - parallel_n}"
