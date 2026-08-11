@@ -2583,6 +2583,23 @@ async def ws_chat(ws: WebSocket, name: str):
                             await emit("status", {"message": ""})
                             await emit("done", {})
                             return
+                    elif str(stage).startswith("step"):
+                        # Workflow snapshot clobbered — fall back to the durable
+                        # eval resume record.
+                        try:
+                            saved = json.loads(
+                                rt.store.get_setting("eval_latest", "{}") or "{}")
+                        except json.JSONDecodeError:
+                            saved = {}
+                        eid = saved.get("eval_id") if saved.get("kind") == "eval" else None
+                        if eid is not None:
+                            from .eval import run_eval
+                            await run_eval(
+                                rt, coordinator, rt.build_llm_messages, int(eid),
+                                emit=emit, workflow=rt.workflow)
+                            await emit("status", {"message": ""})
+                            await emit("done", {})
+                            return
                     await emit("error", {"message":
                         "Cannot retry this stage — no resumable workflow is active."})
                     await emit("done", {})

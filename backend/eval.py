@@ -9,6 +9,7 @@ runner (mirrors ``campaign.run_campaign``).
 
 from __future__ import annotations
 
+import json
 import time
 
 from .experiment_loop import best_metric
@@ -207,6 +208,15 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
         pass
     if workflow is not None:
         await workflow.finish()
+    # Durable resume state: lets retry_stage re-run the eval even if a concurrent
+    # campaign/chat turn clobbered the volatile workflow snapshot.
+    try:
+        store.set_setting("eval_latest", json.dumps({
+            "kind": "eval", "eval_id": eval_id, "name": ev.get("name"),
+            "models": models, "updated_at": time.time(),
+        }))
+    except Exception:  # noqa: BLE001
+        pass
     await emit("notice", {"message": f"Model benchmark '{ev['name']}' complete."})
     return {"eval": store.get_eval(eval_id), "report": report,
             "stopped_reason": stopped_reason, "results": results}
