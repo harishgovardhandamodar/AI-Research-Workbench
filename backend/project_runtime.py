@@ -550,6 +550,9 @@ class ProjectRuntime:
             "campaign_resume_step": (self.store.campaign_resume_step(self._campaign_cid)
                                      if self._campaign_cid is not None else None),
             "improve_latest": self._improve_latest(),
+            "message_count": len(self.store.list_messages(limit=5000)),
+            "run_count": len(self.store.list_runs(limit=5000)),
+            "experiment_count": len(self.store.list_experiments()),
         }
 
     def _improve_latest(self) -> dict | None:
