@@ -155,6 +155,13 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
         except Exception as e:  # noqa: BLE001
             stopped_reason = f"model {model} failed: {type(e).__name__}: {e}"
             store.update_eval(eval_id, status="failed", report=stopped_reason)
+            # Drop the empty experiment the failed model created so a retry can
+            # re-benchmark it cleanly.
+            try:
+                if not store.experiment_runs(eid):
+                    store.delete_experiment(eid)
+            except Exception:  # noqa: BLE001
+                pass
             if workflow is not None:
                 await workflow.update_stage(f"step{i}", "failed", message=stopped_reason)
             await emit("notice", {"message": f"Eval {stopped_reason}"})
