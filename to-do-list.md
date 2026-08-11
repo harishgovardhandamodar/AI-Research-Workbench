@@ -264,3 +264,33 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
   already benchmarked, reusing their best result; `run_eval` returns per-model
   results including `skipped`. `a32f17d`
 - [x] Full suite after the 10 rounds: **758 passed**.
+
+## Phase 11 — ten more improvement rounds (each committed)
+
+- [x] **R11 — Kernel env-cache invalidation on restart** (`kernels/manager.py`):
+  the cached environment snapshot is dropped when a kernel subprocess
+  auto-restarts. `13f0bce`
+- [x] **R12 — Sweep config pollution cleanup** (`agents/tools.py`): the
+  pre-sweep `config` kernel variable is captured and restored after sequential
+  sweep points. `4c98a20`
+- [x] **R13 — Context-window guard** (`project_runtime.py`):
+  `build_llm_messages` caps the assembled payload (240k chars) and drops the
+  oldest tool outputs first. `768f3b0`
+- [x] **R14 — Durable eval resume** (`eval.py`, `main.py`): `eval_latest`
+  record + `retry_stage` fallback when the workflow snapshot is clobbered.
+  `1428576`
+- [x] **R15 — Stored tool-output cap** (`agents/coordinator.py`): persisted tool
+  messages are capped at 50k chars (DB hygiene); the in-turn result stays full.
+  `bdbc143`
+- [x] **R16 — Run provenance in detail** (`routers/runs.py`): `GET /runs/{rid}`
+  returns the run's transcript artifact + plan record. `9eacd1d`
+- [x] **R17 — MCP health in /health** (`routers/system.py`): per-server
+  healthy/failures for already-loaded connections (no re-probing). `35a26de`
+- [x] **R18 — Bounded shell output** (`agents/tools.py`): `run_shell` streams
+  stdout with a 100k cap and kills runaway processes (no OOM). `caa8e05`
+- [x] **R19 — Experiment DELETE + cascade** (`store.py`, `routers/runs.py`):
+  deletes the experiment, runs, suggestions, learnings, scoped goals, plan steps
+  and clears focus. `5ca1c85`
+- [x] **R20 — Enriched run audit** (`routers/runs.py`): `GET /runs/{rid}/audit`
+  includes plan_id, error and status. `237a8c0`
+- [x] Full suite after these 10 rounds: **760 passed**.
