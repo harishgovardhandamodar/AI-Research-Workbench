@@ -34,6 +34,38 @@ def _sync_plan(rt, plan: dict) -> None:
         pass
 
 
+async def _audit_plan(rt, kind: str, plan: dict, run_id: int | None = None,
+                      metrics: dict | None = None, error: str | None = None,
+                      cancelled: bool = False) -> None:
+    """Emit a plan-lifecycle audit event (plan_started / plan_completed /
+    plan_failed / plan_cancelled) linked to the plan's run_id, so deterministic
+    plan executions are visible in the audit trail."""
+    try:
+        if rt.audit_emitter is None:
+            return
+        from ..audit import emit_session_event
+        rid = str(run_id) if run_id else None
+        payload = {
+            "event": kind,
+            "plan_id": plan.get("id"),
+            "experiment_id": plan.get("experiment_id"),
+            "dataset": plan.get("dataset"),
+            "seed": plan.get("seed"),
+            "steps": len(plan.get("steps") or []),
+        }
+        if metrics:
+            payload["metrics"] = metrics
+        if error:
+            payload["error"] = str(error)[:2000]
+        await emit_session_event(
+            rt.audit_emitter, agent_id="Fox", session_id=rt.name,
+            trace_id=None, run_id=rid, kind=kind, tool_name=None,
+            payload=payload,
+            severity="critical" if kind == "plan_failed" else "info")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def create_or_get_experiment(rt, plan: dict, goal_metric: str = "") -> int | None:
     """Create (or find) the Experiments-tab experiment for a plan. Uses a
     meaningful goal metric when available (falls back to the registry hint) and
@@ -154,6 +186,7 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         model=None, dataset=plan.get("dataset"),
         experiment_id=experiment_id,
         plan_id=plan["id"])
+    await _audit_plan(rt, "plan_started", plan, run_id=run_id)
 
     done = await asyncio.to_thread(
         execute_plan, plan, df, rt.dir, progress or _prog)
@@ -165,6 +198,8 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         rt.store.update_run(run_id, status="cancelled",
                             reply="cancelled by user",
                             finished_at=time.time())
+        await _audit_plan(rt, "plan_cancelled", plan, run_id=run_id,
+                          cancelled=True)
         if emit:
             try:
                 await emit("workflow", {
@@ -180,6 +215,8 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         rt.store.update_run(run_id, status="error",
                             reply=(done.get("error") or "experiment failed")[:3000],
                             finished_at=time.time())
+        await _audit_plan(rt, "plan_failed", plan, run_id=run_id,
+                          error=done.get("error") or "experiment failed")
         if emit:
             try:
                 await emit("workflow", {
@@ -230,6 +267,8 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         metrics=done.get("metrics") or {},
         artifact_ids=artifact_ids,
         finished_at=time.time())
+    await _audit_plan(rt, "plan_completed", plan, run_id=run_id,
+                      metrics=done.get("metrics") or {})
 
     if emit:
         # Final workflow status so the chat run-log bubble closes out.

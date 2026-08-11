@@ -2489,6 +2489,28 @@ async def ws_chat(ws: WebSocket, name: str):
                             await emit("status", {"message": ""})
                             await emit("done", {})
                             return
+                    elif str(stage).startswith("iter"):
+                        # The workflow snapshot was clobbered (e.g. by a
+                        # concurrent campaign) — fall back to the durable
+                        # improve-loop resume state.
+                        try:
+                            saved = json.loads(
+                                rt.store.get_setting("improve_latest", "{}") or "{}")
+                        except json.JSONDecodeError:
+                            saved = {}
+                        n = str(stage).replace("iter", "")
+                        eid = saved.get("experiment_id") if saved.get("kind") == "improve" else None
+                        if str(n).isdigit() and eid is not None:
+                            result = await run_improve_loop(
+                                rt.store, coordinator, rt.build_llm_messages,
+                                lambda extra="": Reviewer(rt.llm, rt.store).review(extra),
+                                int(eid), saved.get("prompt") or text, emit=emit,
+                                workflow=rt.workflow,
+                                iterations=int(saved.get("iterations") or 3),
+                                start_at=int(n))
+                            await emit("status", {"message": ""})
+                            await emit("done", {})
+                            return
                     if inv.get("kind") == "campaign" and str(stage).startswith("step"):
                         from .campaign import run_campaign
                         n = str(stage).replace("step", "")

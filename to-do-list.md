@@ -180,3 +180,20 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
 - [x] **Phase 6 regression tests.** `tests/test_lifecycle_round2.py` now 34
   tests (+ status endpoint, durable resume, sweep cap). Full suite: **740
   passed**. Docker image rebuilt; `/status` verified live.
+
+## Phase 7 (in progress)
+
+- [x] **Item 16 — Plan executions are audited.** `present_result` now emits
+  `plan_started` / `plan_completed` / `plan_failed` / `plan_cancelled` audit
+  events linked to the plan run's `run_id` (with dataset/seed/steps/metrics/
+  error), so deterministic plan executions are visible in the audit trail
+  (previously zero audit coverage). `routers/experiment_planner.py`.
+- [x] **Item 17 — Durable improve-loop resume.** `run_improve_loop` persists a
+  durable `improve_latest` resume record (kind/experiment_id/iterations/prompt)
+  to settings; `retry_stage` falls back to it when a concurrent campaign/chat
+  turn clobbered the volatile workflow snapshot. `experiment_loop.py`, `main.py`.
+- [x] **Item 18 — Compaction concurrency guard.** `maybe_compact` is guarded by
+  an in-flight flag so two interleaved compactions (it awaits the LLM mid-body)
+  can't double-fold overlapping ranges. `project_runtime.py`.
+- [x] **Phase 7 regression tests.** Plan audit lifecycle events, improve-loop
+  resume persistence, and the compaction guard. Full suite: **743 passed**.

@@ -13,6 +13,7 @@ reviewer), but takes its dependencies explicitly so the loop is unit-testable.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Awaitable, Callable
@@ -342,6 +343,19 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                                      "experiment_id": experiment_id})
     if workflow is not None:
         await workflow.finish()
+    # Durable resume state: persists the improve loop's identity so retry_stage
+    # can resume it even if a concurrent campaign/chat turn clobbered the
+    # volatile workflow snapshot.
+    try:
+        store.set_setting("improve_latest", json.dumps({
+            "kind": "improve",
+            "experiment_id": experiment_id,
+            "iterations": iterations,
+            "prompt": (current_prompt or "").strip()[:4000],
+            "updated_at": time.time(),
+        }))
+    except Exception:  # noqa: BLE001
+        pass
     return {"summary": summary, "iterations": history,
             "goal_reached": goal_reached, "best": best_val,
             "stopped_reason": stopped_reason}

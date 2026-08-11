@@ -724,6 +724,53 @@ class TestCompactionAudit(unittest.IsolatedAsyncioTestCase):
         # The summary + cutoff were actually persisted.
         self.assertTrue(self.rt.store.get_setting("context_summary", ""))
 
+    async def test_compact_guard_prevents_concurrent(self):
+        """Item 18: an in-flight compaction short-circuits a second call."""
+        for i in range(10):
+            self.rt.store.add_message("user" if i % 2 == 0 else "assistant",
+                                      f"message {i}")
+        self.rt._compacting = True  # simulate a compaction already in flight
+        await self.rt.maybe_compact()
+        # The guard returned before writing anything.
+        self.assertEqual(self.rt.store.get_setting("context_summary", ""), "")
+        self.assertEqual(self.rt.store.get_setting("context_cutoff", "0"), "0")
+        self.rt._compacting = False
+
+
+class TestPlanAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Item 16: plan executions are visible in the audit trail."""
+
+    async def test_audit_plan_emits_lifecycle_events(self):
+        from backend.audit import make_audit
+        from backend.routers.experiment_planner import _audit_plan
+        tmp = Path(tempfile.mkdtemp())
+        audit_store, emitter = make_audit(tmp)
+        emitter.start()
+        rt = SimpleNamespace(name="paudit", audit_emitter=emitter)
+        plan = {"id": "p1", "experiment_id": "peer", "dataset": "upi.csv",
+                "seed": 1, "steps": ["a", "b"]}
+        await _audit_plan(rt, "plan_started", plan, run_id=42)
+        await _audit_plan(rt, "plan_completed", plan, run_id=42,
+                          metrics={"acc": 0.5})
+        await _audit_plan(rt, "plan_failed", plan, run_id=43,
+                          error="boom")
+        await emitter.flush()
+        await emitter.stop()
+        evs = audit_store.query()
+        methods = {e["method"] for e in evs}
+        self.assertIn("plan_started", methods)
+        self.assertIn("plan_completed", methods)
+        self.assertIn("plan_failed", methods)
+        started = next(e for e in evs if e["method"] == "plan_started")
+        self.assertEqual(started["run_id"], "42")
+        self.assertEqual((started["result_summary"] or {}).get("plan_id"), "p1")
+        done = next(e for e in evs if e["method"] == "plan_completed")
+        self.assertEqual((done["result_summary"] or {}).get("metrics"),
+                         {"acc": 0.5})
+        failed = next(e for e in evs if e["method"] == "plan_failed")
+        self.assertEqual(failed["severity"], "critical")
+        self.assertIn("boom", (failed["result_summary"] or {}).get("error", ""))
+
 
 class TestCampaignKernelIsolation(unittest.IsolatedAsyncioTestCase):
     """Item 12: background campaigns run on their own kernel, not the chat

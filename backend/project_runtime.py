@@ -38,6 +38,7 @@ class ProjectRuntime:
         self.notebooks = NotebookService(self.dir, self.kernels.python)
         self.permissions = PermissionManager(self.store)
         self.lock = asyncio.Lock()
+        self._compacting = False
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         self.max_iters = CONFIG["agent"].get("max_iters", 20)
@@ -745,6 +746,15 @@ class ProjectRuntime:
         The summary + the message-id cutoff are stored in settings, so the
         compaction survives restarts and is only performed once per block.
         """
+        if self._compacting:
+            return  # another compaction is in flight (it awaits the LLM)
+        self._compacting = True
+        try:
+            await self._maybe_compact()
+        finally:
+            self._compacting = False
+
+    async def _maybe_compact(self):
         rows = self.store.list_messages()
         cutoff = int(self.store.get_setting("context_cutoff", "0") or 0)
         fresh = [r for r in rows if r["id"] > cutoff]

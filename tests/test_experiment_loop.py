@@ -3,6 +3,7 @@ and the pure best_metric helper."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -137,6 +138,20 @@ class TestImproveLoop(unittest.IsolatedAsyncioTestCase):
                              "tool_call_id": meta.get("tool_call_id", ""),
                              "content": m["content"]})
         return msgs
+
+    async def test_improve_latest_persisted(self):
+        """Item 17: the durable improve-loop resume state is persisted."""
+        eid = self.store.create_experiment("sweep", "h", "accuracy", 0.9, True)
+        reviewer = ScriptedReviewer([{"findings": [], "suggestions": []}])
+        coordinator = self._coordinator(FakeLLM())
+        await run_improve_loop(
+            self.store, coordinator, self._build_llm_messages, reviewer,
+            eid, "Improve it.", emit=self._emit, iterations=3)
+        saved = json.loads(self.store.get_setting("improve_latest", "{}") or "{}")
+        self.assertEqual(saved["kind"], "improve")
+        self.assertEqual(saved["experiment_id"], eid)
+        self.assertEqual(saved["iterations"], 3)
+        self.assertTrue(saved["prompt"])
 
     async def test_best_metric_helper(self):
         runs = [
