@@ -212,6 +212,93 @@ def _is_chart_request(text: str) -> bool:
                           low))
 
 
+# Deterministic experiment aliases: common phrasings → planner experiment id.
+_EXPERIMENT_ALIASES = {
+    "reid_risk": ["reidentif", "re-identif", "k-anonymity", "quasi-identifier",
+                  "quasi identifier", "deanonym", "de-anonym", "uniqueness",
+                  "identifiability", "linkage attack", "population reidentification"],
+    "pii_scan": ["pii", "privacy scan", "identifier scan", "personally identifiable"],
+    "dp_privacy": ["differential privacy", "differential-privacy", "dp privacy",
+                   "laplace mechanism", "privacy-utility", "epsilon"],
+    "anomaly": ["outlier", "anomaly", "anomalies"],
+    "clean": ["cleaning", "clean the data", "dedupe", "missing values"],
+    "correlation": ["correlation"],
+    "eda": ["eda", "dataset overview", "profile the data"],
+    "peer": ["peer", "market share", "market-share", "which bank", "sender_bank",
+             "identif.*bank"],
+}
+
+
+def _experiment_from_text(text: str) -> str | None:
+    """Resolve a planner experiment id from free text via aliases (or None)."""
+    low = (text or "").lower()
+    for eid, aliases in _EXPERIMENT_ALIASES.items():
+        for a in aliases:
+            if a in low:
+                return eid
+    return None
+
+
+def _is_privacy_experiment_request(text: str) -> bool:
+    """Detect re-identification / privacy-exploit requests so they run through
+    the deterministic planner (e.g. reid_risk, pii_scan, dp_privacy) instead of
+    the tool-light LLM loop that tends to describe work without doing it."""
+    low = (text or "").lower()
+    if not any(w in low for w in ("privacy", "identif", "anonym", "pii",
+                                  "exploit", "k-anonymity", "quasi")):
+        return False
+    if _experiment_from_text(text):
+        return True
+    return ("bank" in low or "financial" in low) and "privacy" in low
+
+
+# ------------------------------------------------------------ loop guard -----
+# Local models sometimes "loop": instead of finishing, they keep producing a
+# near-identical reply (often re-planning) turn after turn. We detect that and
+# break the loop with clear guidance rather than burning more turns.
+
+def _text_similarity(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _recent_assistant_messages(rt, n: int = 3) -> list[tuple[str, float]]:
+    """Most recent non-empty assistant message (content, created_at)."""
+    rows = rt.store.list_messages(limit=120)
+    out = []
+    for r in reversed(rows):
+        if r.get("role") == "assistant" and (r.get("content") or "").strip():
+            out.append((r.get("content"), r.get("created_at") or 0))
+        if len(out) >= n:
+            break
+    return out
+
+
+def _agent_looping(rt) -> bool:
+    """True when the last two assistant replies are near-duplicates (the model
+    is re-planning / repeating instead of making progress)."""
+    msgs = _recent_assistant_messages(rt, 3)
+    for i in range(1, len(msgs)):
+        a, _ = msgs[i - 1]
+        b, _ = msgs[i]
+        if _text_similarity(a, b) >= 0.85:
+            return True
+    return False
+
+
+def _is_continue_request(text: str) -> bool:
+    """The one-click Continue button (and equivalents) sends a message that
+    means "pick up where the last turn stopped"."""
+    low = (text or "").lower()
+    return any(p in low for p in (
+        "continue from where you left off", "keep going", "go on",
+        "don't stop early", "finish the task", "pick up where"))
+
+
 def _is_peer_experiment_request(text: str) -> bool:
     """Detect a peer-identification / market-share experiment request so it runs
     deterministically instead of through the (often tool-less) LLM loop."""
@@ -1701,6 +1788,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     elif _is_chart_request(text):
                         intent = "chart"
                         user_tags = ["chart"]
+                    elif _is_privacy_experiment_request(text):
+                        intent = "experiment_plan"
+                        user_tags = ["experiment", "plan", "privacy"]
                 if intent == "rerun_run":
                     # Revert-to-this-run: derive from the requested run and
                     # re-issue its prompt (if no explicit text was provided).
@@ -1926,7 +2016,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     request = text or msg_extra.get("request") or ""
 
                     # If no explicit experiment id, try to match one from the
-                    # request text (e.g. "peer", "eda").
+                    # request text (e.g. "peer", "eda"), then by aliases
+                    # (e.g. "reidentification" -> reid_risk).
                     if not experiment_id:
                         low = request.lower()
                         avail = list_experiments()
@@ -1934,6 +2025,8 @@ async def ws_chat(ws: WebSocket, name: str):
                             if e["id"] in low or e["name"].lower() in low:
                                 experiment_id = e["id"]
                                 break
+                    if not experiment_id:
+                        experiment_id = _experiment_from_text(request)
                     if not experiment_id:
                         # Default to the peer experiment when it's about banks.
                         if any(w in low for w in ("bank", "peer", "upi")):
@@ -2182,8 +2275,35 @@ async def ws_chat(ws: WebSocket, name: str):
                         await emit("done", {})
                         return
                 await emit("status", {"message": "Agent is thinking…"})
+                # Loop guard: a Continue click after the model has produced the
+                # same near-identical reply twice means it's re-planning instead
+                # of finishing — break the loop instead of burning another turn.
+                if _is_continue_request(text) and _agent_looping(rt):
+                    await emit("notice", {"message": (
+                        "⚠️ The agent has repeated the same reply without making "
+                        "progress — this looks like a loop, so I stopped instead "
+                        "of running another turn. Try one of these:\n\n"
+                        "1. Ask for **one concrete step** and name the exact "
+                        "output, e.g. \"run the regeneration attack on "
+                        "transaction_type and show the result now\".\n"
+                        "2. Run it **deterministically**: `@eda <file>`, "
+                        "`@mcp <server>__<tool>`, `/chart`, or the Experiments "
+                        "→ Plans planner (propose → confirm → execute).\n"
+                        "3. **/session** to start fresh so the model isn't "
+                        "drowning in old tool output.")})
+                    await emit("done", {})
+                    return
                 await rt.maybe_compact()
                 llm_msgs = rt.build_llm_messages()
+                if _is_continue_request(text):
+                    # Help the model actually continue: it has the full tool
+                    # history, so tell it not to re-plan or repeat.
+                    llm_msgs.insert(0, {"role": "system", "content": (
+                        "The user asked you to continue from where you stopped. "
+                        "You already have the full tool history in this "
+                        "conversation. Do NOT re-plan, re-describe, or repeat "
+                        "earlier steps. Execute the immediate next concrete step "
+                        "with a real tool call, then finish with the result.")})
                 # Branching lineage: a turn that applies a reviewer suggestion
                 # ("Apply & rerun") derives from the run it improves; anything
                 # after a "fresh rerun"/autoresearch rerun derives from the last

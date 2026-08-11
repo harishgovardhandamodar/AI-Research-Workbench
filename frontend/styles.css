@@ -1448,13 +1448,19 @@ button.exp-improve:disabled { opacity: .5; cursor: not-allowed; }
 .audit-q { flex: 1 1 200px; max-width: 360px; }
 .audit-count { font-size: 11px; }
 
-.audit-strip { width: 100%; max-height: 74px; margin: 4px 0 10px; }
+.audit-strip { width: 100%; display: block; margin: 2px 0 4px; }
+.audit-strip-cap { font-size: 11px; color: var(--text-dim); margin: 6px 0 0; }
 
 /* ---------- audit charts (radar + distributions) + flag lists ---------- */
 .audit-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 8px 0 4px; }
 .audit-chart-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .audit-chart-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); margin-bottom: 6px; }
-.audit-radar { width: 100%; max-width: 260px; display: block; margin: 0 auto; }
+.audit-radar { width: 100%; max-width: 300px; display: block; margin: 0 auto; }
+.audit-radar-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: center; margin-top: 8px; }
+.audit-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); }
+.audit-legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.audit-legend-label { white-space: nowrap; }
+.audit-legend-val { font-weight: 700; color: var(--text); min-width: 18px; text-align: right; }
 .audit-chart-note { font-size: 10px; text-align: center; }
 .audit-dist { display: flex; flex-direction: column; gap: 5px; }
 .audit-dist-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }

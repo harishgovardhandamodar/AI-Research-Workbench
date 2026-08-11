@@ -8519,7 +8519,7 @@ function buildAuditCharts(summary, events) {
 
 function buildAuditRadarSvg(summary, axes) {
   const N = axes.length;
-  const W = 240, H = 240, cx = W / 2, cy = H / 2, R = 88;
+  const W = 320, H = 320, cx = W / 2, cy = 148, R = 96;
   const maxVal = Math.max(1, ...axes.map((a) => Number(summary[a.k]) || 0));
   const pt = (i, r) => {
     const ang = -Math.PI / 2 + (2 * Math.PI * i) / N;
@@ -8531,29 +8531,36 @@ function buildAuditRadarSvg(summary, axes) {
     grid += `<polygon points="${axes.map((_, i) => pt(i, R * f).join(",")).join(" ")}" fill="none" stroke="var(--border)" stroke-width="1"/>`;
   });
   axes.forEach((a, i) => {
-    const [x, y] = pt(i, R + 14);
+    const [x, y] = pt(i, R + 18);
     const [x0, y0] = pt(i, R + 4);
     grid += `<line x1="${cx}" y1="${cy}" x2="${x0}" y2="${y0}" stroke="var(--border)" stroke-width="1"/>`;
-    grid += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-size="9" fill="var(--text-dim)">${esc(a.label)}</text>`;
-  });
-  const dataPts = axes.map((a) => {
-    const v = (Number(summary[a.k]) || 0) / maxVal;
-    return pt(axes.indexOf(a), Math.max(4, v * R)).join(",");
+    grid += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-size="9.5" font-weight="600" fill="${a.color}">${esc(a.label)}</text>`;
   });
   const fillPts = axes.map((a, i) => {
     const v = (Number(summary[a.k]) || 0) / maxVal;
-    return pt(i, Math.max(4, v * R)).join(",");
+    return pt(i, Math.max(3, v * R)).join(",");
   });
-  const poly = `<polygon points="${fillPts.join(" ")}" fill="rgba(79,140,255,.22)" stroke="#4f8cff" stroke-width="1.5"/>`;
+  const poly = `<polygon points="${fillPts.join(" ")}" fill="rgba(79,140,255,.20)" stroke="#4f8cff" stroke-width="1.5"/>`;
+  // Dots + their value labels (hidden when the axis is zero).
   const dots = axes.map((a, i) => {
-    const v = (Number(summary[a.k]) || 0) / maxVal;
-    const [x, y] = pt(i, Math.max(4, v * R));
-    return `<circle cx="${x}" cy="${y}" r="3" fill="${a.color}"><title>${a.label}: ${summary[a.k] || 0}</title></circle>`;
+    const v = Number(summary[a.k]) || 0;
+    const [x, y] = pt(i, Math.max(3, (v / maxVal) * R));
+    const valLabel = v > 0
+      ? `<text x="${x}" y="${y - 9}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${a.color}" stroke="var(--bg-2)" stroke-width="2.5" paint-order="stroke">${v}</text>`
+      : "";
+    return `<circle cx="${x}" cy="${y}" r="3.5" fill="${a.color}"><title>${a.label}: ${v} of ${maxVal}</title></circle>${valLabel}`;
   }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" class="audit-radar" role="img" aria-label="Audit profile radar">
+  // Legend: color swatch + name + count — clear labels even when the polygon
+  // collapses because most axes are near zero.
+  const legend = `<div class="audit-radar-legend">${axes.map((a) => {
+    const v = Number(summary[a.k]) || 0;
+    return `<span class="audit-legend-item"><span class="audit-legend-swatch" style="background:${a.color}"></span>
+      <span class="audit-legend-label">${esc(a.label)}</span>
+      <span class="audit-legend-val">${v}</span></span>`;
+  }).join("")}</div>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="audit-radar" role="img" aria-label="Audit profile radar — per-axis event counts">
     ${grid}${poly}${dots}
-    <text x="${cx}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--text-dim)">max ${maxVal} · ${N} axes</text>
-  </svg>`;
+  </svg>${legend}`;
 }
 
 // Lists of notable entries: critical, deviations, network.
@@ -8599,6 +8606,7 @@ function buildAuditTimeline(events) {
   // Distribution strip: event count per bucket (hour when range >= 1 day).
   const range = Number($("audit-range").value || 86400);
   const bucket = range >= 604800 ? 86400 : range >= 86400 ? 3600 : 60;
+  const bucketLabel = bucket >= 86400 ? "day" : bucket >= 3600 ? "hour" : "minute";
   const buckets = {};
   let t0 = Infinity, t1 = -Infinity;
   events.forEach((e) => {
@@ -8609,15 +8617,31 @@ function buildAuditTimeline(events) {
   });
   const keys = Object.keys(buckets).map(Number).sort((a, b) => a - b);
   const maxB = Math.max(1, ...Object.values(buckets));
-  const W = 1200, H = 74, bw = keys.length ? (W - 20) / keys.length : 20;
-  let strip = `<svg viewBox="0 0 ${W} ${H}" class="audit-strip">`;
+  const W = 1200, H = 118, plotTop = 8, plotH = 76, bw = keys.length ? (W - 30) / keys.length : 20;
+  const fmtTs = (sec) => {
+    const d = new Date(sec * 1000);
+    if (bucket >= 86400) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  };
+  const tickEvery = Math.max(1, Math.ceil(keys.length / 12));
+  let strip = `<svg viewBox="0 0 ${W} ${H}" class="audit-strip" role="img" aria-label="Audit event frequency per ${bucketLabel}">
+    <line x1="20" y1="${plotTop + 2}" x2="${W - 12}" y2="${plotTop + 2}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity=".6"/>
+    <text x="${W - 14}" y="${plotTop + 8}" text-anchor="end" font-size="9" fill="var(--text-dim)">max ${maxB}</text>`;
   keys.forEach((k, i) => {
-    const bh = Math.max(3, (buckets[k] / maxB) * (H - 26));
-    strip += `<rect x="${10 + i * bw}" y="${H - 12 - bh}" width="${Math.max(2, bw - 2)}" height="${bh}" fill="#a974ff" opacity="${0.35 + 0.65 * (buckets[k] / maxB)}" rx="1.5"><title>${buckets[k]} event(s) at ${new Date(k * 1000).toLocaleString()}</title></rect>`;
+    const bh = Math.max(3, (buckets[k] / maxB) * plotH);
+    const x = 14 + i * bw;
+    const y = plotTop + plotH - bh;
+    strip += `<rect x="${x}" y="${y}" width="${Math.max(2, bw - 3)}" height="${bh}" fill="#a974ff" opacity="${0.35 + 0.65 * (buckets[k] / maxB)}" rx="1.5"><title>${buckets[k]} event(s) at ${new Date(k * 1000).toLocaleString()}</title></rect>`;
+    if (keys.length <= 30) {
+      strip += `<text x="${x + Math.max(2, bw - 3) / 2}" y="${y - 3}" text-anchor="middle" font-size="8.5" fill="var(--text-dim)">${buckets[k]}</text>`;
+    }
+    if (i % tickEvery === 0 || i === keys.length - 1) {
+      strip += `<text x="${x + Math.max(2, bw - 3) / 2}" y="${plotTop + plotH + 16}" text-anchor="middle" font-size="9" fill="var(--text-dim)">${fmtTs(k)}</text>`;
+    }
   });
   strip += `</svg>`;
 
-  let h = strip + '<div class="audit-tl">';
+  let h = `<div class="audit-strip-cap muted">📈 ${events.length} events · per ${bucketLabel}</div>` + strip + '<div class="audit-tl">';
   let lastDay = "";
   events.forEach((e) => {
     const dt = new Date(e.timestamp);
