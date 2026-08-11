@@ -251,6 +251,14 @@ class ProjectDeviationScanner:
         records = self.detector.run(self.store, agent_id=agent_id,
                                     limit=500, since=since)
         self._last_scan[key] = now
+        if records:
+            try:
+                import logging
+                logging.getLogger("fox.audit").warning(
+                    "deviation scan found %d new deviation(s) (agent=%r)",
+                    len(records), agent_id or "*")
+            except Exception:  # noqa: BLE001
+                pass
         return len(records)
 
 
