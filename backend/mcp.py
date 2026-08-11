@@ -187,6 +187,12 @@ class MCPConnection:
         self._session = None
         self._tools: list | None = None
         self.error: str | None = None
+        # Circuit breaker: consecutive failures without a success mark the server
+        # unhealthy so callers get a fast, clear error instead of hammering a
+        # wedged subprocess.
+        self._consecutive_failures = 0
+        self.max_failures = 3
+        self._healthy: bool | None = True
 
     async def _connect(self):
         if self._session is not None:
@@ -258,17 +264,32 @@ class MCPConnection:
         is a list of (mime_type, bytes) captured from image/resource blocks —
         so chart servers (e.g. Flint) can hand PNGs back to the host."""
         import base64
+        import logging
+        _log = logging.getLogger("fox.mcp")
         await self._connect()
         try:
             res = await asyncio.wait_for(
                 self._session.call_tool(name, arguments=arguments or {}),
                 timeout=120.0)
+            self._consecutive_failures = 0
+            self._healthy = True
         except asyncio.TimeoutError:
             # Kill the connection so a wedged server process can't block the
             # agent indefinitely; it will reconnect on the next call.
+            self._fail("timeout after 120s")
             await self.close()
+            _log.warning("MCP server %r tool %r timed out; reconnecting next call",
+                         self.name, name)
             return ("[error] MCP tool call timed out after 120s (server "
                     "connection reset)"), True, []
+        except Exception as e:  # noqa: BLE001
+            # Any failure closes the stale connection so the next call
+            # reconnects cleanly instead of reusing a dead subprocess.
+            self._fail(f"{type(e).__name__}: {e}")
+            await self.close()
+            _log.warning("MCP server %r tool %r failed (%s); reconnecting next call",
+                         self.name, name, type(e).__name__)
+            return (f"[error] MCP tool call failed: {type(e).__name__}: {e}"), True, []
         parts = []
         images: list = []
         for block in getattr(res, "content", []) or []:
@@ -308,6 +329,21 @@ class MCPConnection:
                     else:
                         parts.append(f"[resource {uri}]")
         return "\n".join(p for p in parts if p), bool(getattr(res, "isError", False)), images
+
+    def _fail(self, reason: str) -> None:
+        """Record a call failure; trip the circuit breaker after too many."""
+        self._consecutive_failures += 1
+        self.error = reason
+        if self._consecutive_failures >= self.max_failures:
+            self._healthy = False
+
+    def healthy(self) -> bool | None:
+        """None = unknown/never called, True = last call succeeded, False =
+        circuit breaker tripped (too many consecutive failures)."""
+        return self._healthy
+
+    def failures(self) -> int:
+        return self._consecutive_failures
 
     async def close(self):
         if self._session is not None:
@@ -441,6 +477,8 @@ class MCPRegistry:
             try:
                 tools = await asyncio.wait_for(conn.list_tools(), timeout=12.0)
                 item["ok"] = True
+                item["healthy"] = getattr(conn, "healthy", lambda: None)()
+                item["failures"] = getattr(conn, "failures", lambda: 0)()
                 item["tools"] = [t.name for t in tools]
                 item["tool_catalog"] = [
                     {"name": t.name,
