@@ -87,6 +87,69 @@ class TestPrivacySuiteRun(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(a.kind == "report"
                             for a in self.rt.artifacts.list()))
 
+    async def test_handler_proposes_then_runs_after_approval(self):
+        from backend import main as mainmod
+        events = []
+
+        async def emit(etype, payload):
+            events.append((etype, payload))
+
+        async def approve_later():
+            import asyncio
+            for _ in range(60):
+                prop = next((p for t, p in events
+                             if t == "experiment_plan_proposal"), None)
+                if prop:
+                    break
+                await asyncio.sleep(0.05)
+            if prop:
+                rt._plan_approvals.get(prop["plan_id"]).set_result(True)
+
+        import asyncio
+        rt = self.rt
+        asyncio.get_running_loop().create_task(approve_later())
+        await mainmod._handle_privacy_suite(
+            rt, emit, "run all privacy exploits on the generated dataset")
+
+        props = [p for t, p in events if t == "experiment_plan_proposal"]
+        self.assertTrue(props)
+        self.assertIn("privacy", props[0]["name"].lower())
+        # wait for the background suite run to finish
+        for _ in range(200):
+            if any("Privacy exploit suite — report" in p.get("content", "")
+                   for t, p in events if t == "assistant_message"):
+                break
+            await asyncio.sleep(0.1)
+        self.assertTrue(any("report" in p.get("content", "").lower()
+                            for t, p in events if t == "assistant_message"))
+
+    async def test_handler_rejects_without_running(self):
+        from backend import main as mainmod
+        events = []
+
+        async def emit(etype, payload):
+            events.append((etype, payload))
+
+        async def reject_later():
+            import asyncio
+            for _ in range(60):
+                prop = next((p for t, p in events
+                             if t == "experiment_plan_proposal"), None)
+                if prop:
+                    break
+                await asyncio.sleep(0.05)
+            if prop:
+                rt._plan_approvals.get(prop["plan_id"]).set_result(False)
+
+        import asyncio
+        rt = self.rt
+        asyncio.get_running_loop().create_task(reject_later())
+        await mainmod._handle_privacy_suite(rt, emit, "run all privacy exploits")
+        self.assertTrue(any("rejected" in p.get("message", "").lower()
+                            for t, p in events if t == "notice"))
+        self.assertFalse(any("suite — report" in p.get("content", "")
+                             for t, p in events if t == "assistant_message"))
+
 
 if __name__ == "__main__":
     unittest.main()

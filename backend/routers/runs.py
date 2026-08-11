@@ -757,23 +757,15 @@ def _schedule_experiment_report(rt, eid: int) -> None:
 
 
 async def _flint_chart_artifact(rt, spec: dict, name: str) -> str | None:
-    """Render a Flint chart spec via the flint MCP server and register it as a
-    figure artifact. Returns the artifact id, or None when flint is unavailable."""
+    """Render a chart spec via the flint MCP server (matplotlib fallback) and
+    register it as a figure artifact. Returns the artifact id, or None when
+    both renderers are unavailable."""
     try:
         from ..state import mcp_registry
-        from ..flint_charts import chart_png
-        png = await chart_png(mcp_registry, spec)
+        from ..flint_charts import render_chart_artifact
+        return await render_chart_artifact(rt, mcp_registry, spec, name)
     except Exception:  # noqa: BLE001
         return None
-    if not png:
-        return None
-    art = Artifact(kind="figure", name=name, description="Flint chart",
-                   code="", env={}, message_id="", run_id="", data_type="png")
-    try:
-        rt.artifacts.add_artifact(art, data=png, data_type="png")
-    except Exception:  # noqa: BLE001
-        return None
-    return art.id
 
 
 async def _embed_chart(rt, report: str, spec: dict, name: str) -> str:

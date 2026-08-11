@@ -1117,18 +1117,89 @@ async def _mcp_tool_listing(limit: int = 120) -> str:
 
 async def _handle_privacy_suite(rt, emit, text: str,
                                 msg_extra: dict | None = None) -> None:
-    """Deterministic privacy exploit suite: run all privacy experiments across
-    the project's datasets (background, with a live run-log bubble) and post the
-    aggregated report + figures."""
+    """Deterministic privacy exploit suite: propose a suite plan for approval,
+    then run all privacy experiments across the dataset(s) in the background
+    (with a live run-log bubble) and post the aggregated report + figures."""
     import asyncio as _asyncio
-    from .privacy_suite import run_privacy_suite
+    from .privacy_suite import run_privacy_suite, SUITE_EXPERIMENTS
     msg_extra = msg_extra or {}
-    datasets = (msg_extra.get("datasets") or "").strip().split(",") or []
-    datasets = [d.strip() for d in datasets if d.strip()]
 
-    title = "Privacy suite"
-    await emit("status", {"message": "Running the deterministic privacy exploit "
-                                     "suite across datasets…"})
+    # Resolve the dataset(s): explicit list, a filename named in the request, or
+    # the generated synthetic dataset when asked for "the generated dataset".
+    datasets = [d.strip() for d in (msg_extra.get("datasets") or "").split(",")
+                if d.strip()]
+    low = (text or "").lower()
+    if not datasets:
+        for f in rt.dir.iterdir():
+            if (f.is_file() and f.suffix.lower() in (".csv", ".parquet", ".xlsx")
+                    and f.name.lower() in low):
+                datasets = [f.name]
+                break
+    if not datasets and ("generated" in low or "synthetic" in low):
+        cand = rt.dir / "synthetic_upi_transactions.csv"
+        if cand.exists():
+            datasets = ["synthetic_upi_transactions.csv"]
+    ds_label = ", ".join(datasets) if datasets else "all project datasets"
+
+    suite_id = f"suite-{int(time.time())}"
+    title = "Privacy exploit suite"
+    payload = {
+        "plan_id": suite_id,
+        "experiment_id": "privacy_suite",
+        "name": title,
+        "description": ("Run all privacy experiments (PII scan, re-identification, "
+                        "differential privacy, anomaly, correlation, bank peer "
+                        "identification) across the dataset(s) and prepare a "
+                        "detailed aggregate report."),
+        "request": text,
+        "dataset": ds_label,
+        "seed": 42,
+        "steps": [f"Run `{e}` on `{ds_label}`" for e in SUITE_EXPERIMENTS]
+                 + ["Aggregate the per-dataset metrics into a report"],
+        "expected_outputs": ["cross-dataset goal-metric table",
+                             "detailed markdown report",
+                             "figures saved as artifacts"],
+        "status": "WAITING_APPROVAL",
+        "created_at": time.time(),
+    }
+    # Propose for approval (same plan card + popup as single experiments).
+    await emit("experiment_plan_proposal", payload)
+    amid = rt.store.add_message(
+        "assistant",
+        "**🧪 Privacy suite proposed — confirm to execute**\n\n"
+        + _render_plan_md(payload),
+        {"tags": ["privacy", "suite", "plan", "proposal"]})
+    await emit("assistant_message", {"id": amid,
+                                     "content": "**🧪 Privacy suite proposed — confirm to execute**\n\n" + _render_plan_md(payload),
+                                     "tags": ["privacy", "suite", "plan", "proposal"],
+                                     "created_at": _msg_created_at(rt, amid)})
+    await emit("status", {"message":
+        "⏸ Awaiting your approval to run the privacy suite…"})
+    try:
+        if not hasattr(rt, "_plan_approvals"):
+            rt._plan_approvals = {}
+    except Exception:  # noqa: BLE001
+        pass
+    fut = _asyncio.get_event_loop().create_future()
+    try:
+        rt._plan_approvals[suite_id] = fut
+    except Exception:  # noqa: BLE001
+        pass
+    ok = False
+    try:
+        ok = await _asyncio.wait_for(fut, timeout=300)
+    except _asyncio.TimeoutError:
+        ok = False
+    try:
+        rt._plan_approvals.pop(suite_id, None)
+    except Exception:  # noqa: BLE001
+        pass
+    await emit("status", {"message": ""})
+    if not ok:
+        await emit("notice", {"message": "Privacy suite rejected — nothing ran."})
+        await emit("done", {})
+        return
+
     await emit("workflow", {"status": "running", "title": title,
                             "message": "starting", "pct": 0})
 

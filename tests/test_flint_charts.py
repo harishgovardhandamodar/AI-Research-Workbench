@@ -206,10 +206,21 @@ class TestChartEndpoints(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(art.data_type, "png")
         self.assertEqual(art.kind, "figure")
 
-    async def test_experiment_chart_unavailable_503(self):
+    async def test_experiment_chart_fallback_without_flint(self):
+        # No flint server -> the matplotlib fallback renders the chart (200).
         eid = self._exp()
         with mock.patch("backend.state.mcp_registry", MCPRegistry([])):
             res = await self.runsmod.experiment_chart("flproj", eid)
+        self.assertTrue(res["ok"])
+        art = self.rt.artifacts.get(res["artifact_id"])
+        self.assertEqual(art.data_type, "png")
+
+    async def test_experiment_chart_503_when_both_renderers_fail(self):
+        eid = self._exp()
+        with mock.patch("backend.state.mcp_registry", MCPRegistry([])):
+            with mock.patch("backend.flint_charts.fallback_png",
+                            return_value=None):
+                res = await self.runsmod.experiment_chart("flproj", eid)
         self.assertEqual(res.status_code, 503)
 
     async def test_run_chart(self):
@@ -226,10 +237,12 @@ class TestChartEndpoints(unittest.IsolatedAsyncioTestCase):
             res = await self.runsmod.publish_experiment_report("flproj", eid)
         self.assertIn("/artifacts/", res["report"])
 
-    async def test_report_without_chart_when_unavailable(self):
+    async def test_report_without_chart_when_both_renderers_fail(self):
         eid = self._exp()
         with mock.patch("backend.state.mcp_registry", MCPRegistry([])):
-            res = await self.runsmod.publish_experiment_report("flproj", eid)
+            with mock.patch("backend.flint_charts.fallback_png",
+                            return_value=None):
+                res = await self.runsmod.publish_experiment_report("flproj", eid)
         self.assertNotIn("/artifacts/", res["report"])
 
 

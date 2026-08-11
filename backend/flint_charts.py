@@ -243,7 +243,8 @@ def fallback_png(spec: dict) -> bytes | None:
             ax.set_ylabel(spec.get("y_label") or "y")
             ax.tick_params(axis="x", rotation=45)
         else:  # bar
-            labels = [str(r.get("category") or r.get("bin") or r.get("x", i))
+            labels = [str(r.get("category") or r.get("bin") or r.get("metric")
+                          or r.get("x", i))
                       for i, r in enumerate(data)]
             vals = [r.get("count", r.get("value") or r.get("y", 0)) for r in data]
             ax.bar(range(len(labels)), vals, color="#4f8cff")
