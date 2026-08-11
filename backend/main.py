@@ -2851,7 +2851,10 @@ async def ws_chat(ws: WebSocket, name: str):
                     except Exception:  # noqa: BLE001
                         pass
 
-    incoming: asyncio.Queue = asyncio.Queue()
+    # Bounded so a flooding client can't grow memory without bound; if the
+    # receiver is busy (a long turn), excess chat messages are dropped with a
+    # notice rather than queued forever.
+    incoming: asyncio.Queue = asyncio.Queue(maxsize=64)
 
     async def receive_loop():
         # Single reader on the socket: approvals resolve the broker directly (so
@@ -2909,7 +2912,16 @@ async def ws_chat(ws: WebSocket, name: str):
                         "exploitation · red team · DP robustness…"})
                     await emit("done", {})
                 else:
-                    await incoming.put(msg)
+                    try:
+                        incoming.put_nowait(msg)
+                    except asyncio.QueueFull:
+                        # The receiver is busy; drop rather than buffer unbounded.
+                        try:
+                            await emit("notice", {"message":
+                                "A previous turn is still running — this message "
+                                "was not queued. Wait for it to finish."})
+                        except Exception:  # noqa: BLE001
+                            pass
         except WebSocketDisconnect:
             broker.reject_all()  # resolve pending approvals so the agent can't hang
             pass
