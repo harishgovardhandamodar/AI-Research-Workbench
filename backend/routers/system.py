@@ -22,7 +22,8 @@ router = APIRouter()
 @router.get("/api/health")
 async def health():
     """Liveness + a compact view of what the server is doing right now: number
-    of loaded project runtimes, how many are busy, and running background work."""
+    of loaded project runtimes, how many are busy, running background work, and
+    MCP server health for connections already instantiated (no re-probing)."""
     from ..state import runtimes
     running = {"campaigns": 0, "evals": 0, "plans": 0, "busy_runtimes": 0}
     try:
@@ -37,7 +38,19 @@ async def health():
                 1 for t in rt._plan_tasks.values() if not t.done())
     except Exception:  # noqa: BLE001
         pass
-    return {"ok": True, "runtimes": len(runtimes), "running": running}
+    mcp = {"loaded": 0, "unhealthy": 0, "servers": []}
+    try:
+        from ..state import mcp_registry
+        for name, conn in mcp_registry._conns.items():
+            mcp["loaded"] += 1
+            healthy = getattr(conn, "healthy", lambda: None)()
+            if healthy is False:
+                mcp["unhealthy"] += 1
+            mcp["servers"].append({"name": name, "healthy": healthy,
+                                   "failures": getattr(conn, "failures", lambda: 0)()})
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "runtimes": len(runtimes), "running": running, "mcp": mcp}
 
 
 _MCP_MASK = "***REDACTED***"
