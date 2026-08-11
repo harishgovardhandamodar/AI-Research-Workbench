@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import urllib.request
 from typing import AsyncIterator, Optional
 
@@ -56,6 +57,8 @@ class LLMClient:
                                     timeout=120.0, max_retries=1)
         self._tool = AsyncOpenAI(base_url=tool_base_url, api_key=api_key,
                                  timeout=120.0, max_retries=1)
+        self._models_cache: list[dict] | None = None
+        self._models_cache_ts: float = 0.0
 
     def _pick(self, tools: Optional[list]) -> AsyncOpenAI:
         return self._tool if tools else self._gateway
@@ -84,6 +87,11 @@ class LLMClient:
         raise LLMError(f"LLM request failed: {last}") from last
 
     async def list_models(self) -> list[dict]:
+        # TTL cache: the model catalog is queried from many endpoints on page
+        # loads; re-probing the LLM server every time is wasteful.
+        now = time.monotonic()
+        if self._models_cache is not None and now - self._models_cache_ts < 60.0:
+            return list(self._models_cache)
         last = None
         for client in (self._gateway, self._tool):
             try:
@@ -110,6 +118,8 @@ class LLMClient:
                         m["quantization"] = detail["quantization_level"]
         except Exception:  # noqa: BLE001
             pass
+        self._models_cache = models
+        self._models_cache_ts = time.monotonic()
         return models
 
     def _native_tags(self) -> dict[str, dict]:
