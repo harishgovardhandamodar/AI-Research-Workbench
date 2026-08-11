@@ -907,6 +907,7 @@ def wire_tool_calls(tcs: list) -> list:
 def sanitize_messages(msgs: list[dict]) -> list[dict]:
     """Ensure OpenAI tool-call history is well-formed (tool results follow calls)."""
     clean: list[dict] = []
+    valid_call_ids: set = set()
     for i, m in enumerate(msgs):
         if m.get("role") == "assistant" and m.get("tool_calls"):
             remaining = msgs[i + 1:]
@@ -914,6 +915,13 @@ def sanitize_messages(msgs: list[dict]) -> list[dict]:
             if not any(r.get("role") == "tool" and r.get("tool_call_id") in call_ids
                        for r in remaining):
                 m = {"role": "assistant", "content": m.get("content", "")}
+            else:
+                valid_call_ids |= call_ids
+        if m.get("role") == "tool":
+            # Drop a tool result whose call was already stripped/never issued —
+            # an orphaned result would break the OpenAI tool-call pairing.
+            if m.get("tool_call_id") not in valid_call_ids:
+                continue
         clean.append(m)
     return clean
 
