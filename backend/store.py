@@ -1363,6 +1363,27 @@ class ProjectStore:
             (status, time.time(), eid))
         self._conn.commit()
 
+    def delete_experiment(self, eid: int) -> bool:
+        """Delete an experiment and cascade: its runs, suggestions, learnings,
+        scoped goals, and plan steps. The experiment's artifacts are left (they
+        may be shared) and can be swept separately."""
+        exp = self.get_experiment(eid)
+        if exp is None:
+            return False
+        run_ids = [r["id"] for r in self.experiment_runs(eid)]
+        self._conn.execute("DELETE FROM experiment_steps WHERE experiment_id=?", (eid,))
+        self._conn.execute("DELETE FROM suggestions WHERE experiment_id=?", (eid,))
+        self._conn.execute("DELETE FROM learnings WHERE experiment_id=?", (eid,))
+        self._conn.execute("DELETE FROM goals WHERE experiment_id=?", (eid,))
+        # Clear the focus if it pointed at the deleted experiment.
+        if str(self.get_setting("focus_experiment_id", "")) == str(eid):
+            self.set_setting("focus_experiment_id", "")
+        for rid in run_ids:
+            self._conn.execute("DELETE FROM runs WHERE id=?", (rid,))
+        self._conn.execute("DELETE FROM experiments WHERE id=?", (eid,))
+        self._conn.commit()
+        return True
+
     def update_experiment(self, eid: int, *, name: str | None = None,
                           hypothesis: str | None = None,
                           goal_metric: str | None = None,

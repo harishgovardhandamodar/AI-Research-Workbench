@@ -234,6 +234,16 @@ async def update_project_experiment(name: str, eid: int, body: dict):
     return {"experiment": store.get_experiment(eid)}
 
 
+@router.delete("/api/projects/{name}/experiments/{eid}")
+async def delete_project_experiment(name: str, eid: int):
+    """Delete an experiment and its cascade (runs, suggestions, learnings,
+    scoped goals, plan steps). Artifacts are kept and can be swept separately."""
+    rt = get_runtime(name)
+    if not rt.store.delete_experiment(eid):
+        raise HTTPException(status_code=404, detail="experiment not found")
+    return {"deleted": eid}
+
+
 @router.post("/api/projects/{name}/experiments/run-obfuscation")
 async def run_obfuscation_experiments(name: str, body: dict):
     """Run the bank-transaction obfuscation scenario suite and record each
