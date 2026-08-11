@@ -738,6 +738,8 @@ class Coordinator:
             if m.get("role") == "user":
                 prompt = m.get("content", "")
                 break
+        if len(prompt) > 20_000:
+            prompt = prompt[:20_000] + "\n…[prompt truncated]"
         # LLM request fidelity: persist the exact assembled messages + params as
         # a transcript artifact so the run is reproducible even after compaction
         # summarizes (not deletes) the conversation. Immune to context_cutoff.
