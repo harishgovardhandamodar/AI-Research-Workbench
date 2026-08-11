@@ -192,6 +192,14 @@ class WorkflowTracker:
             self._updated = time.time()
         await self._broadcast()
 
+    @staticmethod
+    def _cap(text: str, limit: int = 500) -> str:
+        """Truncate a workflow message so huge status strings can't blow up the
+        persisted snapshot."""
+        if text and len(text) > limit:
+            return text[:limit] + "…"
+        return text
+
     async def update_stage(self, stage_id: str, state: str,
                            detail: str | None = None, pct: float | None = None,
                            message: str | None = None) -> None:
@@ -200,18 +208,18 @@ class WorkflowTracker:
                 if s["id"] == stage_id:
                     s["state"] = state
                     if detail is not None:
-                        s["detail"] = detail
+                        s["detail"] = self._cap(detail)
                     if pct is not None:
                         s["pct"] = round(pct)
             self._recompute()
             if message is not None:
-                self._message = message
+                self._message = self._cap(message)
             self._updated = time.time()
         await self._broadcast()
 
     async def set_status(self, message: str) -> None:
         async with self._lock:
-            self._message = message
+            self._message = self._cap(message)
             self._updated = time.time()
         await self._broadcast()
 
