@@ -824,16 +824,44 @@ async def _run_shell(ctx: ToolContext, command: str, timeout: float = 30.0) -> s
         "/bin/bash", "-c", command,
         cwd=shell_cwd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
+
+    async def _read_bounded(limit: int = 100_000) -> tuple[bytes, str]:
+        """Read stdout incrementally so a command dumping gigabytes can't OOM the
+        server; the process is killed once the cap is exceeded or it times out.
+        Returns (bytes, status) with status in ok|timeout|truncated."""
+        chunks: list[bytes] = []
+        total = 0
+        assert proc.stdout is not None
+        while True:
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return b"".join(chunks), "timeout"
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= limit:
+                proc.kill()
+                return b"".join(chunks), "truncated"
+        return b"".join(chunks), "ok"
+
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
+        out, status = await _read_bounded()
+        rc = await proc.wait()
+    except Exception:  # noqa: BLE001
         proc.kill()
-        return "[error] shell command timed out"
-    text = out.decode(errors="replace")
-    if err:
-        text += ("\n[stderr]\n" + err.decode(errors="replace"))
+        return "[error] shell command failed"
+    text = out.decode(errors="replace").rstrip()
+    if status == "timeout":
+        text += "\n[error] shell command timed out"
+    elif status == "truncated":
+        text += "\n[truncated: output exceeded 100k bytes]"
+    elif rc != 0:
+        text += f"\n[exit code {rc}]"
     return text[:50_000] if text else "(no output)"
 
 
