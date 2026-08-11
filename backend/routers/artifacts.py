@@ -81,8 +81,12 @@ def _find_artifact_meta_on_disk(artifact_id: str) -> dict | None:
 
 
 @router.get("/api/projects/{name}/artifacts")
-async def list_artifacts(name: str):
-    return {"artifacts": get_runtime(name).artifacts.list()}
+async def list_artifacts(name: str, limit: int = 200, offset: int = 0):
+    """Paginated artifact list (newest-first)."""
+    rt = get_runtime(name)
+    arts = rt.artifacts.list(limit=min(max(int(limit), 1), 2000))
+    start = min(int(offset), len(arts))
+    return {"artifacts": arts[start:], "total": len(arts)}
 
 
 @router.get("/api/projects/{name}/artifacts/verify")
