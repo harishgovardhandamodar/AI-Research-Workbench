@@ -1236,6 +1236,9 @@ async def project_run_audit(name: str, rid: int):
     except Exception:  # noqa: BLE001
         pass
     return {"run_id": rid, "trace_id": str(mid) if mid is not None else None,
+            "plan_id": run.get("plan_id") or None,
+            "error": (run.get("error") or "")[:500] or None,
+            "status": run.get("status"),
             "events": [public_event(e) for e in events],
             "deviations": deviations,
             "chain_verified": bool(chain.get("verified"))}
