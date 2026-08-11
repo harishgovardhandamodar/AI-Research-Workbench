@@ -90,33 +90,11 @@ def peek_dataset(path: Path, n: int = 1):
 
 def generate_synthetic_upi(path: Path, seed: int = 42, n: int = 3000) -> Path:
     """Deterministic synthetic UPI transaction dataset, for projects with no
-    real dataset yet. Mirrors the columns the banking / privacy / re-id
-    experiments expect so every plan can run."""
-    import numpy as np
-    import pandas as pd
-    rng = np.random.default_rng(seed)
-    banks = ["HDFC", "SBI", "ICICI", "Axis", "Kotak", "Yes"]
-    segments = ["retail", "dining", "grocery", "fuel", "travel", "bills"]
-    ptypes = ["UPI", "IMPS", "NEFT"]
-    ages = ["18-25", "26-35", "36-45", "46-60", "60+"]
-    states = ["KA", "MH", "DL", "TN", "UP", "GJ"]
-    devices = ["android", "ios", "web"]
-    networks = ["jio", "airtel", "vi", "wifi"]
-    df = pd.DataFrame({
-        "sender_bank": rng.choice(banks, n),
-        "merchant_category": rng.choice(segments, n),
-        "transaction type": rng.choice(ptypes, n, p=[0.6, 0.25, 0.15]),
-        "amount (INR)": np.round(rng.lognormal(6.5, 0.8, n), 2),
-        "sender_age_group": rng.choice(ages, n),
-        "sender_state": rng.choice(states, n),
-        "device_type": rng.choice(devices, n),
-        "network_type": rng.choice(networks, n),
-        "hour_of_day": rng.integers(0, 24, n),
-    })
-    df["email"] = [f"u{i}@mail.com" for i in range(n)]
-    df["phone"] = [f"+91{i:010d}" for i in range(n)]
-    df.to_csv(path, index=False)
-    return path
+    real dataset yet. Uses the workbench's UPI generator (adapted from
+    ``upi-transactions-generator.ipynb``) so the schema matches the real
+    ``upi_transactions_2024.csv``."""
+    from .upi_generator import generate_upi_csv
+    return generate_upi_csv(path, n_records=n, seed=seed)
 
 
 def ensure_runnable_dataset(project_dir: Path, dataset: str = "") -> tuple[str, bool]:

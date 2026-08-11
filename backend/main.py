@@ -212,6 +212,62 @@ def _is_chart_request(text: str) -> bool:
                           low))
 
 
+def _is_upi_generate_request(text: str) -> bool:
+    """Detect a request to GENERATE a synthetic UPI dataset (e.g. "generate a
+    synthetic UPI transaction dataset of 100k rows") so it runs deterministically
+    via the adapted notebook generator."""
+    low = (text or "").lower()
+    if "@upi" in low:
+        return True
+    if not ("upi" in low or ("transaction" in low and "dataset" in low)):
+        return False
+    if "dataset" not in low:
+        return False
+    return any(w in low for w in ("generate", "create", "produce", "synthesi",
+                                  "make a", "new upi", "synthetic upi"))
+
+
+async def _handle_upi_generate(rt, emit, text: str,
+                               msg_extra: dict | None = None) -> None:
+    """Deterministically generate a synthetic UPI dataset into the project using
+    the adapted notebook generator, and post a summary + preview."""
+    import re as _re
+    from .upi_generator import generate_upi_csv
+    from .experiment_planner import is_dataset_file
+    low = (text or "").lower()
+    n = 50000
+    m = _re.search(r"(\d+(?:[.,]\d+)?)\s*(k|thousand)?\s*(rows|records|transactions)?",
+                   low)
+    if m:
+        num = float(m.group(1).replace(",", ""))
+        if m.group(2):
+            num *= 1000
+        n = int(min(max(num, 100), 500000))
+    name = "synthetic_upi_transactions.csv"
+    try:
+        path = generate_upi_csv(rt.dir / name, n_records=n)
+    except Exception as e:  # noqa: BLE001
+        await emit("error", {"message": f"Could not generate dataset: {e}"})
+        await emit("done", {})
+        return
+    try:
+        import pandas as pd
+        head = pd.read_csv(path, nrows=5)
+        cols = ", ".join(str(c) for c in head.columns)
+    except Exception:  # noqa: BLE001
+        cols = ""
+    content = (f"✅ Generated synthetic UPI transaction dataset — **{n:,} rows** · "
+               f"17 columns → `{name}`\n\n"
+               f"**Columns:** {cols}\n\n"
+               f"Use it with `@eda {name}`, `@chart`, `@mcp`, or ask for a plan / "
+               "privacy suite — the experiments will run on this dataset.")
+    amid = rt.store.add_message("assistant", content, {"tags": ["dataset", "synthetic", "upi"]})
+    await emit("assistant_message", {"id": amid, "content": content,
+                                     "tags": ["dataset", "synthetic", "upi"],
+                                     "created_at": _msg_created_at(rt, amid)})
+    await emit("done", {})
+
+
 # Deterministic experiment aliases: common phrasings → planner experiment id.
 _EXPERIMENT_ALIASES = {
     "reid_risk": ["reidentif", "re-identif", "k-anonymity", "quasi-identifier",
@@ -1862,6 +1918,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     user_tags = ["experiment", "plan"]
                 elif intent == "privacy_suite":
                     user_tags = ["privacy", "suite"]
+                elif intent == "upi_generate":
+                    user_tags = ["dataset", "synthetic", "upi"]
                 elif intent == "chart":
                     user_tags = ["chart"]
                 else:
@@ -1885,6 +1943,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     elif _is_chart_request(text):
                         intent = "chart"
                         user_tags = ["chart"]
+                    elif _is_upi_generate_request(text):
+                        intent = "upi_generate"
+                        user_tags = ["dataset", "synthetic", "upi"]
                     elif _is_privacy_suite_request(text):
                         intent = "privacy_suite"
                         user_tags = ["privacy", "suite"]
@@ -1906,6 +1967,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     return
                 if intent == "privacy_suite":
                     await _handle_privacy_suite(rt, emit, text, msg_extra)
+                    return
+                if intent == "upi_generate":
+                    await _handle_upi_generate(rt, emit, text, msg_extra)
                     return
                 if intent == "autoresearch":
                     from .autoresearch import run_autoresearch_loop
