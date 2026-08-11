@@ -234,3 +234,33 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
   rest of a project's audit trail. `project_runtime.py`.
 - [x] **Phase 9 regression tests.** `is_busy`/`evict` behaviour, and kernel
   audit session context. Full suite: **752 passed**.
+
+## Phase 10 — ten improvement rounds (each committed)
+
+- [x] **R1 — MCP resilience** (`backend/mcp.py`): close+reconnect on any tool-call
+  failure (not just timeout), a 3-strike circuit breaker, and per-server
+  healthy/failures in `/api/mcp` status. `d0a3b85`
+- [x] **R2 — Campaign step retry** (`backend/campaign.py`): a failed step is
+  retried up to `step_retries` (default 2) with per-attempt notices instead of
+  failing the whole campaign. `f1e8a96`
+- [x] **R3 — Cascade cleanup** (`store.py`, `artifacts/store.py`): deleting a plan
+  now drops its `experiment_plans` mirror; `sweep_orphans()` removes artifact
+  files with no DB row. `e84f861`
+- [x] **R4 — Kernel crash logging** (`python_kernel.py`): auto-restart logs the
+  exit code + stderr tail and records the reason in `last_error`. `721e328`
+- [x] **R5 — API request logging** (`main.py`): middleware logs one line per API
+  call (method, path, status, duration) with project correlation. `2769495`
+- [x] **R6 — Bounded chat queue** (`main.py`): the WS incoming queue is capped at
+  64; excess messages are dropped with a notice instead of buffering unbounded.
+  `cdbacac`
+- [x] **R7 — Enriched health** (`routers/system.py`): `/api/health` reports
+  loaded runtimes + busy count + in-flight campaigns/evals/plans. `b877303`
+- [x] **R8 — Pinned-model fallback** (`coordinator.py`, `store.py`): an
+  unavailable per-experiment model falls back to the default once; `finish_run`
+  accepts a model override so the run records the model actually used. `3b6ec43`
+- [x] **R9 — Notebook per-cell timeout** (`notebooks.py`): each cell (and the
+  prelude) runs under a configurable `cell_timeout` (default 120s). `0739452`
+- [x] **R10 — Eval retry reuse** (`eval.py`): re-running an eval skips models
+  already benchmarked, reusing their best result; `run_eval` returns per-model
+  results including `skipped`. `a32f17d`
+- [x] Full suite after the 10 rounds: **758 passed**.
