@@ -1189,5 +1189,39 @@ class TestPinnedModelFallback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runs[0]["model"], "default")
 
 
+class TestContextWindowGuard(unittest.IsolatedAsyncioTestCase):
+    """R13: build_llm_messages drops the oldest tool outputs when the payload
+    exceeds the context cap."""
+
+    async def asyncSetUp(self):
+        import backend.project_runtime as pr
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = pr.PROJECTS_DIR
+        pr.PROJECTS_DIR = self.tmp
+        self.rt = pr.ProjectRuntime("ctxguard")
+
+    async def asyncTearDown(self):
+        import backend.project_runtime as pr
+        pr.PROJECTS_DIR = self._orig
+        await self.rt.evict()
+
+    async def test_huge_tool_output_is_dropped(self):
+        big = "x" * 100_000
+        self.rt.store.add_message("user", "run it", {"tags": ["go"]})
+        self.rt.store.add_message("assistant", "", {"tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "run_python", "arguments": "{}"}}]})
+        self.rt.store.add_message("tool", big,
+                                  {"name": "run_python", "tool_call_id": "c1"})
+        self.rt.store.add_message("assistant", "final answer")
+        self.rt._MAX_CONTEXT_CHARS = 20_000
+        msgs = self.rt.build_llm_messages()
+        total = sum(len(m.get("content", "") or "") for m in msgs)
+        self.assertLessEqual(total, 20_000)
+        # The final assistant message survives; the huge tool output is gone.
+        self.assertTrue(any(m.get("content") == "final answer" for m in msgs))
+        self.assertFalse(any(m.get("role") == "tool" for m in msgs))
+
+
 if __name__ == "__main__":
     unittest.main()

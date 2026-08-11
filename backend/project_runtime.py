@@ -774,6 +774,21 @@ class ProjectRuntime:
             system += ("\n\n## Summary of earlier conversation (compacted)\n"
                        "The following is a persistent summary of turns that were "
                        "compacted out of the live context:\n" + summary)
+        # Context-window guard: a single huge tool output could blow the model's
+        # context. Drop the oldest tool results until the payload fits; the
+        # orphaned assistant tool_calls are stripped by sanitize_messages.
+        if len(msgs) > 1:
+            total = sum(len(m.get("content", "") or "") for m in msgs)
+            if total > self._MAX_CONTEXT_CHARS:
+                log.warning("assembled context %d chars exceeds %d; dropping "
+                            "oldest tool outputs", total, self._MAX_CONTEXT_CHARS)
+                for i, m in enumerate(msgs):
+                    if m.get("role") == "tool":
+                        total -= len(m.get("content", "") or "")
+                        msgs[i] = None
+                        if total <= self._MAX_CONTEXT_CHARS:
+                            break
+                msgs = [m for m in msgs if m is not None]
         msgs.insert(0, {"role": "system", "content": system})
         return sanitize_messages(msgs)
 
@@ -781,6 +796,9 @@ class ProjectRuntime:
     COMPACTION_LIMIT = 60
     # Always keep this many of the most recent messages fresh in the context.
     COMPACTION_KEEP = 24
+    # Rough cap for the assembled LLM payload (chars), guarding against model
+    # context overflow from very large tool outputs.
+    _MAX_CONTEXT_CHARS = 240_000
 
     async def maybe_compact(self):
         """Summarize older turns into a persistent summary once the conversation
