@@ -63,6 +63,7 @@ class ProjectRuntime:
         self._event_subs: list = []
         # Background-campaign control.
         self.campaign_stop = False
+        self.eval_stop = False
         self._campaign_task: "asyncio.Task | None" = None
         self._campaign_cid: int | None = None
         self._eval_task: "asyncio.Task | None" = None
@@ -316,7 +317,7 @@ class ProjectRuntime:
     def stop_eval(self) -> bool:
         if not self.eval_running():
             return False
-        self.campaign_stop = True
+        self.eval_stop = True
         return True
 
     def start_eval(self, eid: int) -> tuple[bool, str]:
@@ -325,7 +326,7 @@ class ProjectRuntime:
             return False, "an eval is already running for this project"
         if self.store.get_eval(eid) is None:
             return False, f"eval #{eid} not found"
-        self.campaign_stop = False
+        self.eval_stop = False
         self._eval_id = eid
         self._eval_task = asyncio.create_task(self._run_eval_task(eid))
         return True, "started"
@@ -403,7 +404,7 @@ class ProjectRuntime:
             persist=lambda role, content, meta=None: self.store.add_message(
                 role, content, meta),
             record=_record_run, max_iters=self.max_iters, mcp=None,
-            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop,
+            audit=self.audit_emitter, check_abort=lambda: self.eval_stop,
             turn_timeout=self.turn_timeout)
         try:
             await run_eval(self, coord, self.build_llm_messages, eid,
@@ -421,7 +422,7 @@ class ProjectRuntime:
             except Exception:  # noqa: BLE001
                 pass
         finally:
-            self.campaign_stop = False
+            self.eval_stop = False
             try:
                 await task_kernels.stop()
             except Exception:  # noqa: BLE001
@@ -540,7 +541,21 @@ class ProjectRuntime:
             "kernels": kernels,
             "workflow": self.workflow.snapshot(),
             "audit": audit,
+            "campaign_resume_step": (self.store.campaign_resume_step(self._campaign_cid)
+                                     if self._campaign_cid is not None else None),
+            "improve_latest": self._improve_latest(),
         }
+
+    def _improve_latest(self) -> dict | None:
+        """The durable improve-loop resume record, if any."""
+        try:
+            raw = self.store.get_setting("improve_latest", "")
+            if raw:
+                data = json.loads(raw)
+                return data if data.get("kind") == "improve" else None
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     def _experiment_context(self) -> str:
         """A goal-first block describing the experiment the agent should steer
@@ -796,6 +811,7 @@ class ProjectRuntime:
         persist a resumable point), cancel stragglers, then stop the finetune
         monitor, audit emitter and kernels. Returns when drained or timed out."""
         self.campaign_stop = True
+        self.eval_stop = True
         self.stop_finetune_monitor()
         await self.drain_plans()
         tasks = [t for t in (self._campaign_task, self._eval_task) if t is not None]

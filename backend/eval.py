@@ -18,6 +18,32 @@ def _noop_emit(event: str, payload: dict):
     return None
 
 
+async def _audit_eval(rt, kind: str, ev: dict, models: list | None = None,
+                      error: str | None = None) -> None:
+    """Emit an eval-level audit event (eval_started / eval_completed /
+    eval_failed) so model benchmarks are visible in the audit trail."""
+    try:
+        if rt.audit_emitter is None:
+            return
+        from .audit import emit_session_event
+        payload = {
+            "event": kind,
+            "eval_id": ev.get("id"),
+            "name": ev.get("name"),
+            "goal_metric": ev.get("goal_metric") or "",
+            "models": models or [],
+        }
+        if error:
+            payload["error"] = str(error)[:2000]
+        await emit_session_event(
+            rt.audit_emitter, agent_id="Fox", session_id=rt.name,
+            trace_id=None, run_id=None, kind=kind, tool_name=None,
+            payload=payload,
+            severity="critical" if kind == "eval_failed" else "info")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _eval_report(store, ev: dict, results: list[dict]) -> str:
     goal = ev.get("goal_metric") or ""
     higher = bool(ev.get("higher_better", True))
@@ -68,6 +94,7 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
         await workflow.start(title=f"Eval: {ev['name']}",
                              stages=campaign_stages(len(models)))
         workflow.set_invoke(kind="eval", eval_id=eval_id)
+    await _audit_eval(rt, "eval_started", ev, models=models)
 
     results: list[dict] = []
     prev_best_run_id = None
@@ -129,6 +156,8 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
     report = _eval_report(store, ev, results)
     status = "done" if not stopped_reason else "failed"
     store.update_eval(eval_id, status=status, report=report)
+    await _audit_eval(rt, "eval_completed" if status == "done" else "eval_failed",
+                      ev, models=models, error=stopped_reason or None)
     report_mid = store.add_message("assistant", report, {"tags": ["eval", "report"]})
     await emit("assistant_message", {"id": report_mid, "content": report,
                                      "tags": ["eval report"],

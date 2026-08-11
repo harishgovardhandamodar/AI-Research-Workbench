@@ -197,3 +197,21 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
   can't double-fold overlapping ranges. `project_runtime.py`.
 - [x] **Phase 7 regression tests.** Plan audit lifecycle events, improve-loop
   resume persistence, and the compaction guard. Full suite: **743 passed**.
+
+## Phase 8 (in progress)
+
+- [x] **Item 19 — Independent campaign/eval stop flags.** Phase 5 made campaigns
+  and evals runnable concurrently (dedicated kernels, no shared lock), but they
+  still shared one `campaign_stop` flag — stopping the eval stopped a concurrent
+  campaign and vice-versa. Added a separate `eval_stop`; `stop_eval`/`start_eval`
+  and the eval coordinator now use it, and `stop()` sets both.
+  `backend/project_runtime.py`.
+- [x] **Item 20 — Eval-level audit events.** `run_eval` now emits
+  `eval_started` / `eval_completed` / `eval_failed` audit events (eval id, name,
+  goal metric, models, error), so model benchmarks have an eval-level audit
+  trail. `backend/eval.py`.
+- [x] **Item 21 — Status endpoint enrichment.** `/status` now also reports the
+  running campaign's durable `campaign_resume_step` and the `improve_latest`
+  resume record. `project_runtime.py`, `routers/projects.py`.
+- [x] **Phase 8 regression tests.** Separate-stop-flag isolation, eval audit
+  events, status enrichment. Full suite: **747 passed**.

@@ -923,5 +923,113 @@ class TestSweepPoolCap(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(self.ctx.kernels._n, MAX_SWEEP_KERNELS)
 
 
+class TestSeparateStopFlags(unittest.IsolatedAsyncioTestCase):
+    """Item 19: campaign and eval have independent stop signals, so stopping
+    one never stops the other when both run concurrently."""
+
+    def setUp(self):
+        import backend.project_runtime as pr
+        self.orig = pr.PROJECTS_DIR
+        self.tmp = Path(tempfile.mkdtemp())
+        pr.PROJECTS_DIR = self.tmp
+        self.rt = pr.ProjectRuntime("stopflag")
+        self._pr = pr
+
+    def tearDown(self):
+        self._pr.PROJECTS_DIR = self.orig
+        # Fake tasks so stop() doesn't await anything real.
+        self.rt._campaign_task = None
+        self.rt._eval_task = None
+
+    async def test_stop_campaign_does_not_stop_eval(self):
+        # Simulate both running concurrently.
+        self.rt._campaign_task = asyncio.create_task(asyncio.sleep(30))
+        self.rt._eval_task = asyncio.create_task(asyncio.sleep(30))
+        self.rt.campaign_stop = False
+        self.rt.eval_stop = False
+        self.assertTrue(self.rt.stop_campaign())
+        # The eval's stop flag is untouched.
+        self.assertFalse(self.rt.eval_stop)
+        self.assertTrue(self.rt.campaign_stop)
+        # Stopping the eval must not clear the campaign's stop signal either.
+        self.assertTrue(self.rt.stop_eval())
+        self.assertTrue(self.rt.eval_stop)
+        self.assertTrue(self.rt.campaign_stop)
+        self.rt._eval_task.cancel()
+        self.rt._campaign_task.cancel()
+        try:
+            await self.rt._eval_task
+            await self.rt._campaign_task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_stop_sets_both_flags(self):
+        self.rt._campaign_task = asyncio.create_task(asyncio.sleep(30))
+        self.rt._eval_task = asyncio.create_task(asyncio.sleep(30))
+        await self.rt.stop(drain_timeout=0.05)
+        self.assertTrue(self.rt.campaign_stop)
+        self.assertTrue(self.rt.eval_stop)
+
+
+class TestEvalAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Item 20: evals emit eval-level audit events."""
+
+    async def test_audit_eval_emits_events(self):
+        from backend.audit import make_audit
+        from backend.eval import _audit_eval
+        tmp = Path(tempfile.mkdtemp())
+        audit_store, emitter = make_audit(tmp)
+        emitter.start()
+        rt = SimpleNamespace(name="paudit", audit_emitter=emitter)
+        ev = {"id": 7, "name": "bench", "goal_metric": "acc"}
+        await _audit_eval(rt, "eval_started", ev, models=["m1", "m2"])
+        await _audit_eval(rt, "eval_completed", ev, models=["m1", "m2"])
+        await _audit_eval(rt, "eval_failed", ev, error="boom")
+        await emitter.flush()
+        await emitter.stop()
+        evs = audit_store.query()
+        methods = {e["method"] for e in evs}
+        self.assertIn("eval_started", methods)
+        self.assertIn("eval_completed", methods)
+        self.assertIn("eval_failed", methods)
+        started = next(e for e in evs if e["method"] == "eval_started")
+        self.assertEqual((started["result_summary"] or {}).get("eval_id"), 7)
+        failed = next(e for e in evs if e["method"] == "eval_failed")
+        self.assertEqual(failed["severity"], "critical")
+
+
+class TestStatusResumeEnrichment(unittest.IsolatedAsyncioTestCase):
+    """Item 21: /status exposes durable resume points + improve_latest."""
+
+    async def asyncSetUp(self):
+        import backend.project_runtime as pr
+        from backend.state import runtimes
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = pr.PROJECTS_DIR
+        pr.PROJECTS_DIR = self.tmp
+        self.rt = pr.ProjectRuntime("statusproj2")
+        runtimes["statusproj2"] = self.rt
+
+    async def asyncTearDown(self):
+        import backend.project_runtime as pr
+        from backend.state import runtimes
+        runtimes.pop("statusproj2", None)
+        pr.PROJECTS_DIR = self._orig
+        await self.rt.stop()
+
+    async def test_status_has_resume_and_improve(self):
+        from backend.routers import projects
+        self.rt.store.set_setting("improve_latest", json.dumps(
+            {"kind": "improve", "experiment_id": 3, "iterations": 4,
+             "prompt": "p"}))
+        cid = self.rt.store.create_campaign("c", "q", "acc", True)
+        self.rt.store.add_campaign_step(cid, 1, "s1", "experiment", "", "")
+        self.rt.store.update_campaign(cid, resume_step=1)
+        self.rt._campaign_cid = cid
+        st = (await projects.project_status("statusproj2"))["status"]
+        self.assertEqual(st["campaign_resume_step"], 1)
+        self.assertEqual(st["improve_latest"]["experiment_id"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
