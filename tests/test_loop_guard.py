@@ -95,6 +95,29 @@ class TestPrivacyRouting(unittest.TestCase):
                      "plot the correlation heatmap"):
             self.assertFalse(_is_privacy_experiment_request(text), text)
 
+    def test_all_user_variants_route(self):
+        for text in (
+            "run population reidentification and plausibility of privacy "
+            "exploits by banks and financial institution",
+            "perform population reidentification and plausibility of privacy "
+            "exploits by banks and financial institution",
+        ):
+            self.assertTrue(_is_privacy_experiment_request(text), text)
+            self.assertEqual(_experiment_from_text(text), "reid_risk", text)
+
+    async def test_loop_breaker_condition(self):
+        """Re-sending a privacy request after the model looped: both the
+        detector and the loop guard are true, so the turn forces a plan."""
+        reply = ("I'll run a comprehensive population reidentification analysis "
+                 "and assess the plausibility of privacy exploits by banks and "
+                 "financial institutions:")
+        self.rt.store.add_message("assistant", reply, {})
+        self.rt.store.add_message("assistant", reply + " Let me start.", {})
+        request = ("run population reidentification and plausibility of privacy "
+                   "exploits by banks and financial institution")
+        self.assertTrue(_is_privacy_experiment_request(request))
+        self.assertTrue(_agent_looping(self.rt))
+
 
 if __name__ == "__main__":
     unittest.main()

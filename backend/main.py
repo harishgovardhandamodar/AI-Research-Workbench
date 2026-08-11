@@ -1704,6 +1704,22 @@ async def ws_chat(ws: WebSocket, name: str):
                     await _handle_mcp_command(rt, emit, broker, text)
                     return
                 user_tags = message_tags("user", text)
+                # Deterministic privacy / re-identification routing — BEFORE the
+                # LLM loop. These requests must always produce a plan, never the
+                # (tool-light) model loop that describes work without doing it.
+                if not intent and _is_privacy_experiment_request(text):
+                    intent = "experiment_plan"
+                    user_tags = ["experiment", "plan", "privacy"]
+                    if _agent_looping(rt):
+                        # The model already repeated the same reply: skip the
+                        # loop entirely and go straight to the plan.
+                        try:
+                            await emit("notice", {"message":
+                                "🔁 Detected a repeated response — routing this "
+                                "request to the deterministic planner (propose → "
+                                "confirm → execute) instead of the model loop."})
+                        except Exception:  # noqa: BLE001
+                            pass
                 # Explicit intents (from the UI quick-action buttons) route
                 # deterministically instead of relying on keyword matching.
                 workflow_mode = compare_mode = fresh_mode = god_mode = False
