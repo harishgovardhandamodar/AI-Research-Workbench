@@ -39,6 +39,9 @@ class ProjectRuntime:
         self.permissions = PermissionManager(self.store)
         self.lock = asyncio.Lock()
         self._compacting = False
+        # Bumped on every access (get_runtime) so the idle-eviction loop can
+        # close runtimes that haven't been touched in a while.
+        self.last_active = time.time()
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         self.max_iters = CONFIG["agent"].get("max_iters", 20)
@@ -485,6 +488,7 @@ class ProjectRuntime:
         ev = {
             "agent_id": "kernel", "source": "kernel", "severity": severity,
             "method": f"kernel.{method}", "tool_name": f"kernel.{event}",
+            "session_id": self.name,
             "arguments_redacted": args,
             "result_summary": AuditEvent.result_summary_for(status),
             "duration_ms": payload.get("duration_ms"),
@@ -556,6 +560,28 @@ class ProjectRuntime:
         except Exception:  # noqa: BLE001
             pass
         return None
+
+    def is_busy(self) -> bool:
+        """True when the runtime has live chat subscribers or running background
+        work — i.e. it must not be evicted."""
+        try:
+            if self.workflow._subs or self._event_subs:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        if self.campaign_running() or self.eval_running():
+            return True
+        return any(not t.done() for t in self._plan_tasks.values())
+
+    async def evict(self) -> None:
+        """Close an idle runtime for good: drain/stop background work, stop the
+        kernels + audit emitter, and release the SQLite connection."""
+        await self.stop()
+        try:
+            from .store import close_project_db
+            close_project_db(self.dir)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _experiment_context(self) -> str:
         """A goal-first block describing the experiment the agent should steer

@@ -8,6 +8,7 @@ source of truth without circular imports.
 from __future__ import annotations
 
 import json
+import time
 import os
 
 from . import editor as editor_cfg
@@ -23,7 +24,8 @@ DEFAULT_CONFIG = {
         "temperature": 0.2,
         "max_tokens": 4096,
     },
-    "agent": {"max_iters": 20, "reviewer_enabled": True},
+    "agent": {"max_iters": 20, "reviewer_enabled": True,
+              "runtime_idle_timeout": 0},
     "mcp": {"servers": DEFAULT_SERVERS},
     "finetune": {"workspace": ""},
     "editor": editor_cfg.editor_config(),
@@ -113,7 +115,14 @@ def get_runtime(name: str):
 
     if name not in runtimes:
         runtimes[name] = ProjectRuntime(name)
-    return runtimes[name]
+    rt = runtimes[name]
+    # Every access (ws connect, REST request) marks the project active so the
+    # idle-eviction loop knows it's in use.
+    try:
+        rt.last_active = time.time()
+    except Exception:  # noqa: BLE001
+        pass
+    return rt
 
 
 def get_llm() -> LLMClient:

@@ -1031,5 +1031,67 @@ class TestStatusResumeEnrichment(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(st["improve_latest"]["experiment_id"], 3)
 
 
+class TestRuntimeEviction(unittest.IsolatedAsyncioTestCase):
+    """Item 22: idle runtimes can be evicted; busy ones can't."""
+
+    async def asyncSetUp(self):
+        import backend.project_runtime as pr
+        self.tmp = Path(tempfile.mkdtemp())
+        self._orig = pr.PROJECTS_DIR
+        pr.PROJECTS_DIR = self.tmp
+        self.rt = pr.ProjectRuntime("evictproj")
+
+    async def asyncTearDown(self):
+        import backend.project_runtime as pr
+        pr.PROJECTS_DIR = self._orig
+        await self.rt.evict()
+
+    async def test_idle_is_not_busy(self):
+        self.assertFalse(self.rt.is_busy())
+
+    async def test_busy_with_subscriber(self):
+        self.rt.workflow.subscribe(lambda t, p: None)
+        self.assertTrue(self.rt.is_busy())
+
+    async def test_busy_with_plan_task(self):
+        self.rt._plan_tasks["p"] = asyncio.create_task(asyncio.sleep(30))
+        self.assertTrue(self.rt.is_busy())
+        self.rt._plan_tasks["p"].cancel()
+        await self.rt.drain_plans()
+        self.assertFalse(self.rt.is_busy())
+
+    async def test_evict_stops_kernels(self):
+        await self.rt.evict()
+        self.assertIsNone(self.rt.kernels.python._proc)
+
+
+class TestKernelAuditContext(unittest.IsolatedAsyncioTestCase):
+    """Item 24: kernel audit events carry the project's session id."""
+
+    async def test_kernel_event_has_session_id(self):
+        from backend.audit import make_audit
+        from backend.project_runtime import ProjectRuntime
+        tmp = Path(tempfile.mkdtemp())
+        audit_store, emitter = make_audit(tmp)
+        emitter.start()
+
+        class _FakeRT:
+            name = "kproj"
+
+            def __init__(self, emitter):
+                self.audit_emitter = emitter
+
+            async def _audit_emit(self, ev):
+                await self.audit_emitter.emit(ev)
+
+        fake = _FakeRT(emitter)
+        ProjectRuntime._on_kernel_event(fake, "busy", {"code": "x"})
+        await asyncio.sleep(0.05)
+        await emitter.flush()
+        await emitter.stop()
+        evs = audit_store.query()
+        self.assertTrue(any(e["session_id"] == "kproj" for e in evs))
+
+
 if __name__ == "__main__":
     unittest.main()

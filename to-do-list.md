@@ -215,3 +215,22 @@ experiment lifecycle (stability, orchestration, robustness, traceability, loggab
   resume record. `project_runtime.py`, `routers/projects.py`.
 - [x] **Phase 8 regression tests.** Separate-stop-flag isolation, eval audit
   events, status enrichment. Full suite: **747 passed**.
+
+## Phase 9 (in progress)
+
+- [x] **Item 22 — Idle runtime eviction (opt-in).** Each opened project keeps a
+  `ProjectRuntime` (kernel subprocesses + SQLite connection + audit emitter)
+  cached forever in `runtimes`. New `agent.runtime_idle_timeout` config (seconds,
+  0 = disabled) plus a lifespan loop evict runtimes that are idle (no chat
+  subscribers, no campaign/eval/plan tasks, kernel idle) past the timeout —
+  `get_runtime()` bumps `last_active` on every access, so the frontend keeps a
+  project alive while polling. `ProjectRuntime.is_busy()`/`evict()`.
+  `project_runtime.py`, `state.py`, `main.py`.
+- [x] **Item 23 — Eval retry in `retry_stage`.** Retrying a failed eval stage now
+  re-runs the whole model benchmark (`run_eval`) instead of erroring.
+  `main.py`.
+- [x] **Item 24 — Kernel audit session context.** Kernel lifecycle/execution
+  audit events now carry the project `session_id`, so they correlate with the
+  rest of a project's audit trail. `project_runtime.py`.
+- [x] **Phase 9 regression tests.** `is_busy`/`evict` behaviour, and kernel
+  audit session context. Full suite: **752 passed**.

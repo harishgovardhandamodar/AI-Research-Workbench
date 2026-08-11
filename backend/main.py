@@ -76,7 +76,41 @@ async def lifespan(app: FastAPI):
     from .research_knowledge_graphs.router import set_scheduler
 
     set_scheduler(_rkg_scheduler)
+
+    # Optional idle-runtime eviction: bounds memory + kernel subprocesses on a
+    # long-lived server by closing runtimes that haven't been touched (no ws,
+    # no background work) for `runtime_idle_timeout` seconds. Disabled by default.
+    evictor_task = None
+    _runtime_idle = CONFIG["agent"].get("runtime_idle_timeout", 0) or 0
+
+    async def _evict_idle_runtimes():
+        from .store import close_project_db
+        while True:
+            await asyncio.sleep(_runtime_idle / 2)
+            now = time.time()
+            for name, rt in list(runtimes.items()):
+                if rt.is_busy():
+                    continue
+                idle = now - getattr(rt, "last_active", now)
+                if idle < _runtime_idle:
+                    continue
+                log.info("evicting idle runtime %r (idle %.0fs)", name, idle)
+                try:
+                    runtimes.pop(name, None)
+                    await rt.evict()
+                except Exception:  # noqa: BLE001
+                    log.exception("runtime eviction failed for %r", name)
+
+    if _runtime_idle > 0:
+        evictor_task = asyncio.create_task(_evict_idle_runtimes())
+
     yield
+    if evictor_task is not None:
+        evictor_task.cancel()
+        try:
+            await evictor_task
+        except asyncio.CancelledError:
+            pass
     if _rkg_scheduler is not None:
         await _rkg_scheduler.stop()
         _rkg_scheduler = None
@@ -2524,6 +2558,17 @@ async def ws_chat(ws: WebSocket, name: str):
                                 rt, coordinator, rt.build_llm_messages, int(cid),
                                 emit=emit, workflow=rt.workflow,
                                 resume_step=resume_step)
+                            await emit("status", {"message": ""})
+                            await emit("done", {})
+                            return
+                    if inv.get("kind") == "eval":
+                        # Retry a model benchmark: re-run the whole eval.
+                        from .eval import run_eval
+                        eid = inv.get("eval_id")
+                        if eid is not None:
+                            await run_eval(
+                                rt, coordinator, rt.build_llm_messages, int(eid),
+                                emit=emit, workflow=rt.workflow)
                             await emit("status", {"message": ""})
                             await emit("done", {})
                             return
