@@ -62,6 +62,16 @@ class TestKernelProtocol(unittest.IsolatedAsyncioTestCase):
         resp = await self.kernel.run_code("x = 1")
         self.assertEqual(resp.get("metrics"), {})
 
+    async def test_env_cache_invalidated_on_restart(self):
+        from backend.kernels.manager import KernelManager
+        mgr = KernelManager(self.tmp)
+        env = await mgr.get_env()
+        self.assertIsNotNone(mgr._env_cache)
+        # Simulate a kernel restart: the manager must drop the cached env.
+        mgr._on_kernel_event("reset", {"reason": "restarted"})
+        self.assertIsNone(mgr._env_cache)
+        await mgr.stop()
+
     async def test_restart_count_surfaces(self):
         await self.kernel.run_code("x = 1")
         self.assertEqual(self.kernel.restarts, 0)

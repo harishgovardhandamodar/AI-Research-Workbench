@@ -44,6 +44,16 @@ class KernelManager:
         self.python = PythonKernel(cwd=self.workspace_dir)
         self.r = RKernel(cwd=self.workspace_dir)
         self._env_cache: dict | None = None
+        # A kernel restart destroys the environment snapshot, so the cached env
+        # must be invalidated whenever the subprocess restarts.
+        try:
+            self.python.subscribe(self._on_kernel_event)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_kernel_event(self, event: str, payload: dict):
+        if event == "reset" and payload.get("reason") == "restarted":
+            self._env_cache = None
 
     async def get_env(self) -> dict:
         if self._env_cache is None:
