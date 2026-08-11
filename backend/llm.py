@@ -41,7 +41,8 @@ class LLMClient:
                  api_key: str = "ollama",
                  model: str = DEFAULT_MODEL, temperature: float = 0.2,
                  max_tokens: int = 4096,
-                 retries: int = 2, retry_backoff: float = 1.0):
+                 retries: int = 2, retry_backoff: float = 1.0,
+                 timeout: float = 120.0):
         self.base_url = base_url
         self.tool_base_url = tool_base_url
         self.model = model
@@ -53,10 +54,11 @@ class LLMClient:
         self.retry_backoff = max(0.0, float(retry_backoff))
         # A bounded timeout + minimal retries so an unreachable endpoint fails
         # fast with a visible error instead of hanging silently for minutes.
+        self.timeout = max(5.0, float(timeout))
         self._gateway = AsyncOpenAI(base_url=base_url, api_key=api_key,
-                                    timeout=120.0, max_retries=1)
+                                    timeout=self.timeout, max_retries=1)
         self._tool = AsyncOpenAI(base_url=tool_base_url, api_key=api_key,
-                                 timeout=120.0, max_retries=1)
+                                 timeout=self.timeout, max_retries=1)
         self._models_cache: list[dict] | None = None
         self._models_cache_ts: float = 0.0
 

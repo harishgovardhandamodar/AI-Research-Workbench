@@ -76,6 +76,7 @@ def make_llm() -> LLMClient:
         model=llm_cfg.get("model", DEFAULT_MODEL),
         temperature=llm_cfg.get("temperature", 0.2),
         max_tokens=llm_cfg.get("max_tokens", 4096),
+        timeout=llm_cfg.get("timeout", 120.0),
     )
 
 
