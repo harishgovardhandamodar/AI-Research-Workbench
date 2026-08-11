@@ -1179,7 +1179,8 @@ async def project_run_commits(name: str, rid: int):
 
 @router.get("/api/projects/{name}/runs/{rid}/audit")
 async def project_run_audit(name: str, rid: int):
-    """Round-8: the audit trail for a run — its tool events (by trace_id),
+    """Round-8: the audit trail for a run — its tool events (linked by run_id
+    via the two-phase run lifecycle, falling back to trace_id for legacy runs),
     any deviations touching those events, and the audit-chain status."""
     rt = get_runtime(name)
     run = rt.store.get_run(rid)
@@ -1191,14 +1192,17 @@ async def project_run_audit(name: str, rid: int):
     deviations = []
     chain = {}
     try:
-        if mid is not None:
+        # Preferred linkage: run_id (pre-created row → deterministic id); older
+        # runs only have the message trace_id.
+        events = rt.audit_store.query(run_id=str(rid), limit=500)
+        if not events and mid is not None:
             events = rt.audit_store.query(trace_id=str(mid), limit=500)
-            event_ids = {e.get("event_id") for e in events}
-            if event_ids:
-                for d in rt.audit_store.list_deviations(limit=1000):
-                    dids = set(d.get("event_ids") or [])
-                    if dids & event_ids:
-                        deviations.append(d)
+        event_ids = {e.get("event_id") for e in events}
+        if event_ids:
+            for d in rt.audit_store.list_deviations(limit=1000):
+                dids = set(d.get("event_ids") or [])
+                if dids & event_ids:
+                    deviations.append(d)
         chain = rt.audit_store.verify_chain()
     except Exception:  # noqa: BLE001
         pass
@@ -1216,6 +1220,14 @@ async def project_run_verify(name: str, rid: int):
     if rt.store.get_run(rid) is None:
         raise HTTPException(status_code=404, detail="run not found")
     return {"run_id": rid, **rt.store.verify_run_integrity(rid)}
+
+
+@router.get("/api/projects/{name}/messages/verify")
+async def project_message_chain_verify(name: str):
+    """Verify the per-message integrity chain (tamper-evidence for the
+    conversation transcript)."""
+    rt = get_runtime(name)
+    return {"chain": rt.store.verify_message_chain()}
 
 
 @router.post("/api/projects/{name}/runs/{rid}/restore")

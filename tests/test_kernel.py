@@ -62,6 +62,18 @@ class TestKernelProtocol(unittest.IsolatedAsyncioTestCase):
         resp = await self.kernel.run_code("x = 1")
         self.assertEqual(resp.get("metrics"), {})
 
+    async def test_restart_count_surfaces(self):
+        await self.kernel.run_code("x = 1")
+        self.assertEqual(self.kernel.restarts, 0)
+        # Kill the subprocess; the next call auto-restarts and counts it.
+        self.kernel._proc.kill()
+        await self.kernel._proc.wait()
+        resp = await self.kernel.run_code("print('fresh')")
+        self.assertTrue(resp.get("ok"), resp)
+        self.assertEqual(self.kernel.restarts, 1)
+        self.assertIn("restarts", self.kernel.status())
+        self.assertEqual(self.kernel.status()["restarts"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

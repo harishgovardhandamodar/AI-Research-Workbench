@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -26,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .state import CONFIG
+
+_log = logging.getLogger("fox.experiment_repo")
 
 GIT_TIMEOUT = 60
 
@@ -489,9 +492,8 @@ async def maybe_autocommit(rt, run: dict) -> None:
         message = _commit_message(rt, run)
         res = await asyncio.to_thread(autocommit, rt, run, experiments, message)
         if not res.get("ok"):
-            import sys
-            print(f"[experiment-repo] auto-commit failed for {rt.name}: "
-                  f"{res.get('message')}", file=sys.stderr)
+            _log.warning("auto-commit failed for %r: %s", rt.name,
+                         res.get("message"))
         else:
             # Round-4 lineage: record the snapshot commit on the run row so each
             # run is traceable to (and restorable from) its git commit. Store

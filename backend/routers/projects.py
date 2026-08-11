@@ -111,6 +111,13 @@ async def project_state(name: str):
             "env": env, "variables": vars_, "management_activity": mgmt_activity}
 
 
+@router.get("/api/projects/{name}/status")
+async def project_status(name: str):
+    """Unified live view of a project: in-flight campaigns/evals/plans, kernel
+    health (incl. restarts), workflow snapshot, and audit stats."""
+    return {"status": get_runtime(name).status()}
+
+
 @router.get("/api/projects/{name}/workflow")
 async def project_workflow(name: str):
     """Latest workflow-progress snapshot (arXiv replication, …).

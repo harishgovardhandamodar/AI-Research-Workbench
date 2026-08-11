@@ -86,7 +86,24 @@ class TestImproveLoop(unittest.IsolatedAsyncioTestCase):
                            max_iters=max_iters, mcp=None)
 
     def _persist_run(self, r: dict):
-        # Mirror main.py's record wiring so loop-produced runs land in the store.
+        # Mirror main.py's record wiring so loop-produced runs land in the store:
+        # the coordinator pre-creates the row (r["id"]) and finish_run finalizes
+        # it; without an id (legacy path) fall back to add_run.
+        if r.get("id"):
+            return self.store.finish_run(
+                rid=int(r["id"]),
+                reply=r.get("reply", ""),
+                status=r.get("status", "done"),
+                finished_at=r.get("finished_at"),
+                tool_sequence=r.get("tool_sequence"),
+                artifact_ids=r.get("artifact_ids"),
+                metrics=r.get("metrics"),
+                config=r.get("config"),
+                label=r.get("label"),
+                code=r.get("code"),
+                env=r.get("env"),
+                error=r.get("error") or None,
+                review=r.get("review"))
         return self.store.add_run(
             prompt=r.get("prompt", ""),
             reply=r.get("reply", ""),

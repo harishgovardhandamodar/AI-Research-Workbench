@@ -13,13 +13,17 @@ dependencies explicitly so it is unit-testable, mirroring
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 
 from .experiment_loop import best_metric
 from .workflows import campaign_stages
 
+log = logging.getLogger("fox.campaign")
+
 DEFAULT_MAX_STEPS = 5
+DEFAULT_CAMPAIGN_TIMEOUT = 7200.0  # wall-clock cap for a whole campaign
 
 
 def _noop_emit(event: str, payload: dict):
@@ -171,13 +175,15 @@ def _campaign_report(store, c: dict, steps: list[dict]) -> str:
 
 async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
                        emit=None, workflow=None, resume_step: int = 1,
-                       plan_steps: list[dict] | None = None) -> dict:
+                       plan_steps: list[dict] | None = None,
+                       timeout_sec: float | None = None) -> dict:
     """Run a research campaign: plan → execute each step → synthesize.
 
     Returns {"campaign", "steps", "report", "stopped_reason"}. Steps run as their
     own experiments (lineage chained via parent_run_id); the final synthesis is a
     markdown report stored on the campaign, posted to chat, and saved as an
-    artifact.
+    artifact. ``timeout_sec`` caps the whole campaign wall-clock; when exceeded
+    the campaign stops gracefully and stays resumable from the current step.
     """
     emit = emit or _noop_emit
     store = rt.store
@@ -205,9 +211,17 @@ async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
     goal = c.get("goal_metric") or ""
     prev_best_run_id = None
     stopped_reason = ""
+    deadline = (time.monotonic() + (timeout_sec or DEFAULT_CAMPAIGN_TIMEOUT)
+                if timeout_sec != 0 else None)
 
     for i, step in enumerate(steps):
         idx = i + 1
+        if deadline is not None and time.monotonic() >= deadline:
+            stopped_reason = f"deadline exceeded (campaign >{timeout_sec or DEFAULT_CAMPAIGN_TIMEOUT:g}s)"
+            store.update_campaign_step(step["id"], status="planned",
+                                       note=stopped_reason)
+            await emit("notice", {"message": f"Campaign {stopped_reason} — resumable from step {idx}."})
+            break
         if idx < resume_step:
             if step.get("experiment_id") and step.get("best_run_id"):
                 prev_best_run_id = step["best_run_id"]
@@ -304,8 +318,16 @@ async def run_campaign(rt, coordinator, build_llm_messages, campaign_id: int,
     if not stopped_reason:
         stopped_reason = f"{len(steps)} steps completed"
     report = _campaign_report(store, c, steps)
-    status = "done" if not stopped_reason.startswith(("step", "stopped")) else "failed"
-    store.update_campaign(campaign_id, status=status, report=report)
+    status = "done" if stopped_reason.startswith(f"{len(steps)} steps completed") else "failed"
+    # Durable resume point: persist the next step to run so Resume works after a
+    # restart / interruption / concurrent chat (independent of the workflow
+    # snapshot). All-done campaigns leave it None.
+    try:
+        resume_next = store.campaign_resume_step(campaign_id)
+        store.update_campaign(campaign_id, status=status, report=report,
+                              resume_step=resume_next)
+    except Exception:  # noqa: BLE001
+        store.update_campaign(campaign_id, status=status, report=report)
     report_mid = store.add_message(
         "assistant", report, {"tags": ["campaign", "report"]})
     await emit("assistant_message", {"id": report_mid, "content": report,

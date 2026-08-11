@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 from audit import AuditEvent
@@ -23,6 +24,8 @@ from .paths import PROJECTS_DIR
 from .state import CONFIG, make_llm
 from .store import ProjectStore
 from .workflows import WorkflowTracker
+
+log = logging.getLogger("fox.runtime")
 
 
 class ProjectRuntime:
@@ -38,6 +41,7 @@ class ProjectRuntime:
         self.llm = make_llm()
         self.reviewer_enabled = CONFIG["agent"].get("reviewer_enabled", True)
         self.max_iters = CONFIG["agent"].get("max_iters", 20)
+        self.turn_timeout = CONFIG["agent"].get("turn_timeout", 0)
         self.workflow = WorkflowTracker(
             persist=lambda snap: self.store.set_setting(
                 "workflow_latest", json.dumps(snap)),
@@ -59,7 +63,13 @@ class ProjectRuntime:
         # Background-campaign control.
         self.campaign_stop = False
         self._campaign_task: "asyncio.Task | None" = None
+        self._campaign_cid: int | None = None
         self._eval_task: "asyncio.Task | None" = None
+        self._eval_id: int | None = None
+        # Unified plan-run registry: plan_id -> task. Shared by the chat and REST
+        # plan executors so a plan can't be double-launched across paths, and
+        # drained on stop().
+        self._plan_tasks: dict[str, "asyncio.Task"] = {}
         # Forward kernel lifecycle/execution events into the audit trail.
         try:
             self.kernels.python.subscribe(self._on_kernel_event)
@@ -69,6 +79,14 @@ class ProjectRuntime:
         self.recover_campaigns()
         # Round-9: same for model benchmarks.
         self.recover_evals()
+        # Robustness: agent runs left 'running' by a crash become 'interrupted'
+        # (each one is recorded as an audit event so recovery is traceable).
+        try:
+            n = self.store.mark_interrupted_runs()
+            if n:
+                log.warning("marked %d interrupted run(s) in project %r", n, name)
+        except Exception:  # noqa: BLE001
+            log.exception("could not recover interrupted runs for %r", name)
         # Finetune chat monitor (started on first chat connect).
         self._finetune_monitor: "FinetuneMonitor | None" = None
 
@@ -89,6 +107,49 @@ class ProjectRuntime:
                 pass
 
     # ------------------------------------------------- background campaigns --
+    def plan_running(self, plan_id: str) -> bool:
+        """True when a plan execution for ``plan_id`` is in flight (chat or REST)."""
+        t = self._plan_tasks.get(plan_id)
+        return t is not None and not t.done()
+
+    def launch_plan(self, plan_id: str, coro) -> tuple[bool, str]:
+        """Launch (or reject) a plan execution, deduplicating across the chat
+        and REST paths. Returns (ok, message)."""
+        if self.plan_running(plan_id):
+            return False, "a plan execution is already running"
+
+        async def _wrapped():
+            try:
+                await coro
+            except Exception:  # noqa: BLE001
+                log.exception("plan %s execution failed", plan_id)
+            finally:
+                self._plan_tasks.pop(plan_id, None)
+
+        self._plan_tasks[plan_id] = asyncio.create_task(_wrapped())
+        return True, "started"
+
+    def cancel_plan_task(self, plan_id: str) -> bool:
+        """Best-effort cancel of an in-flight plan execution. Returns True when
+        a live task was found and cancelled."""
+        t = self._plan_tasks.get(plan_id)
+        if t is None or t.done():
+            return False
+        t.cancel()
+        return True
+
+    async def drain_plans(self, timeout: float = 5.0) -> None:
+        """Cancel + await all in-flight plan executions (shutdown)."""
+        tasks = [t for t in self._plan_tasks.values() if not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            try:
+                await asyncio.wait(tasks, timeout=timeout)
+            except Exception:  # noqa: BLE001
+                pass
+        self._plan_tasks.clear()
+
     def campaign_running(self) -> bool:
         return (self._campaign_task is not None
                 and not self._campaign_task.done())
@@ -111,6 +172,7 @@ class ProjectRuntime:
         if self.store.get_campaign(cid) is None:
             return False, f"campaign #{cid} not found"
         self.campaign_stop = False
+        self._campaign_cid = cid
         self._campaign_task = asyncio.create_task(
             self._run_campaign_task(cid, plan_steps))
         return True, "started"
@@ -120,6 +182,16 @@ class ProjectRuntime:
         from .agents.coordinator import Coordinator
         from .campaign import run_campaign
         from .experiment_repo import maybe_autocommit
+        from .logging_config import set_log_context, clear_log_context
+        set_log_context(project=self.name, campaign=cid)
+        # Dedicated kernel: the campaign's code runs in its own subprocess so it
+        # never shares state with the chat kernel, and it no longer holds the
+        # project lock — the user can keep chatting while a campaign runs.
+        task_kernels = make_kernel_manager(self.dir)
+        try:
+            task_kernels.python.subscribe(self._on_kernel_event)
+        except Exception:  # noqa: BLE001
+            pass
 
         async def bus_emit(event: str, payload: dict):
             await self.broadcast(event, payload)
@@ -128,20 +200,43 @@ class ProjectRuntime:
                                 session_id=self.name, agent_id="Fox")
 
         def _record_run(r: dict) -> int:
-            rid = self.store.add_run(
-                prompt=r.get("prompt", ""), reply=r.get("reply", ""),
-                status=r.get("status", "done"),
-                started_at=r.get("started_at", 0.0),
-                finished_at=r.get("finished_at", time.time()),
-                tool_sequence=r.get("tool_sequence"),
-                artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
-                review=r.get("review"),
-                experiment_id=r.get("experiment_id") or None,
-                config=r.get("config"), label=r.get("label"),
-                parent_run_id=r.get("parent_run_id") or None,
-                model=r.get("model") or None, code=r.get("code"), env=r.get("env"),
-                message_id=r.get("message_id") or None,
-                dataset=r.get("dataset") or None)
+            if r.get("id"):
+                rid = self.store.finish_run(
+                    rid=int(r["id"]),
+                    reply=r.get("reply", ""),
+                    status=r.get("status", "done"),
+                    finished_at=r.get("finished_at"),
+                    tool_sequence=r.get("tool_sequence"),
+                    artifact_ids=r.get("artifact_ids"),
+                    metrics=r.get("metrics"),
+                    config=r.get("config"),
+                    label=r.get("label"),
+                    code=r.get("code"),
+                    env=r.get("env"),
+                    dataset=r.get("dataset"),
+                    error=r.get("error") or None,
+                    review=r.get("review"),
+                    plan_id=r.get("plan_id") or None,
+                    plan_step_id=r.get("plan_step_id") or None)
+            else:
+                rid = self.store.add_run(
+                    prompt=r.get("prompt", ""), reply=r.get("reply", ""),
+                    status=r.get("status", "done"),
+                    started_at=r.get("started_at", 0.0),
+                    finished_at=r.get("finished_at", time.time()),
+                    tool_sequence=r.get("tool_sequence"),
+                    artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
+                    review=r.get("review"),
+                    experiment_id=r.get("experiment_id") or None,
+                    config=r.get("config"), label=r.get("label"),
+                    parent_run_id=r.get("parent_run_id") or None,
+                    model=r.get("model") or None, code=r.get("code"),
+                    env=r.get("env"),
+                    message_id=r.get("message_id") or None,
+                    dataset=r.get("dataset") or None,
+                    error=r.get("error") or None,
+                    plan_id=r.get("plan_id") or None,
+                    plan_step_id=r.get("plan_step_id") or None)
             try:
                 r["id"] = rid
                 if r.get("experiment_id"):
@@ -152,17 +247,19 @@ class ProjectRuntime:
             return rid
 
         coord = Coordinator(
-            self.llm, self.ctx(bus_emit, broker), emit=bus_emit,
+            self.llm, self.ctx(bus_emit, broker, kernels=task_kernels),
+            emit=bus_emit,
             persist=lambda role, content, meta=None: self.store.add_message(
                 role, content, meta),
             record=_record_run, max_iters=self.max_iters, mcp=None,
-            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop)
+            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop,
+            turn_timeout=self.turn_timeout)
         try:
-            async with self.lock:
-                await run_campaign(self, coord, self.build_llm_messages, cid,
-                                   emit=bus_emit, workflow=self.workflow,
-                                   plan_steps=plan_steps)
+            await run_campaign(self, coord, self.build_llm_messages, cid,
+                               emit=bus_emit, workflow=self.workflow,
+                               plan_steps=plan_steps)
         except Exception as e:  # noqa: BLE001
+            log.exception("campaign %s failed", cid)
             try:
                 self.store.update_campaign(
                     cid, status="failed",
@@ -175,11 +272,21 @@ class ProjectRuntime:
                 pass
         finally:
             self.campaign_stop = False
+            try:
+                await task_kernels.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                clear_log_context("campaign")
+            except Exception:  # noqa: BLE001
+                pass
 
     def recover_campaigns(self) -> None:
         """Mark any campaign left 'running' by a previous process as interrupted
-        so the UI offers Resume (the resume point is stored in the workflow
-        snapshot's invoke metadata)."""
+        so the UI offers Resume. The durable resume point is derived from the
+        persisted step statuses (see store.campaign_resume_step), so it survives
+        restarts and concurrent chat turns — running steps are reset to 'planned'
+        so the next run resumes cleanly."""
         try:
             for c in self.store.list_campaigns():
                 if c["status"] == "running":
@@ -187,8 +294,19 @@ class ProjectRuntime:
                         c["id"], status="failed",
                         report=(c.get("report") or "") + "\n\n> Interrupted by "
                                 "a server restart — use Resume to continue.")
+                    # Any step left mid-flight becomes resumable again.
+                    try:
+                        for s in self.store.list_campaign_steps(c["id"]):
+                            if (s.get("status") or "planned") in ("running", "planned") \
+                                    and s.get("status") != "done":
+                                self.store.update_campaign_step(
+                                    s["id"], status="planned",
+                                    note="Interrupted by a server restart — resume to continue.")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    log.warning("campaign %s recovered (was running)", c["id"])
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("campaign recovery scan failed")
 
     # ------------------------------------------------------ background evals --
     def eval_running(self) -> bool:
@@ -207,6 +325,7 @@ class ProjectRuntime:
         if self.store.get_eval(eid) is None:
             return False, f"eval #{eid} not found"
         self.campaign_stop = False
+        self._eval_id = eid
         self._eval_task = asyncio.create_task(self._run_eval_task(eid))
         return True, "started"
 
@@ -215,6 +334,14 @@ class ProjectRuntime:
         from .agents.coordinator import Coordinator
         from .eval import run_eval
         from .experiment_repo import maybe_autocommit
+        from .logging_config import set_log_context, clear_log_context
+        set_log_context(project=self.name, eval=eid)
+        # Dedicated kernel (see _run_campaign_task): isolated state, no lock.
+        task_kernels = make_kernel_manager(self.dir)
+        try:
+            task_kernels.python.subscribe(self._on_kernel_event)
+        except Exception:  # noqa: BLE001
+            pass
 
         async def bus_emit(event: str, payload: dict):
             await self.broadcast(event, payload)
@@ -223,20 +350,43 @@ class ProjectRuntime:
                                 session_id=self.name, agent_id="Fox")
 
         def _record_run(r: dict) -> int:
-            rid = self.store.add_run(
-                prompt=r.get("prompt", ""), reply=r.get("reply", ""),
-                status=r.get("status", "done"),
-                started_at=r.get("started_at", 0.0),
-                finished_at=r.get("finished_at", time.time()),
-                tool_sequence=r.get("tool_sequence"),
-                artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
-                review=r.get("review"),
-                experiment_id=r.get("experiment_id") or None,
-                config=r.get("config"), label=r.get("label"),
-                parent_run_id=r.get("parent_run_id") or None,
-                model=r.get("model") or None, code=r.get("code"), env=r.get("env"),
-                message_id=r.get("message_id") or None,
-                dataset=r.get("dataset") or None)
+            if r.get("id"):
+                rid = self.store.finish_run(
+                    rid=int(r["id"]),
+                    reply=r.get("reply", ""),
+                    status=r.get("status", "done"),
+                    finished_at=r.get("finished_at"),
+                    tool_sequence=r.get("tool_sequence"),
+                    artifact_ids=r.get("artifact_ids"),
+                    metrics=r.get("metrics"),
+                    config=r.get("config"),
+                    label=r.get("label"),
+                    code=r.get("code"),
+                    env=r.get("env"),
+                    dataset=r.get("dataset"),
+                    error=r.get("error") or None,
+                    review=r.get("review"),
+                    plan_id=r.get("plan_id") or None,
+                    plan_step_id=r.get("plan_step_id") or None)
+            else:
+                rid = self.store.add_run(
+                    prompt=r.get("prompt", ""), reply=r.get("reply", ""),
+                    status=r.get("status", "done"),
+                    started_at=r.get("started_at", 0.0),
+                    finished_at=r.get("finished_at", time.time()),
+                    tool_sequence=r.get("tool_sequence"),
+                    artifact_ids=r.get("artifact_ids"), metrics=r.get("metrics"),
+                    review=r.get("review"),
+                    experiment_id=r.get("experiment_id") or None,
+                    config=r.get("config"), label=r.get("label"),
+                    parent_run_id=r.get("parent_run_id") or None,
+                    model=r.get("model") or None, code=r.get("code"),
+                    env=r.get("env"),
+                    message_id=r.get("message_id") or None,
+                    dataset=r.get("dataset") or None,
+                    error=r.get("error") or None,
+                    plan_id=r.get("plan_id") or None,
+                    plan_step_id=r.get("plan_step_id") or None)
             try:
                 r["id"] = rid
                 if r.get("experiment_id"):
@@ -247,16 +397,18 @@ class ProjectRuntime:
             return rid
 
         coord = Coordinator(
-            self.llm, self.ctx(bus_emit, broker), emit=bus_emit,
+            self.llm, self.ctx(bus_emit, broker, kernels=task_kernels),
+            emit=bus_emit,
             persist=lambda role, content, meta=None: self.store.add_message(
                 role, content, meta),
             record=_record_run, max_iters=self.max_iters, mcp=None,
-            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop)
+            audit=self.audit_emitter, check_abort=lambda: self.campaign_stop,
+            turn_timeout=self.turn_timeout)
         try:
-            async with self.lock:
-                await run_eval(self, coord, self.build_llm_messages, eid,
-                               emit=bus_emit, workflow=self.workflow)
+            await run_eval(self, coord, self.build_llm_messages, eid,
+                           emit=bus_emit, workflow=self.workflow)
         except Exception as e:  # noqa: BLE001
+            log.exception("eval %s failed", eid)
             try:
                 self.store.update_eval(
                     eid, status="failed",
@@ -269,6 +421,14 @@ class ProjectRuntime:
                 pass
         finally:
             self.campaign_stop = False
+            try:
+                await task_kernels.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                clear_log_context("eval")
+            except Exception:  # noqa: BLE001
+                pass
 
     def recover_evals(self) -> None:
         try:
@@ -278,8 +438,9 @@ class ProjectRuntime:
                         e["id"], status="failed",
                         report=(e.get("report") or "") + "\n\n> Interrupted by "
                                 "a server restart — use Run to continue.")
+                    log.warning("eval %s recovered (was running)", e["id"])
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("eval recovery scan failed")
 
     # --------------------------------------------------- finetune chat monitor
     def start_finetune_monitor(self) -> None:
@@ -340,11 +501,45 @@ class ProjectRuntime:
         except Exception:  # noqa: BLE001
             pass
 
-    def ctx(self, emit, approval) -> ToolContext:
-        return ToolContext(kernels=self.kernels, artifacts=self.artifacts,
+    def ctx(self, emit, approval, kernels=None, workflow=None) -> ToolContext:
+        return ToolContext(kernels=kernels or self.kernels,
+                           artifacts=self.artifacts,
                            store=self.store, permissions=self.permissions,
                            approval=approval, emit=emit, notebooks=self.notebooks,
-                           workflow=self.workflow, audit=self.audit_emitter)
+                           workflow=workflow or self.workflow,
+                           audit=self.audit_emitter)
+
+    def status(self) -> dict:
+        """Unified observability view: what this project is running right now,
+        kernel health (incl. restarts), the workflow snapshot, and audit stats."""
+        kernels = {}
+        try:
+            kernels["python"] = self.kernels.python.status()
+        except Exception:  # noqa: BLE001
+            kernels["python"] = {"state": "unknown"}
+        try:
+            r = getattr(self.kernels, "r", None)
+            kernels["r"] = r.status() if r is not None else None
+        except Exception:  # noqa: BLE001
+            kernels["r"] = None
+        audit = {}
+        try:
+            audit = {"events": self.audit_store.count(),
+                     "open_deviations": self.audit_store.count_open_deviations()}
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "name": self.name,
+            "campaign_running": self.campaign_running(),
+            "campaign_id": self._campaign_cid,
+            "eval_running": self.eval_running(),
+            "eval_id": self._eval_id,
+            "plans_running": sorted(k for k, t in self._plan_tasks.items()
+                                    if not t.done()),
+            "kernels": kernels,
+            "workflow": self.workflow.snapshot(),
+            "audit": audit,
+        }
 
     def _experiment_context(self) -> str:
         """A goal-first block describing the experiment the agent should steer
@@ -563,8 +758,50 @@ class ProjectRuntime:
         new_cutoff = block[-1]["id"]
         self.store.set_setting("context_summary", summary)
         self.store.set_setting("context_cutoff", str(new_cutoff))
+        # Traceability: compaction itself is audited (how many turns were folded
+        # into the summary and where the fresh-context cut landed).
+        try:
+            if self.audit_emitter is not None:
+                from .audit import emit_session_event
+                from .logging_config import clear_log_context, set_log_context
+                set_log_context(project=self.name)
+                await emit_session_event(
+                    self.audit_emitter, agent_id="system",
+                    session_id=self.name, trace_id=None, run_id=None,
+                    kind="compaction", tool_name=None, payload={
+                        "event": "compaction",
+                        "folded": len(block),
+                        "cutoff": new_cutoff,
+                        "kept": len(fresh) - len(block),
+                        "used_llm": summary != _conversation_digest(block, limit=160),
+                    },
+                    severity="info")
+                clear_log_context("project")
+        except Exception:  # noqa: BLE001
+            log.debug("compaction audit emit failed", exc_info=True)
 
-    async def stop(self):
+    async def stop(self, drain_timeout: float = 10.0):
+        """Graceful shutdown: request stop on background work, await the
+        campaign/eval tasks (they check ``campaign_stop`` between steps and
+        persist a resumable point), cancel stragglers, then stop the finetune
+        monitor, audit emitter and kernels. Returns when drained or timed out."""
+        self.campaign_stop = True
+        self.stop_finetune_monitor()
+        await self.drain_plans()
+        tasks = [t for t in (self._campaign_task, self._eval_task) if t is not None]
+        if tasks:
+            try:
+                await asyncio.wait(tasks, timeout=drain_timeout)
+            except Exception:  # noqa: BLE001
+                pass
+            for t in tasks:
+                if not t.done():
+                    log.warning("cancelling unfinished task for %r", self.name)
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        pass
         try:
             await self.audit_emitter.stop()
         except Exception:  # noqa: BLE001

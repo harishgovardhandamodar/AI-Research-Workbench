@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 import sys
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -42,9 +43,13 @@ from .state import (CONFIG, allowed_origins, get_runtime, mcp_registry,
 
 _rkg_scheduler: "ScenarioScheduler | None" = None
 
+log = logging.getLogger("fox.main")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from .logging_config import setup_logging
+    setup_logging()
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
     # Recover plans a previous process left RUNNING (killed by a restart).
     try:
@@ -94,6 +99,23 @@ if allowed_origins():
         allow_origins=sorted(allowed_origins()), allow_credentials=False,
         allow_methods=["*"], allow_headers=["*"],
     )
+
+
+@app.middleware("http")
+async def _log_context_middleware(request: Request, call_next):
+    """Set the log-correlation context (project id) from the request path for
+    the duration of a REST call, so router logs are greppable by project."""
+    from .logging_config import set_log_context, clear_log_context
+    project = None
+    parts = request.url.path.split("/")
+    if len(parts) >= 4 and parts[1] == "api" and parts[2] == "projects":
+        project = parts[3]
+    if project:
+        set_log_context(project=project)
+    try:
+        return await call_next(request)
+    finally:
+        clear_log_context("project")
 
 app.include_router(system.router)
 app.include_router(projects.router)
@@ -1864,24 +1886,48 @@ async def ws_chat(ws: WebSocket, name: str):
         rt._plan_approvals = {}
 
     def _record_run(r: dict) -> int:
-        rid = rt.store.add_run(
-            prompt=r.get("prompt", ""),
-            reply=r.get("reply", ""),
-            status=r.get("status", "done"),
-            started_at=r.get("started_at", 0.0),
-            finished_at=r.get("finished_at", time.time()),
-            tool_sequence=r.get("tool_sequence"),
-            artifact_ids=r.get("artifact_ids"),
-            metrics=r.get("metrics"),
-            review=r.get("review"),
-            experiment_id=r.get("experiment_id") or None,
-            config=r.get("config"),
-            label=r.get("label"),
-            parent_run_id=r.get("parent_run_id") or None,
-            model=r.get("model") or None,
-            code=r.get("code"),
-            env=r.get("env"),
-            message_id=r.get("message_id") or None)
+        # Two-phase lifecycle: the coordinator pre-creates the run row (id set)
+        # so its audit events link by run_id; otherwise fall back to add_run.
+        if r.get("id"):
+            rid = rt.store.finish_run(
+                rid=int(r["id"]),
+                reply=r.get("reply", ""),
+                status=r.get("status", "done"),
+                finished_at=r.get("finished_at"),
+                tool_sequence=r.get("tool_sequence"),
+                artifact_ids=r.get("artifact_ids"),
+                metrics=r.get("metrics"),
+                config=r.get("config"),
+                label=r.get("label"),
+                code=r.get("code"),
+                env=r.get("env"),
+                dataset=r.get("dataset"),
+                error=r.get("error") or None,
+                review=r.get("review"),
+                plan_id=r.get("plan_id") or None,
+                plan_step_id=r.get("plan_step_id") or None)
+        else:
+            rid = rt.store.add_run(
+                prompt=r.get("prompt", ""),
+                reply=r.get("reply", ""),
+                status=r.get("status", "done"),
+                started_at=r.get("started_at", 0.0),
+                finished_at=r.get("finished_at", time.time()),
+                tool_sequence=r.get("tool_sequence"),
+                artifact_ids=r.get("artifact_ids"),
+                metrics=r.get("metrics"),
+                review=r.get("review"),
+                experiment_id=r.get("experiment_id") or None,
+                config=r.get("config"),
+                label=r.get("label"),
+                parent_run_id=r.get("parent_run_id") or None,
+                model=r.get("model") or None,
+                code=r.get("code"),
+                env=r.get("env"),
+                message_id=r.get("message_id") or None,
+                error=r.get("error") or None,
+                plan_id=r.get("plan_id") or None,
+                plan_step_id=r.get("plan_step_id") or None)
         # Auto-commit experiment artifacts to the management repo (best-effort,
         # off the event loop) when a run is part of an experiment.
         try:
@@ -1900,12 +1946,15 @@ async def ws_chat(ws: WebSocket, name: str):
                               record=_record_run,
                               max_iters=rt.max_iters, mcp=mcp_registry,
                               audit=rt.audit_emitter,
-                              check_abort=abort_event.is_set)
+                              check_abort=abort_event.is_set,
+                              turn_timeout=getattr(rt, "turn_timeout", 0))
 
     async def handle_turn(text: str, intent: str = "", experiment_id: str = "",
                           msg_extra: dict | None = None):
         msg_extra = msg_extra or {}
         abort_event.clear()
+        from .logging_config import set_log_context
+        set_log_context(project=name)
         async with rt.lock:
             try:
                 # Slash commands (e.g. "/godmode run x", "/commit", "/help").
@@ -2230,7 +2279,8 @@ async def ws_chat(ws: WebSocket, name: str):
                                 "type_mae": res["types_error"]["mae"],
                             },
                             kind="peer_experiment", label=f"peer:{filename}",
-                            model=None, dataset=filename)
+                            model=None, dataset=filename,
+                            plan_id=msg_extra.get("plan_id") or None)
                         content = (
                             f"**🏦 Peer identification & market-share experiment — `{filename}`**\n\n"
                             f"- Transactions: {res['n']:,} · Banks: {', '.join(res['banks'])}\n"
@@ -2366,6 +2416,16 @@ async def ws_chat(ws: WebSocket, name: str):
                         pass
                     run_plan = pstore.get(payload["plan_id"])
 
+                    if rt.plan_running(payload["plan_id"]):
+                        try:
+                            await emit("notice", {"message":
+                                "This plan is already executing — not relaunched."})
+                        except Exception:  # noqa: BLE001
+                            pass
+                        await emit("status", {"message": ""})
+                        await emit("done", {})
+                        return
+
                     async def _execute_plan(run_plan=run_plan):
                         try:
                             from .routers.experiment_planner import present_result
@@ -2383,7 +2443,7 @@ async def ws_chat(ws: WebSocket, name: str):
                             except Exception:  # noqa: BLE001
                                 pass
 
-                    asyncio.create_task(_execute_plan())
+                    _ok, _msg = rt.launch_plan(payload["plan_id"], _execute_plan())
                     await emit("status", {"message":
                         "✅ Plan approved — executing in the background…"})
                     await emit("done", {})
@@ -2407,6 +2467,7 @@ async def ws_chat(ws: WebSocket, name: str):
                     eid = step.get("experiment_id")
                     coordinator.ctx.experiment_id = str(eid)
                     coordinator.ctx.parent_run_id = _best_run_id(rt.store, eid)
+                    coordinator.ctx.plan_step_id = str(sid)
                     rt.store.update_experiment_step(int(sid), status="running")
                     plan_step_id = int(sid)
                 if intent == "retry_stage":
@@ -2433,9 +2494,14 @@ async def ws_chat(ws: WebSocket, name: str):
                         n = str(stage).replace("step", "")
                         cid = inv.get("campaign_id")
                         if str(n).isdigit() and cid is not None:
+                            # Durable resume point (persisted on the campaign),
+                            # preferred over the volatile workflow snapshot.
+                            resume_step = (rt.store.campaign_resume_step(int(cid))
+                                           or int(n))
                             result = await run_campaign(
                                 rt, coordinator, rt.build_llm_messages, int(cid),
-                                emit=emit, workflow=rt.workflow, resume_step=int(n))
+                                emit=emit, workflow=rt.workflow,
+                                resume_step=resume_step)
                             await emit("status", {"message": ""})
                             await emit("done", {})
                             return
@@ -2690,6 +2756,7 @@ async def ws_chat(ws: WebSocket, name: str):
                         pass
                 await emit("done", {})
             except LLMError as e:
+                log.exception("LLM error during turn in %r", name)
                 await emit("status", {"message": ""})
                 await emit("error", {"message": str(e)})
                 if plan_step_id:
@@ -2698,6 +2765,7 @@ async def ws_chat(ws: WebSocket, name: str):
                     except Exception:  # noqa: BLE001
                         pass
             except Exception as e:  # noqa: BLE001
+                log.exception("unhandled turn error in %r", name)
                 await emit("status", {"message": ""})
                 await emit("error", {"message": f"{type(e).__name__}: {e}"})
                 if plan_step_id:
@@ -2784,6 +2852,9 @@ async def ws_chat(ws: WebSocket, name: str):
     finally:
         recv_task.cancel()
         broker.reject_all()  # don't let the agent hang on a vanished client
+        # Stop the in-flight turn (non-detached work): the coordinator checks
+        # abort at LLM/tool boundaries and unwinds cleanly, saving progress.
+        abort_event.set()
         # Reject any pending experiment-plan approvals so they don't hang.
         try:
             for fut in getattr(rt, "_plan_approvals", {}).values():

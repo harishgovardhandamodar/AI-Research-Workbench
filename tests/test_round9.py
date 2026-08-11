@@ -133,13 +133,17 @@ class CompareRouteOrderTests(unittest.TestCase):
             rt.llm = None
             return rt
 
+        original = runs.get_runtime
         runs.get_runtime = lambda name: holder.setdefault("rt", make_rt())
-        app = FastAPI()
-        app.include_router(runs.router)
-        c = TestClient(app)
-        r = c.get("/api/projects/p/experiments/compare")
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertIn("rows", r.json())
+        try:
+            app = FastAPI()
+            app.include_router(runs.router)
+            c = TestClient(app)
+            r = c.get("/api/projects/p/experiments/compare")
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertIn("rows", r.json())
+        finally:
+            runs.get_runtime = original
 
 
 class RunEvalTests(unittest.IsolatedAsyncioTestCase):

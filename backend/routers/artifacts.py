@@ -85,6 +85,21 @@ async def list_artifacts(name: str):
     return {"artifacts": get_runtime(name).artifacts.list()}
 
 
+@router.get("/api/projects/{name}/artifacts/verify")
+async def artifacts_verify(name: str):
+    """Verify artifact integrity (tamper-evidence for artifact bytes)."""
+    return {"chain": get_runtime(name).artifacts.verify_artifacts()}
+
+
+@router.get("/api/projects/{name}/artifacts/{artifact_id}/verify")
+async def artifact_verify(name: str, artifact_id: str):
+    """Verify a single artifact's bytes against its recorded hash."""
+    res = get_runtime(name).artifacts.verify_artifact(artifact_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return res
+
+
 @router.get("/artifacts/{artifact_id}")
 async def artifact_file(artifact_id: str):
     for rt in runtimes.values():

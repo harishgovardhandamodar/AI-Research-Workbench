@@ -46,6 +46,9 @@ class PythonKernel:
         self._last_ok: bool | None = None
         self._last_error: str | None = None
         self._exec_count = 0
+        # How many times the subprocess died and was restarted mid-session
+        # (kernel state loss is surfaced to the run record / logs).
+        self.restarts = 0
 
     # -- status / events -----------------------------------------------------
     def subscribe(self, listener) -> callable:
@@ -80,6 +83,7 @@ class PythonKernel:
             "last_error": self._last_error,
             "last_duration_ms": round(self._last_duration_ms, 2),
             "exec_count": self._exec_count,
+            "restarts": self.restarts,
         }
 
     # -- lifecycle ----------------------------------------------------------
@@ -162,6 +166,12 @@ class PythonKernel:
         await self._lock.acquire()
         try:
             if self._proc is None or self._proc.returncode is not None:
+                # The subprocess died (or never started). If it was alive before,
+                # this restart destroys kernel state — surface it.
+                if self._proc is not None:
+                    self.restarts += 1
+                    self._notify("reset", {"ok": False, "reason": "restarted",
+                                           "restarts": self.restarts})
                 await self._start()
             rid = uuid4().hex
             req["id"] = rid

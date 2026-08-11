@@ -92,6 +92,7 @@ class AuditEvent(BaseModel):
     event_id: str = Field(default_factory=ulid_now)
     timestamp: datetime = Field(default_factory=_now)
     trace_id: str | None = None
+    run_id: str | None = None
     session_id: str | None = None
     agent_id: str
     principal: dict = Field(

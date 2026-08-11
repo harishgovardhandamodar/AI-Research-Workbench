@@ -52,11 +52,13 @@ async def audit_events(name: str, agent: str | None = None, source: str | None =
                        tool: str | None = None, severity: str | None = None,
                        session: str | None = None, q: str | None = None,
                        since: str | None = None, until: str | None = None,
+                       run_id: str | None = None,
                        limit: int = 200, offset: int = 0):
     """Searchable event list (newest first)."""
     store = _store(name)
     events = store.query(agent_id=agent, source=source, tool_name=tool,
                          severity=severity, session_id=session,
+                         run_id=run_id,
                          since=_ts(since), until=_ts(until),
                          limit=min(int(limit), 2000), offset=int(offset))
     if q:

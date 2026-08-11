@@ -24,6 +24,10 @@ from ..store import ProjectStore
 
 ToolFn = Callable[..., Awaitable[str]]
 
+# Upper bound on ephemeral kernels a single parameter sweep may spawn; larger
+# grids run their excess points sequentially on the main kernel.
+MAX_SWEEP_KERNELS = 8
+
 
 @dataclasses.dataclass
 class ToolContext:
@@ -53,6 +57,34 @@ class ToolContext:
     last_artifact_ids: list = dataclasses.field(default_factory=list)
     variant: dict | None = None
     finished_variants: list = dataclasses.field(default_factory=list)
+    # Ephemeral kernels (e.g. parameter-sweep pools) owned by in-flight tools.
+    # Registered so a cancelled/aborted turn still stops them (see
+    # ``stop_kernels``) instead of leaking subprocesses.
+    active_kernels: list = dataclasses.field(default_factory=list)
+    # Cooperative abort signal (the coordinator's check_abort), consulted by
+    # long-running tools (sweeps) so a stopped turn unwinds between points.
+    check_abort: Callable[[], bool] | None = None
+
+    async def stop_kernels(self) -> None:
+        """Stop any ephemeral kernels still registered (sweep pools on abort).
+        Idempotent; safe to call from a ``finally`` block."""
+        if not self.active_kernels:
+            return
+        kerns, self.active_kernels = list(self.active_kernels), []
+        stop = getattr(self.kernels, "stop_pool", None)
+        if stop and kerns:
+            await asyncio.shield(stop(kerns))
+
+    def register_kernels(self, kernels: list) -> None:
+        """Track ephemeral kernels so they're stopped if the turn is aborted."""
+        self.active_kernels.extend(kernels)
+
+    def unregister_kernels(self, kernels: list) -> None:
+        for k in kernels:
+            try:
+                self.active_kernels.remove(k)
+            except ValueError:
+                pass
 
 
 TOOL_SCHEMAS: list[dict] = [
@@ -531,30 +563,50 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
 
     kernels = []
     t0 = time.time()
+    rows = []
+    parallel_n = 0
     try:
+        if ctx.check_abort is not None and ctx.check_abort():
+            return "[error] aborted before the sweep started"
         pool = getattr(ctx.kernels, "pool", None)
-        kernels = list(pool(len(configs))) if pool else []
-        rows = []
+        # Cap the pool so a huge grid can't spawn hundreds of subprocesses; the
+        # excess points run sequentially on the main kernel.
+        if pool:
+            parallel_n = min(len(configs), MAX_SWEEP_KERNELS)
+            kernels = list(pool(parallel_n))
+            if kernels:
+                ctx.register_kernels(kernels)
         if kernels:
             async def one(k, i, cfg):
                 return await _sweep_point(ctx, k, code, cfg, _label(i, cfg),
                                           parent_id, eid, i, env)
             rows = await asyncio.gather(
-                *[one(k, i, c) for i, (k, c) in enumerate(zip(kernels, configs), 1)])
-        else:
-            for i, cfg in enumerate(configs, 1):
-                rows.append(await _sweep_point(
-                    ctx, ctx.kernels.python, code, cfg, _label(i, cfg),
-                    parent_id, eid, i, env))
+                *[one(k, i, c) for i, (k, c) in enumerate(
+                    zip(kernels, configs[:parallel_n]), 1)])
+        for i, cfg in enumerate(configs[parallel_n:], parallel_n + 1):
+            if ctx.check_abort is not None and ctx.check_abort():
+                if i <= 1:
+                    return "[error] aborted before the sweep started"
+                rows.append({"index": i, "label": _label(i, cfg), "config": cfg,
+                             "metrics": {}, "error": "aborted by user"})
+                break
+            rows.append(await _sweep_point(
+                ctx, ctx.kernels.python, code, cfg, _label(i, cfg),
+                parent_id, eid, i, env))
     finally:
         if kernels:
+            ctx.unregister_kernels(kernels)
             stop = getattr(ctx.kernels, "stop_pool", None)
             if stop:
-                await stop(kernels)
+                await asyncio.shield(stop(kernels))
 
-    lines = [f"## Parameter sweep — {len(configs)} points "
-             f"({'parallel' if kernels else 'sequential'})",
-             ""]
+    if parallel_n and parallel_n < len(configs):
+        mode = f"parallel {parallel_n} + sequential {len(configs) - parallel_n}"
+    elif parallel_n:
+        mode = "parallel"
+    else:
+        mode = "sequential"
+    lines = [f"## Parameter sweep — {len(configs)} points ({mode})", ""]
     cols = sorted({k for r in rows for k in r.get("metrics", {})})
     lines.append("| point | label | config | " + " | ".join(cols) + " |")
     lines.append("|" + "---|" * (3 + len(cols)))
@@ -570,6 +622,44 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
     return "\n".join(lines)
 
 
+def _record_tool_run(ctx: ToolContext, *, prompt: str, reply: str,
+                     status: str = "done", kind: str, label: str | None = None,
+                     experiment_id: int | None = None,
+                     parent_run_id: int | None = None, model: str | None = None,
+                     metrics: dict | None = None, config: dict | None = None,
+                     code: dict | list | None = None, env: dict | None = None,
+                     dataset: str | None = None, error: str | None = None,
+                     tool_sequence: list | None = None,
+                     artifact_ids: list | None = None,
+                     plan_id: str | None = None,
+                     plan_step_id: str | None = None) -> int | None:
+    """Persist a tool-produced run through the two-phase lifecycle (begin/finish)
+    so it is first-class: pre-created row gives run_id for audit linkage, and
+    finish_run records the structured error + integrity hash. Returns the run id,
+    or None when no store is attached (pure sandbox contexts)."""
+    if ctx.store is None:
+        return None
+    started = time.time()
+    try:
+        rid = ctx.store.begin_run(
+            prompt=prompt, started_at=started, kind=kind,
+            experiment_id=experiment_id, parent_run_id=parent_run_id,
+            model=model,
+            message_id=(int(ctx.message_id)
+                        if str(getattr(ctx, "message_id", "")).isdigit() else None),
+            plan_id=plan_id, plan_step_id=plan_step_id)
+        if not rid:
+            return None
+        ctx.store.finish_run(
+            rid=rid, reply=reply, status=status, finished_at=time.time(),
+            tool_sequence=tool_sequence, artifact_ids=artifact_ids,
+            metrics=metrics, config=config, label=label, code=code, env=env,
+            dataset=dataset, error=error or None)
+        return rid
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
                        label: str, parent_id, eid, index: int,
                        env: dict | None = None) -> dict:
@@ -577,24 +667,61 @@ async def _sweep_point(ctx: ToolContext, kernel, code: str, cfg: dict,
     run with the returned metrics + full code + env. Store writes stay on the
     event loop."""
     started = time.time()
+    rid = None
     try:
+        if ctx.store is not None:
+            rid = ctx.store.begin_run(
+                prompt=code, started_at=started, kind="sweep",
+                experiment_id=eid, parent_run_id=parent_id,
+                model=getattr(ctx, "model", None),
+                message_id=(int(ctx.message_id)
+                            if str(getattr(ctx, "message_id", "")).isdigit()
+                            else None))
         await kernel.run_code("config = " + json.dumps(cfg))
         resp = await kernel.run_code(code)
         metrics = resp.get("metrics") or {}
         error = resp.get("error") or ""
         if error:
             metrics = {}
-        rid = None
-        if ctx.store is not None:
-            rid = ctx.store.add_run(
-                prompt=code, reply=resp.get("output", "")[:2000],
+        # First-class point run: finish the pre-created row (integrity hash +
+        # structured error). If begin_run was unavailable, fall back to the
+        # two-phase helper which does begin+finish in one call.
+        if rid:
+            ctx.store.finish_run(
+                rid=rid, reply=resp.get("output", "")[:2000],
                 status="done" if not error else "failed",
-                started_at=started, finished_at=time.time(),
+                tool_sequence=[{"name": "run_sweep", "ok": not error,
+                                "args": {"config": cfg}, "result": error or "ok"}],
+                metrics=metrics, config=cfg, label=label,
+                code=[{"name": "run_sweep", "code": code}], env=env or {},
+                error=error or None)
+        else:
+            rid = _record_tool_run(
+                ctx, prompt=code, reply=resp.get("output", "")[:2000],
+                status="done" if not error else "failed",
                 tool_sequence=[{"name": "run_sweep", "ok": not error,
                                 "args": {"config": cfg}, "result": error or "ok"}],
                 metrics=metrics, experiment_id=eid, config=cfg, label=label,
-                kind="sweep", parent_run_id=parent_id, model=getattr(ctx, "model", None),
-                code=[{"name": "run_sweep", "code": code}], env=env or {})
+                kind="sweep", parent_run_id=parent_id,
+                model=getattr(ctx, "model", None),
+                code=[{"name": "run_sweep", "code": code}], env=env or {},
+                error=error or None)
+        # Traceability: each sweep point is an audit event linked to its own
+        # run_id (previously only the parent run_sweep tool call was audited).
+        if rid and ctx.audit is not None:
+            try:
+                from ..audit import emit_tool_audit
+                session = getattr(ctx.artifacts, "project_dir", None)
+                await emit_tool_audit(
+                    ctx.audit, agent_id="Fox",
+                    session_id=(Path(session).name if session else None),
+                    trace_id=ctx.message_id or None, run_id=str(rid),
+                    tool_name="run_sweep", method="sweep_point",
+                    args={"config": cfg}, result=error or "ok", ok=not error,
+                    duration_ms=(time.time() - started) * 1000.0,
+                    source="coordinator")
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as e:  # noqa: BLE001
         return {"index": index, "label": label, "config": cfg,
                 "metrics": {}, "error": f"{type(e).__name__}: {e}"}
@@ -625,24 +752,21 @@ async def _run_finetune(ctx: ToolContext, base_model: str, dataset: str,
         return f"[error] {err}"
     eid = int(ctx.experiment_id) if str(ctx.experiment_id).isdigit() else None
     script = finetune_script(cfg)
-    started = time.time()
     env = {}
     try:
         env = await ctx.kernels.get_env()
     except Exception:  # noqa: BLE001
         pass
-    if ctx.store is not None:
-        ctx.store.add_run(
-            prompt=f"finetune {cfg['base_model']} on {cfg['dataset']}",
-            reply=finetune_summary(cfg), status="done",
-            started_at=started, finished_at=time.time(),
-            tool_sequence=[{"name": "run_finetune", "ok": True,
-                            "args": {"config": cfg}, "result": "setup recorded"}],
-            metrics={}, experiment_id=eid, config=cfg, label="finetune",
-            kind="finetune", parent_run_id=ctx.parent_run_id,
-            model=getattr(ctx, "model", None),
-            code=[{"name": "run_finetune", "code": script}], env=env or {},
-            dataset=cfg["dataset"] or None)
+    _record_tool_run(
+        ctx, prompt=f"finetune {cfg['base_model']} on {cfg['dataset']}",
+        reply=finetune_summary(cfg), status="done",
+        tool_sequence=[{"name": "run_finetune", "ok": True,
+                        "args": {"config": cfg}, "result": "setup recorded"}],
+        metrics={}, experiment_id=eid, config=cfg, label="finetune",
+        kind="finetune", parent_run_id=ctx.parent_run_id,
+        model=getattr(ctx, "model", None),
+        code=[{"name": "run_finetune", "code": script}], env=env or {},
+        dataset=cfg["dataset"] or None)
     return finetune_summary(cfg) + \
         "\n\nTraining script:\n```python\n" + script + "\n```"
 
@@ -848,16 +972,11 @@ async def _run_notebook(ctx: ToolContext, notebook: str, cells: str = "all") -> 
     # and graph with its metrics and artifacts.
     try:
         metrics = await _notebook_metrics(ctx)
-        ctx.store.add_run(
-            prompt=f"run notebook {notebook}",
-            reply=result,
-            status="done",
-            started_at=time.time(), finished_at=time.time(),
+        _record_tool_run(
+            ctx, prompt=f"run notebook {notebook}",
+            reply=result, status="done",
             artifact_ids=[a["id"] for a in collected],
-            metrics=metrics,
-            kind="notebook",
-            label=notebook,
-        )
+            metrics=metrics, kind="notebook", label=notebook)
     except Exception:  # noqa: BLE001
         pass
     return result

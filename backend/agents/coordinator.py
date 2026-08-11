@@ -4,16 +4,29 @@ emitting streaming events to the client."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 import time
+import traceback
 from pathlib import Path
 from typing import Awaitable, Callable
 
 from ..llm import LLMClient
 from .approval import ApprovalBroker
 from .tools import ToolContext, build_tools, get_tool_schemas
+
+log = logging.getLogger("fox.coordinator")
+
+# Read-only / idempotent tools safe to retry once after a transient failure.
+# Mutating tools (run_python, run_shell, run_sweep, editor__edit_file, …) must
+# never auto-retry — a retry could double-execute side effects.
+_RETRYABLE_TOOLS = {
+    "editor__read_file", "editor__list_files", "editor__open",
+    "list_files", "get_env", "list_variables",
+}
 
 SYSTEM_PROMPT = """\
 You are Fox, an open-source experiment workbench running fully on the user's machine.
@@ -175,7 +188,8 @@ class Coordinator:
                  record: Callable[[dict], int] | None = None,
                  max_iters: int = 8, mcp=None,
                  audit=None,
-                 check_abort: Callable[[], bool] | None = None):
+                 check_abort: Callable[[], bool] | None = None,
+                 turn_timeout: float = 0.0):
         self.llm = llm
         self.ctx = ctx
         self.emit = emit or _noop_emit
@@ -185,6 +199,10 @@ class Coordinator:
         self.mcp = mcp
         self.audit = audit
         self.check_abort = check_abort
+        # Wall-clock cap for one whole turn (0 = unlimited). Checked at LLM/tool
+        # boundaries so a degenerate turn can't burn resources indefinitely.
+        self.turn_timeout = max(0.0, float(turn_timeout))
+        self._turn_deadline: float | None = None
         self.tools = build_tools(ctx)
         self._mcp_loaded = False
         self._run_seq: list[dict] = []
@@ -194,6 +212,8 @@ class Coordinator:
         self._run_code: list[dict] = []
         self._run_env: dict = {}
         self._run_started = 0.0
+        self._run_error: str = ""
+        self._pre_run_id: int | None = None
         self.agent_name = "Fox"
         self.model_name = getattr(self.llm, "model", "") or ""
         self._stream_model_support: bool | None = None
@@ -249,6 +269,16 @@ class Coordinator:
     def _raise_if_aborted(self) -> None:
         if self.check_abort is not None and self.check_abort():
             raise TurnAborted()
+
+    def _budget_exceeded(self) -> bool:
+        """True when the turn's wall-clock budget has been spent."""
+        return (self._turn_deadline is not None
+                and time.monotonic() >= self._turn_deadline)
+
+    def _budget_message(self) -> str:
+        return ("I hit this turn's time budget and stopped to avoid burning "
+                "resources. Progress so far was saved — tell me to continue "
+                "and I'll pick up where I left off.")
 
     def _exp_meta(self, base: dict | None = None) -> dict:
         """Message meta tagged with the experiment this turn belongs to, so the
@@ -314,7 +344,17 @@ class Coordinator:
         self._run_code = []
         self._run_env = {}
         self._run_started = time.time()
+        self._run_error = ""
+        self._pre_run_id = None
         self.ctx.run_id = ""
+        self.ctx.check_abort = self.check_abort
+        self._turn_deadline = (time.monotonic() + self.turn_timeout
+                               if self.turn_timeout > 0 else None)
+        try:
+            from ..logging_config import clear_log_context
+            clear_log_context("run", "trace")
+        except Exception:  # noqa: BLE001
+            pass
         status = "done"
         text = ""
         model_override = self._pinned_model()
@@ -325,12 +365,69 @@ class Coordinator:
             self._run_env = await self.ctx.kernels.get_env()
         except Exception:  # noqa: BLE001
             self._run_env = {}
+        # Kernel state-loss transparency: if a kernel died + restarted this turn,
+        # record it so the run is honest about which execution state it started
+        # with (a restarted kernel has no prior variables/modules).
+        try:
+            restarts = {n: int(getattr(k, "restarts", 0) or 0)
+                        for n, k in (("python", self.ctx.kernels.python),
+                                     ("r", getattr(self.ctx.kernels, "r", None)))
+                        if k is not None}
+            if any(restarts.values()):
+                self._run_env["_kernel_restarts"] = restarts
+                log.warning("kernel restarted this turn (%s); state was lost",
+                            {n: r for n, r in restarts.items() if r})
+        except Exception:  # noqa: BLE001
+            pass
         audit_meta = self._audit_meta()
+        try:
+            from ..logging_config import set_log_context
+            set_log_context(project=audit_meta.get("session_id"),
+                            trace=str(getattr(self.ctx, "message_id", "") or ""))
+        except Exception:  # noqa: BLE001
+            pass
+        # Two-phase run lifecycle: pre-create the run row (status='running') so
+        # its numeric id is known before any tool runs — every audit event this
+        # turn emits links to it via run_id, and a crash mid-turn leaves a row
+        # that recovery marks 'interrupted' instead of a phantom.
+        try:
+            store = getattr(self.ctx, "store", None)
+            if store is not None and hasattr(store, "begin_run"):
+                rid = store.begin_run(
+                    prompt=_last_user_content(messages),
+                    started_at=self._run_started,
+                    kind="agent_run",
+                    experiment_id=(int(self.ctx.experiment_id)
+                                   if str(getattr(self.ctx, "experiment_id", "")).isdigit()
+                                   else None),
+                    parent_run_id=getattr(self.ctx, "parent_run_id", None),
+                    model=self.model_name,
+                    message_id=(int(self.ctx.message_id)
+                                if str(getattr(self.ctx, "message_id", "")).isdigit()
+                                else None))
+                if rid:
+                    self._pre_run_id = rid
+                    self.ctx.run_id = str(rid)
+                    audit_meta = dict(audit_meta)
+                    audit_meta["run_id"] = str(rid)
+                    try:
+                        from ..logging_config import set_log_context
+                        set_log_context(run=str(rid),
+                                        trace=str(getattr(self.ctx, "message_id", "") or ""),
+                                        project=audit_meta.get("session_id"))
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            log.warning("could not pre-create run row", exc_info=True)
         await self._audit_turn_event("turn_start", audit_meta)
         try:
             await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
                 self._raise_if_aborted()
+                if self._budget_exceeded():
+                    status = "stopped"
+                    text = self._budget_message()
+                    break
                 stream_kwargs = {"on_delta": self._on_delta}
                 if self._stream_supports_model():
                     stream_kwargs["model"] = model_override or None
@@ -373,9 +470,20 @@ class Coordinator:
                 for tc in full["tool_calls"]:
                     await self._exec_tool_call(tc, audit_meta, messages)
                     self._raise_if_aborted()
+                    if self._budget_exceeded():
+                        status = "stopped"
+                        text = self._budget_message()
+                        break
+                if status == "stopped":
+                    break
 
             if workflow is not None:
                 await workflow.finish()
+            if status == "stopped":
+                log.warning("turn stopped at wall-clock budget")
+                await self._emit_status(phase="complete")
+                return {"text": text, "tools": self._tool_summary(),
+                        "model": self.model_name}
             text = self._fallback()
             await self._emit_status(phase="complete")
             return {"text": text, "tools": self._tool_summary(),
@@ -387,10 +495,20 @@ class Coordinator:
             raise
         except Exception:  # noqa: BLE001
             status = "error"
+            self._run_error = traceback.format_exc(limit=20)
+            log.exception("agent turn %s failed",
+                          getattr(self.ctx, "message_id", None) or "?")
             if workflow is not None:
                 await workflow.finish()
             raise
         finally:
+            # Robustness: stop any ephemeral kernels (sweep pools) still open so
+            # an aborted/failed turn can't leak subprocesses. Shielded so the
+            # cleanup survives the current task's cancellation.
+            try:
+                await asyncio.shield(self.ctx.stop_kernels())
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
             await self._audit_turn_event(
                 "turn_end", audit_meta, status=status)
             self._record_run(messages, status, text)
@@ -418,7 +536,8 @@ class Coordinator:
             await emit_session_event(
                 self.audit, agent_id=self.agent_name,
                 session_id=meta.get("session_id"), trace_id=meta.get("trace_id"),
-                kind=kind, tool_name=None, payload=payload,
+                run_id=meta.get("run_id"), kind=kind, tool_name=None,
+                payload=payload,
                 severity="info" if kind == "turn_start" else
                         ("critical" if status == "error" else "info"))
         except Exception:  # noqa: BLE001
@@ -456,8 +575,24 @@ class Coordinator:
                     result = await self.tools[name](**args)
                 ok = not result.startswith("[error]")
             except Exception as e:  # noqa: BLE001
-                result = f"[error] {type(e).__name__}: {e}"
-                ok = False
+                # Conservative retry: only read-only / idempotent tools are
+                # retried once after a transient failure (a mutating tool like
+                # run_python must never run twice). The retry only happens when
+                # the tool raised before producing any side effect we can detect.
+                if name in _RETRYABLE_TOOLS:
+                    try:
+                        await asyncio.sleep(0.2)
+                        result = await self.tools[name](**args)
+                        ok = not result.startswith("[error]")
+                    except Exception as e2:  # noqa: BLE001
+                        result = f"[error] {type(e2).__name__}: {e2}"
+                        ok = False
+                        log.warning("tool %s retry failed: %s", name, e2,
+                                    exc_info=True)
+                else:
+                    result = f"[error] {type(e).__name__}: {e}"
+                    ok = False
+                    log.warning("tool %s failed: %s", name, e, exc_info=True)
             duration_ms = (time.perf_counter() - t0) * 1000.0
             if self.audit is not None:
                 try:
@@ -468,6 +603,7 @@ class Coordinator:
                         agent_id=self.agent_name,
                         session_id=audit_meta["session_id"],
                         trace_id=audit_meta["trace_id"],
+                        run_id=audit_meta.get("run_id"),
                         tool_name=name, method=name,
                         args=args, result=result, ok=ok,
                         duration_ms=duration_ms,
@@ -536,19 +672,55 @@ class Coordinator:
                         "ok": t.get("ok", False)})
         return out
 
+    def _persist_transcript(self, messages: list[dict]) -> str:
+        """Persist the exact LLM request (params + assembled messages) as a
+        transcript artifact for this turn. Returns the artifact id, or '' on
+        any failure (never crashes the turn)."""
+        try:
+            if self.ctx.artifacts is None:
+                return ""
+            params = {
+                "model": self.model_name,
+                "temperature": getattr(self.llm, "temperature", None),
+                "max_tokens": getattr(self.llm, "max_tokens", None),
+            }
+            payload = json.dumps({"params": params, "messages": messages},
+                                 ensure_ascii=False, default=str)
+            from ..artifacts.store import Artifact
+            art = Artifact(
+                kind="transcript",
+                name=f"transcript-{int(self._run_started)}",
+                description=("Exact LLM request for this run: model params + "
+                             "the full assembled message list as sent."),
+                code="", env=self._run_env or {},
+                message_id=self.ctx.message_id or "", run_id="",
+                data_type="text")
+            self.ctx.artifacts.add_artifact(art, data=payload.encode(),
+                                            data_type="text")
+            return art.id
+        except Exception:  # noqa: BLE001
+            log.debug("could not persist turn transcript", exc_info=True)
+            return ""
+
     def _record_run(self, messages: list[dict], status: str, text: str) -> None:
         prompt = ""
         for m in reversed(messages):
             if m.get("role") == "user":
                 prompt = m.get("content", "")
                 break
+        # LLM request fidelity: persist the exact assembled messages + params as
+        # a transcript artifact so the run is reproducible even after compaction
+        # summarizes (not deletes) the conversation. Immune to context_cutoff.
+        transcript_id = self._persist_transcript(messages)
+        if transcript_id and transcript_id not in self._run_artifacts:
+            self._run_artifacts.append(transcript_id)
         # The run's identity: the most recently finished variant wins, otherwise a
         # variant still open at turn end, otherwise the experiment baseline.
         variant = (self.ctx.finished_variants or [None])[-1] or self.ctx.variant
         variant_metrics = dict(variant.get("metrics") or {}) if variant else {}
         metrics = dict(self._run_metrics)
         metrics.update(variant_metrics)
-        run_id = self.record({
+        record = {
             "prompt": prompt,
             "reply": text,
             "status": status,
@@ -568,7 +740,15 @@ class Coordinator:
             "dataset": self._run_dataset,
             "message_id": (int(self.ctx.message_id)
                            if str(getattr(self.ctx, "message_id", "")).isdigit() else None),
-        })
+            "plan_id": str(getattr(self.ctx, "plan_id", "") or "") or None,
+            "plan_step_id": (str(getattr(self.ctx, "plan_step_id", "") or "")
+                             or None),
+        }
+        if self._pre_run_id is not None:
+            record["id"] = self._pre_run_id
+        if self._run_error:
+            record["error"] = self._run_error[:10000]
+        run_id = self.record(record)
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)
             try:
@@ -583,6 +763,14 @@ class Coordinator:
     def _fallback() -> str:
         return ("I hit the maximum number of tool steps for this turn and couldn't "
                 "finish. Let me know if you'd like me to continue or adjust the approach.")
+
+
+def _last_user_content(messages: list[dict]) -> str:
+    """The last user message text in a turn's message list."""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            return str(m.get("content", ""))
+    return ""
 
 
 def _snippet(value, limit: int) -> str:

@@ -56,6 +56,7 @@ class LocalAuditStore:
                 tool_name TEXT,
                 severity TEXT,
                 trace_id TEXT,
+                run_id TEXT,
                 prev_hash TEXT,
                 event_hash TEXT,
                 payload TEXT NOT NULL)"""
@@ -81,6 +82,16 @@ class LocalAuditStore:
                     f"CREATE INDEX IF NOT EXISTS idx_audit_{col} ON audit_events ({col})")
             except sqlite3.OperationalError:
                 pass
+        # Migration: older databases predate the run_id linkage column.
+        try:
+            c.execute("ALTER TABLE audit_events ADD COLUMN run_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_run_id ON audit_events (run_id)")
+        except sqlite3.OperationalError:
+            pass
         c.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts_agent ON audit_events (ts, agent_id)")
         c.commit()
 
@@ -112,11 +123,11 @@ class LocalAuditStore:
             self._conn.execute(
                 "INSERT OR IGNORE INTO audit_events "
                 "(event_id, ts, agent_id, session_id, source, mcp_server, method,"
-                " tool_name, severity, trace_id, prev_hash, event_hash, payload)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " tool_name, severity, trace_id, run_id, prev_hash, event_hash, payload)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ev.event_id, ev.timestamp.timestamp(), ev.agent_id,
                  ev.session_id, ev.source, ev.mcp_server, ev.method,
-                 ev.tool_name, ev.severity, ev.trace_id,
+                 ev.tool_name, ev.severity, ev.trace_id, ev.run_id,
                  ev.prev_hash, ev.event_hash, json.dumps(payload)))
             self._conn.commit()
             if self.jsonl_chain:
@@ -170,6 +181,7 @@ class LocalAuditStore:
     def query(self, agent_id: str | None = None, source: str | None = None,
               tool_name: str | None = None, severity: str | None = None,
               session_id: str | None = None, trace_id: str | None = None,
+              run_id: str | None = None,
               since: datetime | float | None = None,
               until: datetime | float | None = None,
               limit: int = 500, offset: int = 0,
@@ -195,6 +207,9 @@ class LocalAuditStore:
         if trace_id:
             where.append("trace_id = ?")
             params.append(trace_id)
+        if run_id:
+            where.append("run_id = ?")
+            params.append(str(run_id))
         if since is not None:
             where.append("ts >= ?")
             params.append(_ts(since))
@@ -214,7 +229,7 @@ class LocalAuditStore:
                 d = {k: d.get(k) for k in (
                     "event_id", "timestamp", "agent_id", "source", "tool_name",
                     "method", "severity", "duration_ms", "policy_decision",
-                    "tags", "event_hash", "prev_hash")}
+                    "tags", "event_hash", "prev_hash", "run_id")}
             out.append(d)
         return out
 

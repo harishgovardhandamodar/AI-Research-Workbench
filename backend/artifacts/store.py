@@ -6,6 +6,7 @@ an environment snapshot, and a link to the conversation message that led to it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -73,11 +74,17 @@ class ArtifactStore:
                 id TEXT PRIMARY KEY,
                 kind TEXT, name TEXT, description TEXT, code TEXT,
                 env TEXT, message_id TEXT, run_id TEXT, created_at REAL,
-                data_path TEXT, data_type TEXT, size INTEGER)"""
+                data_path TEXT, data_type TEXT, size INTEGER,
+                integrity_hash TEXT)"""
         )
         # Migration: older databases were created before run_id existed.
         try:
             self._conn.execute("ALTER TABLE artifacts ADD COLUMN run_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: older databases predate artifact integrity hashing.
+        try:
+            self._conn.execute("ALTER TABLE artifacts ADD COLUMN integrity_hash TEXT")
         except sqlite3.OperationalError:
             pass
         self._conn.commit()
@@ -92,21 +99,88 @@ class ArtifactStore:
         artifact.size = len(data)
         return path
 
+    # Fields included in the metadata integrity hash. Excludes message_id/run_id
+    # because link_artifacts() updates them after creation — hashing them would
+    # make legitimately-linked artifacts fail verification.
+    _STABLE_FIELDS = ("id", "kind", "name", "description", "code", "env",
+                      "created_at", "data_path", "data_type", "size")
+
     def add_artifact(self, artifact: Artifact, data: bytes | None = None,
                      data_type: str = "text") -> Artifact:
+        integrity = ""
         if data is not None:
             self._write_bytes(artifact, data, data_type)
+            integrity = hashlib.sha256(data).hexdigest()
+        else:
+            # Normalize env exactly as it is stored (JSON string) so the
+            # metadata hash recomputes identically in verify.
+            canonical = {}
+            for k in self._STABLE_FIELDS:
+                v = getattr(artifact, k)
+                canonical[k] = json.dumps(v, default=str) if k == "env" else v
+            integrity = hashlib.sha256(json.dumps(
+                canonical, sort_keys=True, default=str).encode()).hexdigest()
         self._conn.execute(
             """INSERT INTO artifacts (id, kind, name, description, code, env,
-               message_id, run_id, created_at, data_path, data_type, size)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               message_id, run_id, created_at, data_path, data_type, size,
+               integrity_hash)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (artifact.id, artifact.kind, artifact.name, artifact.description,
              artifact.code, json.dumps(artifact.env), artifact.message_id,
              artifact.run_id, artifact.created_at, artifact.data_path,
-             artifact.data_type, artifact.size),
+             artifact.data_type, artifact.size, integrity),
         )
         self._conn.commit()
         return artifact
+
+    def verify_artifact(self, artifact_id: str) -> dict | None:
+        """Recompute an artifact's integrity hash and compare to the recorded
+        one (tamper-evidence for artifact bytes). Returns None when missing."""
+        row = self._conn.execute(
+            "SELECT * FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
+        if row is None:
+            return None
+        stored = row["integrity_hash"] or ""
+        if not stored:
+            return {"artifact_id": artifact_id, "ok": None, "hash": "",
+                    "message": "no integrity hash recorded (pre-migration artifact)"}
+        computed = self._hash_for_row(row)
+        return {"artifact_id": artifact_id, "ok": computed == stored,
+                "hash": stored,
+                "message": "verified" if computed == stored else "MISMATCH"}
+
+    def verify_artifacts(self, limit: int = 1000) -> dict:
+        """Verify every recorded artifact's bytes; returns a summary."""
+        rows = self._conn.execute(
+            "SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?",
+            (limit,)).fetchall()
+        ok_count = skipped = mismatch = 0
+        errors: list[dict] = []
+        for r in rows:
+            stored = r["integrity_hash"] or ""
+            if not stored:
+                skipped += 1
+                continue
+            computed = self._hash_for_row(r)
+            if computed == stored:
+                ok_count += 1
+            else:
+                mismatch += 1
+                errors.append({"artifact_id": r["id"], "reason": "hash mismatch"})
+        return {"ok": mismatch == 0, "verified": ok_count,
+                "skipped": skipped, "mismatches": mismatch, "errors": errors}
+
+    def _hash_for_row(self, row) -> str:
+        """Recompute an artifact's integrity hash from its stored bytes/dict."""
+        if row["data_path"]:
+            try:
+                data = Path(row["data_path"]).read_bytes()
+                return hashlib.sha256(data).hexdigest()
+            except OSError:
+                return ""
+        return hashlib.sha256(json.dumps(
+            {k: row[k] for k in self._STABLE_FIELDS},
+            sort_keys=True, default=str).encode()).hexdigest()
 
     def link_artifacts(self, artifact_ids: list, message_id: str = "",
                        run_id: str = "") -> int:

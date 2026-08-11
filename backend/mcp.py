@@ -160,6 +160,18 @@ DEFAULT_SERVERS = [
         "env": {"PYTHONPATH": str(ROOT)},
         "trusted": False,
     },
+    # ---- Model Risk Management (MRM) for banking data simulations ----
+    # Governed inventory + synthetic generation + Monte Carlo / scenario /
+    # stress simulation + mandatory TSTR validation + maker-checker approvals +
+    # append-only audit log (SR 11-7 / 2026 interagency-aligned).
+    {
+        "name": "mrm",
+        "transport": "stdio",
+        "command": "{python}",
+        "args": ["-m", "mcp_servers.mrm.server"],
+        "env": {"PYTHONPATH": str(ROOT)},
+        "trusted": False,
+    },
 ]
 
 
@@ -196,6 +208,7 @@ class MCPConnection:
                 try:
                     from .paths import PROJECTS_DIR
                     env["FOX_PLAN_STORE"] = str(PROJECTS_DIR)
+                    env["FOX_MRM_STORE"] = str(PROJECTS_DIR / ".mrm")
                 except Exception:  # noqa: BLE001
                     pass
                 try:

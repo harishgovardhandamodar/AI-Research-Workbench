@@ -8,6 +8,8 @@ examples/experiments/*.pdb
 examples/privacy/*.png
 examples/privacy/*.csv
 examples/privacy/reports/
+examples/mrm/reports/
+examples/mrm/store/
 examples/obfuscation/obfuscation_report.md
 docker-compose.override.yml
 .env

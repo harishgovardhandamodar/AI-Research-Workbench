@@ -132,6 +132,7 @@ def _result_status(result: str, ok: bool) -> str:
 
 async def emit_tool_audit(emitter: AuditEmitter, *, agent_id: str,
                           session_id: str | None, trace_id: str | None,
+                          run_id: str | None = None,
                           tool_name: str, method: str | None,
                           args: dict | None, result: str | None,
                           ok: bool, duration_ms: float,
@@ -149,7 +150,7 @@ async def emit_tool_audit(emitter: AuditEmitter, *, agent_id: str,
         data_classes = [filesystem["operation"]]
     event = AuditEvent(
         agent_id=agent_id, source=source, session_id=session_id,
-        trace_id=trace_id, mcp_server=mcp_server,
+        trace_id=trace_id, run_id=run_id, mcp_server=mcp_server,
         method=method or tool_name, tool_name=tool_name,
         arguments_redacted=redact(args),
         result_summary=AuditEvent.result_summary_for(
@@ -170,6 +171,7 @@ async def emit_tool_audit(emitter: AuditEmitter, *, agent_id: str,
 
 async def emit_policy_event(emitter: AuditEmitter, *, agent_id: str,
                             session_id: str | None, trace_id: str | None,
+                            run_id: str | None = None,
                             kind: str, command: str, decision: str,
                             temporary: bool, reason: str = "",
                             risk_tier: str | None = None) -> None:
@@ -181,7 +183,7 @@ async def emit_policy_event(emitter: AuditEmitter, *, agent_id: str,
         outcome = "OVERRIDE"  # one-shot grants are overrides of the policy
     event = AuditEvent(
         agent_id=agent_id, source="approval", session_id=session_id,
-        trace_id=trace_id, tool_name=kind or "permission", method="permission",
+        trace_id=trace_id, run_id=run_id, tool_name=kind or "permission", method="permission",
         arguments_redacted=None,
         result_summary=None,
         policy_decision={
@@ -201,6 +203,7 @@ async def emit_policy_event(emitter: AuditEmitter, *, agent_id: str,
 
 async def emit_session_event(emitter: AuditEmitter, *, agent_id: str,
                              session_id: str | None, trace_id: str | None,
+                             run_id: str | None = None,
                              kind: str, tool_name: str | None = None,
                              payload: dict | None = None,
                              severity: str = "info") -> None:
@@ -209,7 +212,7 @@ async def emit_session_event(emitter: AuditEmitter, *, agent_id: str,
         return
     event = AuditEvent(
         agent_id=agent_id, source="system", session_id=session_id,
-        trace_id=trace_id, method=kind, tool_name=tool_name,
+        trace_id=trace_id, run_id=run_id, method=kind, tool_name=tool_name,
         result_summary=({"status": "ok", "data_classes": [],
                          "size": None, "error": None} | (payload or {})),
         severity=severity, tags=["session", kind],
@@ -261,6 +264,7 @@ def public_event(ev: dict) -> dict:
         "agent_id": ev.get("agent_id"),
         "session_id": ev.get("session_id"),
         "trace_id": ev.get("trace_id"),
+        "run_id": ev.get("run_id"),
         "source": ev.get("source"),
         "mcp_server": ev.get("mcp_server"),
         "method": ev.get("method"),

@@ -13,9 +13,14 @@ reviewer), but takes its dependencies explicitly so the loop is unit-testable.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Awaitable, Callable
 
+log = logging.getLogger("fox.experiment_loop")
+
 LOOP_MAX_ITERATIONS = 5
+DEFAULT_LOOP_TIMEOUT = 3600.0  # wall-clock cap for one improve loop
 
 _NoopEmit = Callable[[str, dict], Awaitable[None]]
 
@@ -50,7 +55,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
                            iterations: int | None = None,
                            max_iterations: int = LOOP_MAX_ITERATIONS,
                            workflow=None,
-                           start_at: int = 1) -> dict:
+                           start_at: int = 1,
+                           timeout_sec: float | None = None) -> dict:
     """Run a bounded improve loop for an experiment.
 
     Returns {"summary", "iterations": [...], "goal_reached": bool, "best": value}.
@@ -59,6 +65,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     `workflow` (a WorkflowTracker) is given, per-iteration progress is pushed to
     the chat's workflow panel. `start_at > 1` resumes a previously failed loop
     from iteration N (stage ids offset, lineage from the best prior run).
+    ``timeout_sec`` caps the loop wall-clock; on expiry the loop stops
+    gracefully and can be resumed from the next iteration.
     """
     emit = emit or _noop_emit
     exp = store.get_experiment(experiment_id)
@@ -121,6 +129,8 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     last_applied_sid = None
     goal_reached = False
     stopped_reason = ""
+    deadline = (time.monotonic() + (timeout_sec or DEFAULT_LOOP_TIMEOUT)
+                if timeout_sec != 0 else None)
     history: list[dict] = []
     regress_streak = 0
 
@@ -133,6 +143,11 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
     coordinator.ctx.parent_run_id = parent_run_id
 
     for i in range(start_at, iterations + 1):
+        if deadline is not None and time.monotonic() >= deadline:
+            stopped_reason = f"deadline exceeded (loop >{timeout_sec or DEFAULT_LOOP_TIMEOUT:g}s)"
+            await emit("notice", {"message": (
+                f"Improve loop {stopped_reason} — resumable from iteration {i}.")})
+            break
         if workflow is not None:
             await workflow.update_stage(f"iter{i}", "running",
                                         message=f"Improve loop — iteration {i}/{iterations}")
@@ -149,6 +164,7 @@ async def run_improve_loop(store, coordinator, build_llm_messages, reviewer,
         try:
             result = await coordinator.run_turn(build_llm_messages())
         except Exception as e:  # noqa: BLE001
+            log.exception("improve loop iteration %d failed", i)
             stopped_reason = f"iteration {i} failed: {type(e).__name__}: {e}"
             await emit("notice", {"message": f"Improve loop {stopped_reason}"})
             if workflow is not None:

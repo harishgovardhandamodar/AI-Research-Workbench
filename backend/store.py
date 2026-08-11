@@ -23,13 +23,19 @@ _DB_CACHE_LOCK = threading.Lock()
 
 
 def connect_project_db(project_dir: Path) -> sqlite3.Connection:
-    """Open (or return the cached) connection for a project's workbench.db."""
+    """Open (or return the cached) connection for a project's workbench.db.
+
+    ``check_same_thread=False``: the connection may be used from the event-loop
+    thread AND from ``asyncio.to_thread`` workers (e.g. experiment execution /
+    git auto-commit), which is safe here because every transaction is completed
+    synchronously inside a single call (no cross-thread transactions)."""
     key = str(Path(project_dir).resolve())
     with _DB_CACHE_LOCK:
         conn = _PROJECT_DB_CACHE.get(key)
         if conn is None:
             project_dir.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(project_dir / "workbench.db")
+            conn = sqlite3.connect(project_dir / "workbench.db",
+                                   check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             _PROJECT_DB_CACHE[key] = conn
@@ -61,7 +67,7 @@ class ProjectStore:
             """CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 role TEXT NOT NULL, content TEXT NOT NULL,
-                created_at REAL, meta TEXT)"""
+                created_at REAL, meta TEXT, prev_hash TEXT, integrity_hash TEXT)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS grants (
@@ -85,7 +91,8 @@ class ProjectStore:
                 prompt TEXT, reply TEXT, status TEXT,
                 started_at REAL, finished_at REAL,
                 tool_sequence TEXT, artifact_ids TEXT, metrics TEXT, review TEXT,
-                experiment_id INTEGER, config TEXT, label TEXT, kind TEXT)"""
+                experiment_id INTEGER, config TEXT, label TEXT, kind TEXT,
+                plan_id TEXT, plan_step_id TEXT)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS experiments (
@@ -121,7 +128,8 @@ class ProjectStore:
                 name TEXT, research_question TEXT,
                 goal_metric TEXT, higher_better INTEGER,
                 status TEXT DEFAULT 'planned',
-                report TEXT, created_at REAL, updated_at REAL)"""
+                report TEXT, created_at REAL, updated_at REAL,
+                resume_step INTEGER)"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS campaign_steps (
@@ -155,6 +163,14 @@ class ProjectStore:
                 name TEXT, prompt TEXT, models TEXT, goal_metric TEXT,
                 higher_better INTEGER, status TEXT DEFAULT 'planned',
                 report TEXT, created_at REAL, updated_at REAL)"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS experiment_plans (
+                plan_id TEXT PRIMARY KEY,
+                experiment_id TEXT, name TEXT, request TEXT, dataset TEXT,
+                seed INTEGER, status TEXT, parent_id TEXT,
+                started_at REAL, created_at REAL, updated_at REAL,
+                result TEXT, error TEXT, metrics TEXT)"""
         )
         # Migration: older databases predate the metrics column.
         try:
@@ -254,18 +270,109 @@ class ProjectStore:
             c.execute("ALTER TABLE suggestions ADD COLUMN category TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: robustness round — traceback/error detail captured on a
+        # run row when a turn fails, so failed runs are forensically traceable.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN error TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: plan lineage — the deterministic plan (and optional plan
+        # step) that produced a run, linking the run lineage back to planning.
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN plan_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE runs ADD COLUMN plan_step_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: per-message integrity chain — each message is hashed
+        # (chained to its predecessor) so the conversation transcript is
+        # tamper-evident. Pre-existing rows get a NULL hash and are backfilled
+        # lazily by add_message's chain recovery.
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN prev_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN integrity_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # Migration: durable campaign resume point (survives restart and is
+        # independent of the volatile workflow snapshot).
+        try:
+            c.execute("ALTER TABLE campaigns ADD COLUMN resume_step INTEGER")
+        except sqlite3.OperationalError:
+            pass
         c.commit()
 
     # -- messages -----------------------------------------------------------
+    @staticmethod
+    def _message_hash(role: str, content: str, meta: dict | None,
+                      prev_hash: str) -> str:
+        """Stable hash of one message's canonical record (chained to the
+        previous message's hash) — the per-message integrity chain."""
+        return hashlib.sha256(json.dumps({
+            "role": role, "content": content, "meta": meta or {},
+            "prev_hash": prev_hash,
+        }, sort_keys=True, default=str).encode()).hexdigest()
+
+    def _last_message_hash(self) -> str:
+        row = self._conn.execute(
+            "SELECT integrity_hash FROM messages"
+            " WHERE integrity_hash IS NOT NULL AND integrity_hash != ''"
+            " ORDER BY id DESC LIMIT 1").fetchone()
+        return (row[0] or "") if row else ""
+
     def add_message(self, role: str, content: str, meta: dict | None = None) -> int:
         if role not in ROLES:
             role = "assistant"
+        prev_hash = self._last_message_hash()
+        integrity = self._message_hash(role, content, meta or {}, prev_hash)
         cur = self._conn.execute(
-            "INSERT INTO messages (role, content, created_at, meta) VALUES (?,?,?,?)",
-            (role, content, time.time(), json.dumps(meta or {})),
+            "INSERT INTO messages (role, content, created_at, meta,"
+            " prev_hash, integrity_hash) VALUES (?,?,?,?,?,?)",
+            (role, content, time.time(), json.dumps(meta or {}),
+             prev_hash, integrity),
         )
         self._conn.commit()
         return cur.lastrowid
+
+    def verify_message_chain(self) -> dict:
+        """Verify the per-message integrity chain: each hashed message's hash
+        matches its content and chains to the previous hashed message. Rows
+        without a hash (pre-migration) are counted as skipped, not errors."""
+        rows = self._conn.execute("SELECT * FROM messages ORDER BY id").fetchall()
+        ok = True
+        verified = 0
+        skipped = 0
+        errors: list[dict] = []
+        prev_hash = ""
+        for r in rows:
+            stored = r["integrity_hash"] or ""
+            if not stored:
+                skipped += 1
+                prev_hash = ""
+                continue
+            try:
+                meta = json.loads(r["meta"] or "{}")
+            except json.JSONDecodeError:
+                meta = {}
+            computed = self._message_hash(r["role"], r["content"], meta,
+                                          r["prev_hash"] or "")
+            if stored != computed:
+                ok = False
+                errors.append({"id": r["id"], "reason": "hash mismatch"})
+                prev_hash = stored
+                continue
+            if (r["prev_hash"] or "") != prev_hash:
+                ok = False
+                errors.append({"id": r["id"],
+                               "reason": "chain break (prev_hash mismatch)"})
+            prev_hash = stored
+            verified += 1
+        return {"ok": ok and not errors, "verified": verified,
+                "skipped": skipped, "errors": errors}
 
     def list_messages(self, limit: int = 500) -> list[dict]:
         rows = self._conn.execute(
@@ -305,6 +412,11 @@ class ProjectStore:
             d["meta"] = json.loads(row["meta"] or "{}")
         except json.JSONDecodeError:
             d["meta"] = {}
+        try:
+            d["prev_hash"] = row["prev_hash"] or ""
+            d["integrity_hash"] = row["integrity_hash"] or ""
+        except (KeyError, TypeError):
+            pass
         return d
 
     def clear_messages(self):
@@ -397,7 +509,10 @@ class ProjectStore:
                 code: dict | list | None = None,
                 env: dict | None = None,
                 message_id: int | None = None,
-                dataset: str | None = None) -> int:
+                dataset: str | None = None,
+                error: str | None = None,
+                plan_id: str | None = None,
+                plan_step_id: str | None = None) -> int:
         """Persist one agent turn as a run row (prompt → reply → tool trail).
 
         `kind` tags the source of the record (agent_run, notebook, workflow,
@@ -412,6 +527,12 @@ class ProjectStore:
         `integrity_hash` is a sha256 over the canonical record (round-8).
         `dataset` tags which dataset the run used (e.g. real / synthetic), so an
         experiment's runs can be grouped and compared across datasets.
+        `error` captures the traceback/detail of a failed turn (robustness
+        round); it is metadata, excluded from the integrity hash so old runs
+        keep verifying.
+        `plan_id` / `plan_step_id` link the run to the deterministic plan (and
+        optional step) that produced it — unified plan lineage. Like `error`
+        they are lineage metadata, excluded from the integrity hash.
         """
         cfg = config or {}
         met = metrics or {}
@@ -431,15 +552,16 @@ class ProjectStore:
             "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
             " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
             " label, kind, parent_run_id, model, git_commit, code, env, message_id,"
-            " integrity_hash, dataset)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " integrity_hash, dataset, error, plan_id, plan_step_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (prompt, reply, status, started_at, finished_at,
              json.dumps(seq), json.dumps(art),
              json.dumps(met), json.dumps(review or {}),
              experiment_id, json.dumps(cfg), label or None,
              kind or "agent_run", parent_run_id, model or None,
              git_commit or None, json.dumps(cod), json.dumps(envd),
-             message_id, integrity, ds))
+             message_id, integrity, ds, error or None,
+             plan_id or None, plan_step_id or None))
         if experiment_id is not None:
             # A fresh run means the experiment is active now: bump updated_at so
             # "most recently active" experiment selection reflects real activity.
@@ -462,6 +584,119 @@ class ProjectStore:
         computed = hashlib.sha256(_canonical_run(run).encode()).hexdigest()
         return {"ok": computed == stored, "hash": stored,
                 "message": "verified" if computed == stored else "MISMATCH"}
+
+    # -- two-phase run lifecycle (begin/finish) -----------------------------
+    # A run row is pre-created with status="running" *before* the agent turn
+    # executes so its numeric id can be attached to every audit event the turn
+    # produces (run_id linkage) and so an interrupted process leaves a visible
+    # "running" row that recovery marks as "interrupted" instead of a phantom.
+    def begin_run(self, prompt: str = "", started_at: float | None = None,
+                  kind: str = "agent_run", experiment_id: int | None = None,
+                  parent_run_id: int | None = None, model: str | None = None,
+                  message_id: int | None = None,
+                  plan_id: str | None = None,
+                  plan_step_id: str | None = None) -> int:
+        """Open a run row in status ``running``; returns its id."""
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO runs (prompt, reply, status, started_at, finished_at,"
+            " tool_sequence, artifact_ids, metrics, review, experiment_id, config,"
+            " label, kind, parent_run_id, model, git_commit, code, env, message_id,"
+            " integrity_hash, dataset, error, plan_id, plan_step_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (prompt or "", "", "running", started_at or now, None,
+             json.dumps([]), json.dumps([]), json.dumps({}), json.dumps({}),
+             experiment_id, json.dumps({}), None, kind or "agent_run",
+             parent_run_id, model or None, None, json.dumps([]), json.dumps({}),
+             message_id, None, None, None, plan_id or None, plan_step_id or None))
+        self._conn.commit()
+        return cur.lastrowid
+
+    def finish_run(self, rid: int, reply: str = "", status: str = "done",
+                   finished_at: float | None = None,
+                   tool_sequence: list | None = None,
+                   artifact_ids: list | None = None,
+                   metrics: dict | None = None,
+                   config: dict | None = None, label: str | None = None,
+                   code: dict | list | None = None,
+                   env: dict | None = None, dataset: str | None = None,
+                   error: str | None = None,
+                   review: dict | None = None,
+                   plan_id: str | None = None,
+                   plan_step_id: str | None = None) -> int:
+        """Finalize a run opened with :meth:`begin_run` (status/reply/metrics +
+        integrity hash). Returns the run id, or 0 when the row is missing."""
+        row = self._conn.execute(
+            "SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
+        if row is None:
+            return 0
+        cfg = config or {}
+        met = metrics or {}
+        seq = tool_sequence or []
+        art = artifact_ids or []
+        cod = code or []
+        envd = env or {}
+        ds = dataset or (str(cfg.get("dataset") or "").strip() or None)
+        integrity = hashlib.sha256(_canonical_run({
+            "prompt": row["prompt"] or "", "reply": reply, "status": status,
+            "kind": row["kind"] or "agent_run", "label": label,
+            "experiment_id": row["experiment_id"],
+            "parent_run_id": row["parent_run_id"],
+            "model": row["model"] or "", "git_commit": row["git_commit"] or "",
+            "config": cfg, "metrics": met, "tool_sequence": seq,
+            "code": cod, "env": envd,
+        }).encode()).hexdigest()
+        plan_id = plan_id or row["plan_id"]
+        plan_step_id = plan_step_id or row["plan_step_id"]
+        self._conn.execute(
+            "UPDATE runs SET reply=?, status=?, finished_at=?, tool_sequence=?,"
+            " artifact_ids=?, metrics=?, review=?, config=?, label=?, code=?,"
+            " env=?, dataset=?, integrity_hash=?, error=?, plan_id=?,"
+            " plan_step_id=? WHERE id=?",
+            (reply, status, finished_at or time.time(), json.dumps(seq),
+             json.dumps(art), json.dumps(met), json.dumps(review or {}),
+             json.dumps(cfg), label or None, json.dumps(cod), json.dumps(envd),
+             ds, integrity, error or None, plan_id or None,
+             plan_step_id or None, rid))
+        if row["experiment_id"] is not None:
+            self._conn.execute(
+                "UPDATE experiments SET updated_at=? WHERE id=?",
+                (time.time(), row["experiment_id"]))
+        self._conn.commit()
+        return rid
+
+    def mark_interrupted_runs(self) -> int:
+        """Mark any run left status='running' by a crashed/stopped process as
+        'interrupted'. Returns the number of runs marked."""
+        rows = self._conn.execute(
+            "SELECT id, prompt, error FROM runs WHERE status='running'").fetchall()
+        if not rows:
+            return 0
+        note = ("Turn interrupted by a server restart; the run was left "
+                "'running' with no finished record.")
+        for r in rows:
+            self._conn.execute(
+                "UPDATE runs SET status='interrupted', finished_at=?,"
+                " error=CASE WHEN error IS NULL OR error='' THEN ? ELSE error END"
+                " WHERE id=?", (time.time(), note, r["id"]))
+        self._conn.commit()
+        try:
+            from audit.models import AuditEvent
+            from audit.store import LocalAuditStore
+            store = LocalAuditStore(self.project_dir / "audit", jsonl_chain=True)
+            for r in rows:
+                store.append(AuditEvent(
+                    agent_id="system", source="system",
+                    session_id=self.project_dir.name,
+                    run_id=str(r["id"]), method="run_interrupted",
+                    result_summary=AuditEvent.result_summary_for(
+                        status="error", error=note[:2000]),
+                    severity="warning",
+                    tags=["workbench", "recovery", "interrupted"]))
+            store.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return len(rows)
 
     def set_run_git_commit(self, rid: int, commit: str | None):
         self._conn.execute(
@@ -690,12 +925,15 @@ class ProjectStore:
         return out
 
     def update_campaign(self, cid: int, *, status: str | None = None,
-                        report: str | None = None) -> None:
+                        report: str | None = None,
+                        resume_step: int | None = None) -> None:
         sets, vals = [], []
         if status is not None:
             sets.append("status=?"); vals.append(status)
         if report is not None:
             sets.append("report=?"); vals.append(report)
+        if resume_step is not None:
+            sets.append("resume_step=?"); vals.append(resume_step)
         if not sets:
             return
         sets.append("updated_at=?")
@@ -704,14 +942,32 @@ class ProjectStore:
             f"UPDATE campaigns SET {', '.join(sets)} WHERE id=?", (*vals, cid))
         self._conn.commit()
 
+    def campaign_resume_step(self, cid: int) -> int | None:
+        """The next step to run (1-based) for a campaign: the first step that
+        isn't 'done'. None when every step completed. Durable — independent of
+        the volatile workflow snapshot, so resume survives restart and
+        concurrent chat turns."""
+        rows = self._conn.execute(
+            "SELECT step_order, status FROM campaign_steps"
+            " WHERE campaign_id=? ORDER BY step_order", (cid,)).fetchall()
+        for r in rows:
+            if (r["status"] or "planned") != "done":
+                return int(r["step_order"])
+        return None
+
     def _row_campaign(self, r) -> dict:
-        return {"id": r["id"], "name": r["name"],
-                "research_question": r["research_question"] or "",
-                "goal_metric": r["goal_metric"] or "",
-                "higher_better": bool(r["higher_better"]),
-                "status": r["status"] or "planned",
-                "report": r["report"] or "",
-                "created_at": r["created_at"], "updated_at": r["updated_at"]}
+        out = {"id": r["id"], "name": r["name"],
+               "research_question": r["research_question"] or "",
+               "goal_metric": r["goal_metric"] or "",
+               "higher_better": bool(r["higher_better"]),
+               "status": r["status"] or "planned",
+               "report": r["report"] or "",
+               "created_at": r["created_at"], "updated_at": r["updated_at"]}
+        try:
+            out["resume_step"] = r["resume_step"]
+        except (KeyError, TypeError):
+            out["resume_step"] = None
+        return out
 
     def add_campaign_step(self, campaign_id: int, step_order: int, title: str,
                           kind: str = "experiment", hypothesis: str = "",
@@ -916,6 +1172,81 @@ class ProjectStore:
                 "status": r["status"] or "planned", "report": r["report"] or "",
                 "created_at": r["created_at"], "updated_at": r["updated_at"]}
 
+    # -- experiment plans (unified plan lineage) ----------------------------
+    # The deterministic planner (experiment_planner.PlanStore) keeps the full plan
+    # document as JSON for the separate MCP process; this SQLite mirror is the
+    # unified, queryable plan record that links plans to the runs they produced
+    # (runs.plan_id) inside the project's own store.
+    def upsert_plan(self, plan: dict) -> None:
+        """Create or update the unified plan record from a planner plan dict."""
+        res = json.dumps(plan.get("result") or {}, default=str)
+        met = json.dumps(plan.get("metrics") or {}, default=str)
+        self._conn.execute(
+            "INSERT INTO experiment_plans (plan_id, experiment_id, name, request,"
+            " dataset, seed, status, parent_id, started_at, created_at,"
+            " updated_at, result, error, metrics)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(plan_id) DO UPDATE SET"
+            " experiment_id=excluded.experiment_id, name=excluded.name,"
+            " request=excluded.request, dataset=excluded.dataset,"
+            " seed=excluded.seed, status=excluded.status,"
+            " parent_id=excluded.parent_id, started_at=excluded.started_at,"
+            " updated_at=excluded.updated_at, result=excluded.result,"
+            " error=excluded.error, metrics=excluded.metrics",
+            (plan.get("id") or plan.get("plan_id"),
+             plan.get("experiment_id") or "",
+             plan.get("name") or "",
+             plan.get("request") or "",
+             plan.get("dataset") or "",
+             plan.get("seed"),
+             plan.get("status") or "DRAFT",
+             plan.get("parent_id") or "",
+             plan.get("started_at"),
+             plan.get("created_at") or time.time(),
+             plan.get("updated_at") or time.time(),
+             res, plan.get("error") or "", met))
+        self._conn.commit()
+
+    def get_plan_record(self, plan_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM experiment_plans WHERE plan_id=?", (plan_id,)).fetchone()
+        if row is None:
+            return None
+        try:
+            result = json.loads(row["result"] or "{}")
+        except json.JSONDecodeError:
+            result = {}
+        try:
+            metrics = json.loads(row["metrics"] or "{}")
+        except json.JSONDecodeError:
+            metrics = {}
+        return {"plan_id": row["plan_id"], "experiment_id": row["experiment_id"],
+                "name": row["name"], "request": row["request"],
+                "dataset": row["dataset"], "seed": row["seed"],
+                "status": row["status"], "parent_id": row["parent_id"],
+                "started_at": row["started_at"], "created_at": row["created_at"],
+                "updated_at": row["updated_at"], "result": result,
+                "error": row["error"] or "", "metrics": metrics}
+
+    def list_plan_records(self, status: str | None = None,
+                          limit: int = 100) -> list[dict]:
+        if status:
+            rows = self._conn.execute(
+                "SELECT * FROM experiment_plans WHERE status=? ORDER BY updated_at DESC LIMIT ?",
+                (status, limit)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM experiment_plans ORDER BY updated_at DESC LIMIT ?",
+                (limit,)).fetchall()
+        return [self.get_plan_record(r["plan_id"]) for r in rows]
+
+    def plan_runs(self, plan_id: str, limit: int = 200) -> list[dict]:
+        """The runs a plan produced (by runs.plan_id) — the plan's run lineage."""
+        rows = self._conn.execute(
+            "SELECT * FROM runs WHERE plan_id=? ORDER BY id DESC LIMIT ?",
+            (plan_id, limit)).fetchall()
+        return [self._row_run(r) for r in reversed(rows)]
+
     def record_suggestion_learning(self, sug: dict) -> int | None:
         """Persist a concise learning from a resolved suggestion outcome
         (the round-3 regression check). Returns the learning id or None."""
@@ -958,6 +1289,18 @@ class ProjectStore:
              "env": _jload(r["env"], {}),
              "message_id": r["message_id"],
              "integrity_hash": r["integrity_hash"] or ""}
+        try:
+            d["error"] = r["error"] or ""
+        except (KeyError, TypeError):
+            d["error"] = ""
+        try:
+            d["plan_id"] = r["plan_id"] or ""
+        except (KeyError, TypeError):
+            d["plan_id"] = ""
+        try:
+            d["plan_step_id"] = r["plan_step_id"] or ""
+        except (KeyError, TypeError):
+            d["plan_step_id"] = ""
         try:
             d["dataset"] = r["dataset"] or (d.get("config") or {}).get("dataset") or ""
         except (KeyError, TypeError):

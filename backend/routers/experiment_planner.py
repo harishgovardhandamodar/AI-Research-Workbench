@@ -25,6 +25,15 @@ def _store(rt):
     return PlanStore(rt.dir)
 
 
+def _sync_plan(rt, plan: dict) -> None:
+    """Mirror a planner plan into the project's SQLite plan record (unified
+    plan lineage). Best-effort: the JSON PlanStore stays the source of truth."""
+    try:
+        rt.store.upsert_plan(plan)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def create_or_get_experiment(rt, plan: dict, goal_metric: str = "") -> int | None:
     """Create (or find) the Experiments-tab experiment for a plan. Uses a
     meaningful goal metric when available (falls back to the registry hint) and
@@ -52,13 +61,8 @@ def create_or_get_experiment(rt, plan: dict, goal_metric: str = "") -> int | Non
         return None
 
 
-# Track in-flight plan runs per project: plan_id -> asyncio.Task. Prevents
-# double-execution and enables cancel.
-_run_tasks: dict[str, "asyncio.Task"] = {}
-
-
-def _runs_key(rt, plan_id: str) -> str:
-    return f"{rt.name}:{plan_id}"
+# In-flight plan runs are tracked per project on ProjectRuntime (``_plan_tasks``)
+# so the chat and REST executors share one dedup + cancel registry.
 
 
 def plan_proposal_payload(plan: dict, project_dir: str | None = None) -> dict:
@@ -135,6 +139,7 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     # Persist RUNNING + started_at up front so a restart can recover the run,
     # and so a concurrent cancel can flip it to REJECTED (checked below).
     _store(rt).update(plan["id"], status="RUNNING", started_at=time.time())
+    _sync_plan(rt, _store(rt).get(plan["id"]))
 
     # Record a RUNNING run immediately so the Recent-runs list shows the plan
     # as in progress (previously the run only appeared after execution, so it
@@ -147,7 +152,8 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         started_at=started_at, finished_at=None,
         kind="experiment_plan", label=f"plan:{plan['id']}",
         model=None, dataset=plan.get("dataset"),
-        experiment_id=experiment_id)
+        experiment_id=experiment_id,
+        plan_id=plan["id"])
 
     done = await asyncio.to_thread(
         execute_plan, plan, df, rt.dir, progress or _prog)
@@ -189,6 +195,7 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         done["id"], status=done["status"], result=done["result"],
         metrics=done["metrics"], error=done.get("error"),
         result_dir=done.get("result_dir"))
+    _sync_plan(rt, _store(rt).get(done["id"]))
 
     # Register figures + report as artifacts.
     artifact_ids = []
@@ -271,7 +278,24 @@ def _fmt_metrics(m: dict | None) -> str:
 async def list_plans(name: str, status: str = ""):
     rt = get_runtime(name)
     plans = _store(rt).list(status=status or None)
+    # Backfill the unified plan mirror so pre-existing plans get run lineage.
+    for p in plans:
+        _sync_plan(rt, p)
     return {"plans": plans}
+
+
+@router.get("/api/projects/{name}/experiment-plans/{plan_id}/runs")
+async def plan_runs(name: str, plan_id: str):
+    """The runs a plan produced (unified plan lineage: runs.plan_id)."""
+    rt = get_runtime(name)
+    st = _store(rt)
+    if st.get(plan_id) is None:
+        raise HTTPException(status_code=404, detail="plan not found")
+    _sync_plan(rt, st.get(plan_id))
+    runs = rt.store.plan_runs(plan_id)
+    return {"plan_id": plan_id,
+            "experiment_id": (rt.store.get_plan_record(plan_id) or {}).get("experiment_id"),
+            "runs": runs, "count": len(runs)}
 
 
 @router.get("/api/projects/{name}/experiment-plans/suggestions")
@@ -384,6 +408,7 @@ async def create_plan(name: str, body: dict):
         # Create the Experiments-tab experiment up front so the plan is visible
         # and trackable before it runs.
         create_or_get_experiment(rt, proposed)
+        _sync_plan(rt, proposed)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"plan": plan_proposal_payload(proposed),
@@ -397,6 +422,7 @@ async def decide_plan(name: str, plan_id: str, body: dict):
     approve = bool(body.get("approve"))
     try:
         plan = _store(rt).decide(plan_id, approve, by=body.get("by") or "")
+        _sync_plan(rt, plan)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"plan": plan_proposal_payload(plan),
@@ -408,8 +434,7 @@ async def decide_plan(name: str, plan_id: str, body: dict):
 @router.post("/api/projects/{name}/experiment-plans/{plan_id}/run")
 async def run_plan(name: str, plan_id: str):
     """Launch execution of an APPROVED plan in the background (non-blocking).
-    Idempotent: a plan already running won't be re-launched."""
-    import asyncio
+    Idempotent: a plan already running (chat or REST) won't be re-launched."""
     rt = get_runtime(name)
     plan = _store(rt).get(plan_id)
     if plan is None:
@@ -417,13 +442,13 @@ async def run_plan(name: str, plan_id: str):
     if plan.get("status") != "APPROVED":
         return JSONResponse({"error": "plan must be APPROVED before running"},
                             status_code=400)
-    key = _runs_key(rt, plan_id)
-    if key in _run_tasks and not _run_tasks[key].done():
+    if rt.plan_running(plan_id):
         return {"ok": False, "running": True,
                 "message": "Plan is already running."}
     # Persist the launch so a restart can recover an orphaned RUNNING plan and
     # a cancel mid-run is visible to present_result.
     _store(rt).update(plan_id, status="RUNNING", started_at=time.time())
+    _sync_plan(rt, _store(rt).get(plan_id))
 
     async def _task():
         try:
@@ -434,14 +459,14 @@ async def run_plan(name: str, plan_id: str):
                 if cur.get("status") != "REJECTED":
                     _store(rt).update(plan_id, status="FAILED",
                                       error=f"{type(e).__name__}: {e}")
+                    _sync_plan(rt, _store(rt).get(plan_id))
             except Exception:  # noqa: BLE001
                 pass
-        finally:
-            _run_tasks.pop(key, None)
 
-    _run_tasks[key] = asyncio.create_task(_task())
-    return {"ok": True, "running": True,
-            "message": "Plan execution started in the background."}
+    ok, msg = rt.launch_plan(plan_id, _task())
+    return {"ok": ok, "running": ok,
+            "message": "Plan execution started in the background." if ok
+                       else msg}
 
 
 @router.post("/api/projects/{name}/experiment-plans/{plan_id}/cancel")
@@ -449,22 +474,17 @@ async def cancel_plan(name: str, plan_id: str):
     """Cancel an in-flight plan run (best-effort). The worker thread can't be
     killed, but the persisted status flips to REJECTED so a racing
     present_result won't register artifacts or a DONE result."""
-    import asyncio
     rt = get_runtime(name)
     plan = _store(rt).get(plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="plan not found")
-    key = _runs_key(rt, plan_id)
-    running = bool(_run_tasks.get(key) and not _run_tasks[key].done()) \
-        or plan.get("status") == "RUNNING"
+    running = rt.plan_running(plan_id) or plan.get("status") == "RUNNING"
     if not running:
         return {"ok": False, "message": "Plan is not running."}
-    task = _run_tasks.get(key)
-    if task and not task.done():
-        task.cancel()
-        _run_tasks.pop(key, None)
+    rt.cancel_plan_task(plan_id)
     _store(rt).update(plan_id, status="REJECTED",
                       error="cancelled by user")
+    _sync_plan(rt, _store(rt).get(plan_id))
     return {"ok": True, "message": "Plan run cancelled."}
 
 
@@ -480,6 +500,7 @@ async def repropose_plan(name: str, plan_id: str, body: dict):
             request=(body.get("request") or "").strip() or None)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    _sync_plan(rt, plan)
     return {"plan": plan_proposal_payload(plan),
             "message": "Plan re-proposed — confirm to execute."}
 
@@ -495,6 +516,7 @@ async def clone_plan(name: str, plan_id: str, body: dict):
             request=(body.get("request") or "").strip() or None)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    _sync_plan(rt, _store(rt).get(plan["id"]))
     return {"plan": plan_proposal_payload(_store(rt).get(plan["id"])),
             "message": "Plan cloned — confirm to execute the variant."}
 

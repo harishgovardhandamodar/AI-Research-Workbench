@@ -129,22 +129,26 @@ class FocusRouteOrderTests(unittest.TestCase):
             rt.llm = None
             return rt
 
+        original = runs.get_runtime
         runs.get_runtime = lambda name: holder.setdefault("rt", make_rt())
-        app = FastAPI()
-        app.include_router(runs.router)
-        c = TestClient(app)
-        self.assertEqual(c.get("/api/projects/p/experiments/focus").status_code, 200)
-        self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], None)
-        eid = c.post("/api/projects/p/experiments",
-                     json={"name": "e1", "goal_metric": "acc",
-                           "goal_target": 0.9}).json()["experiment"]["id"]
-        self.assertEqual(
-            c.post("/api/projects/p/experiments/focus", json={"id": eid}).json()["focus_id"], eid)
-        self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], eid)
-        self.assertEqual(c.get(f"/api/projects/p/experiments/{eid}").status_code, 200)
-        self.assertEqual(
-            c.patch(f"/api/projects/p/experiments/{eid}",
-                    json={"goal_target": 0.99}).status_code, 200)
+        try:
+            app = FastAPI()
+            app.include_router(runs.router)
+            c = TestClient(app)
+            self.assertEqual(c.get("/api/projects/p/experiments/focus").status_code, 200)
+            self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], None)
+            eid = c.post("/api/projects/p/experiments",
+                         json={"name": "e1", "goal_metric": "acc",
+                               "goal_target": 0.9}).json()["experiment"]["id"]
+            self.assertEqual(
+                c.post("/api/projects/p/experiments/focus", json={"id": eid}).json()["focus_id"], eid)
+            self.assertEqual(c.get("/api/projects/p/experiments/focus").json()["focus_id"], eid)
+            self.assertEqual(c.get(f"/api/projects/p/experiments/{eid}").status_code, 200)
+            self.assertEqual(
+                c.patch(f"/api/projects/p/experiments/{eid}",
+                        json={"goal_target": 0.99}).status_code, 200)
+        finally:
+            runs.get_runtime = original
 
 
 class RankRunsTargetTests(unittest.TestCase):
