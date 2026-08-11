@@ -31,10 +31,29 @@ async def project_runs(name: str, limit: int = 50):
 async def project_run(name: str, rid: int, include_code: bool = False):
     """One run. `include_code=true` also returns the full executed code per tool
     (index-aligned with `tool_sequence`) for step-level inspection."""
-    run = get_runtime(name).store.get_run(rid, include_code=include_code)
+    rt = get_runtime(name)
+    run = rt.store.get_run(rid, include_code=include_code)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return {"run": run}
+    # Traceability extras: the per-run LLM-request transcript artifact and the
+    # plan record the run belongs to (one-stop provenance view).
+    extras = {"transcript": None, "plan": None}
+    try:
+        for a in rt.artifacts.list(limit=200):
+            if getattr(a, "kind", "") == "transcript" and \
+                    (getattr(a, "run_id", "") or "") == str(rid):
+                extras["transcript"] = {"id": a.id, "name": a.name,
+                                        "data_path": a.data_path}
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    if run.get("plan_id"):
+        try:
+            plan = rt.store.get_plan_record(run["plan_id"])
+            extras["plan"] = plan
+        except Exception:  # noqa: BLE001
+            pass
+    return {"run": run, **extras}
 
 
 @router.post("/api/projects/{name}/runs/{rid}/dataset")
