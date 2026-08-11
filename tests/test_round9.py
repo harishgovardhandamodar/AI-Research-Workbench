@@ -213,6 +213,20 @@ class RunEvalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("m1", result["report"])
         self.assertIn("m2", result["report"])
 
+    async def test_retry_skips_already_benchmarked_models(self):
+        rt = self._rt()
+        eid = rt.store.create_eval("bench", "Run the task", ["m1", "m2"], "acc", True)
+        result = await run_eval(rt, self._coordinator(), self._build_llm_messages,
+                                eid, emit=self._emit)
+        self.assertEqual(result["eval"]["status"], "done")
+        exps_before = len(rt.store.list_experiments())
+        # Re-run the eval: models are already benchmarked, so they're reused.
+        result2 = await run_eval(rt, self._coordinator(), self._build_llm_messages,
+                                 eid, emit=self._emit)
+        self.assertEqual(result2["eval"]["status"], "done")
+        self.assertEqual(len(rt.store.list_experiments()), exps_before)
+        self.assertTrue(all(r.get("skipped") for r in result2["results"]))
+
 
 if __name__ == "__main__":
     unittest.main()

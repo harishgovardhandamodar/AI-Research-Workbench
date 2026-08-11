@@ -104,8 +104,41 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
             await workflow.update_stage(f"step{i}", "running",
                                         message=f"{model}")
         await emit("status", {"message": f"Eval {i}/{len(models)}: {model}…"})
+
+        # Retry-safe: if this model already has a benchmarked experiment (a
+        # previous run of the eval), reuse its best result instead of re-running
+        # the model from scratch and duplicating experiments.
+        exp_name = f"[Eval] {ev['name']} · {model}"
+        existing = None
+        try:
+            for e in store.list_experiments():
+                if (e.get("name") or "").startswith(exp_name):
+                    if store.experiment_runs(e["id"]):
+                        existing = e
+                        break
+        except Exception:  # noqa: BLE001
+            existing = None
+        if existing is not None:
+            runs = store.experiment_runs(existing["id"])
+            best_val, best_id = best_metric(runs, goal, higher) if goal else (None, None)
+            if best_id is None and runs:
+                best_id = runs[-1]["id"]
+            results.append({"model": model, "best": best_val,
+                            "best_run_id": best_id, "experiment_id": existing["id"],
+                            "skipped": True})
+            prev_best_run_id = best_id
+            if workflow is not None:
+                await workflow.update_stage(
+                    f"step{i}", "done",
+                    message=f"already benchmarked ({best_val:.4g})" if best_val is not None else "done")
+            await emit("notice", {"message": (
+                f"Eval model {model}: reusing previous result "
+                f"(best {goal or 'metric'} = {best_val:.4g})." if best_val is not None
+                else f"Eval model {model}: reusing previous result.")})
+            continue
+
         eid = store.create_experiment(
-            f"[Eval] {ev['name']} · {model}", prompt, goal, None, higher,
+            exp_name, prompt, goal, None, higher,
             model=model)
         store.update_experiment(eid, plan=f"Model benchmark run for {model}")
         coordinator.ctx.experiment_id = str(eid)
@@ -176,7 +209,7 @@ async def run_eval(rt, coordinator, build_llm_messages, eval_id: int,
         await workflow.finish()
     await emit("notice", {"message": f"Model benchmark '{ev['name']}' complete."})
     return {"eval": store.get_eval(eval_id), "report": report,
-            "stopped_reason": stopped_reason}
+            "stopped_reason": stopped_reason, "results": results}
 
 
 def _created(store, mid: int) -> float | None:
