@@ -88,6 +88,17 @@ async def fork_project(name: str, body: dict):
     return {"name": new_name}
 
 
+@router.get("/api/projects/{name}/messages")
+async def project_messages(name: str, limit: int = 200, offset: int = 0):
+    """Paginated chat messages (newest-first, so offset 0 = the most recent)."""
+    rt = get_runtime(name)
+    rows = rt.store.list_messages(limit=min(max(int(limit), 1), 2000))
+    total = len(rows)
+    start = min(int(offset), total)
+    return {"messages": rows[start:], "total": total,
+            "has_more": start + len(rows) < total}
+
+
 @router.get("/api/projects/{name}/state")
 async def project_state(name: str):
     rt = get_runtime(name)
