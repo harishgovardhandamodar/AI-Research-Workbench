@@ -564,4 +564,9 @@ async def clone_plan(name: str, plan_id: str, body: dict):
 async def delete_plan(name: str, plan_id: str):
     rt = get_runtime(name)
     _store(rt).delete(plan_id)
+    # Drop the unified mirror record too (run lineage via runs.plan_id is kept).
+    try:
+        rt.store.delete_plan_record(plan_id)
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True}

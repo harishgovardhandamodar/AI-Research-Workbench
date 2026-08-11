@@ -250,6 +250,24 @@ class ArtifactStore:
         self._conn.commit()
         return True
 
+    def sweep_orphans(self) -> int:
+        """Remove artifact files in the artifacts dir that have no DB row (e.g.
+        left behind by a crashed write). Returns how many files were removed."""
+        known = {r[0] for r in self._conn.execute("SELECT id FROM artifacts")}
+        removed = 0
+        if not self.artifacts_dir.is_dir():
+            return 0
+        for p in self.artifacts_dir.iterdir():
+            if not p.is_file():
+                continue
+            if p.stem not in known:
+                try:
+                    p.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+
     def _row_artifact(self, row) -> Artifact:
         return Artifact(
             id=row["id"], kind=row["kind"], name=row["name"],

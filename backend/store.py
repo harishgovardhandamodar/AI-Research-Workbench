@@ -1247,6 +1247,14 @@ class ProjectStore:
             (plan_id, limit)).fetchall()
         return [self._row_run(r) for r in reversed(rows)]
 
+    def delete_plan_record(self, plan_id: str) -> bool:
+        """Drop a plan's unified mirror record (the JSON PlanStore remains the
+        source of truth; run lineage via runs.plan_id is preserved)."""
+        cur = self._conn.execute(
+            "DELETE FROM experiment_plans WHERE plan_id=?", (plan_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def record_suggestion_learning(self, sug: dict) -> int | None:
         """Persist a concise learning from a resolved suggestion outcome
         (the round-3 regression check). Returns the learning id or None."""

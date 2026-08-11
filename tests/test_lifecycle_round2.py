@@ -1093,5 +1093,39 @@ class TestKernelAuditContext(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e["session_id"] == "kproj" for e in evs))
 
 
+class TestCascadeCleanup(unittest.TestCase):
+    """R3: deleting a plan removes its mirror record; orphan artifact files are
+    swept."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = ProjectStore(self.tmp)
+
+    def test_delete_plan_removes_mirror(self):
+        self.store.upsert_plan({"id": "p1", "experiment_id": "x", "name": "X",
+                                "status": "DONE", "created_at": 1.0,
+                                "updated_at": 2.0})
+        self.assertIsNotNone(self.store.get_plan_record("p1"))
+        self.assertTrue(self.store.delete_plan_record("p1"))
+        self.assertIsNone(self.store.get_plan_record("p1"))
+        # Deleting again is a no-op.
+        self.assertFalse(self.store.delete_plan_record("p1"))
+
+    def test_sweep_orphan_artifacts(self):
+        from backend.artifacts.store import Artifact, ArtifactStore
+        arts = ArtifactStore(self.tmp)
+        art = Artifact(kind="text", name="keep", data_type="text")
+        arts.add_artifact(art, data=b"data", data_type="text")
+        # Drop the row behind the file, simulating a crashed write.
+        arts._conn.execute("DELETE FROM artifacts WHERE id=?", (art.id,))
+        arts._conn.commit()
+        # Also leave a stray file with a name that never had a row.
+        (arts.artifacts_dir / "orphan.png").write_bytes(b"x")
+        removed = arts.sweep_orphans()
+        self.assertEqual(removed, 2)
+        self.assertFalse((arts.artifacts_dir / "orphan.png").exists())
+        self.assertFalse(Path(art.data_path).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
