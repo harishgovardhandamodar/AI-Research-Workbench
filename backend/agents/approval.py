@@ -52,6 +52,9 @@ class ApprovalBroker:
                     "request_id": rid, "decision": "timeout",
                     "kind": kind, "command": command, "reason": reason,
                 })
+                await self.emit("notice", {"message": (
+                    f"Approval request timed out and was denied "
+                    f"({kind}: {command[:80]})")})
             except Exception:  # noqa: BLE001
                 pass
             return False, False
