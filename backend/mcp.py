@@ -502,6 +502,13 @@ class MCPRegistry:
     def clear_status_cache(self) -> None:
         self._status_cache = None
         self._status_cache_ts = 0.0
+        # Also drop each connection's cached tool schema so a refresh re-probes
+        # (a server restart may have changed its tool catalog).
+        for conn in self._conns.values():
+            try:
+                conn._tools = None
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- agent integration --------------------------------------------------
     async def build_tools(self, ctx) -> tuple[list[dict], dict[str, ToolFn]]:
