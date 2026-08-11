@@ -549,10 +549,20 @@ async def _run_sweep(ctx: ToolContext, code: str, configs: list,
             if parent_id is None:
                 parent_id = runs[-1].get("id")
 
+    # Labels must be unique per sweep so run rows are distinguishable; a
+    # configured label that would collide gets an index suffix.
+    _used_labels: set = set()
+
     def _label(i: int, cfg: dict) -> str:
         if label_prefix:
             return f"{label_prefix}·{i}"
-        return (cfg.get("label") or f"point {i}")
+        base = str(cfg.get("label") or f"point {i}")
+        if base not in _used_labels:
+            _used_labels.add(base)
+            return base
+        disamb = f"{base}#{i}"
+        _used_labels.add(disamb)
+        return disamb
 
     # Per-sweep environment snapshot (cached by the kernel manager — cheap).
     env = {}
