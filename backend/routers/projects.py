@@ -100,8 +100,18 @@ async def project_messages(name: str, limit: int = 200, offset: int = 0):
 
 
 @router.get("/api/projects/{name}/state")
-async def project_state(name: str):
+async def project_state(name: str, light: bool = False):
     rt = get_runtime(name)
+    if light:
+        # Cheap variant: counts + kernel status, no full message/artifact payloads.
+        return {
+            "name": name,
+            "light": True,
+            "message_count": len(rt.store.list_messages(limit=2000)),
+            "artifact_count": len(rt.artifacts.list(limit=2000)),
+            "grant_count": len(rt.store.list_grants()),
+            "status": rt.status(),
+        }
     msgs = rt.store.list_messages()
     arts = rt.artifacts.list()
     grants = rt.store.list_grants()
