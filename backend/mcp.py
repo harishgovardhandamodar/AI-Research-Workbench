@@ -359,6 +359,10 @@ class MCPConnection:
                 pass
             self._streams = None
         self._tools = None
+        # A fresh connection should start with a clean bill of health.
+        self._consecutive_failures = 0
+        self._healthy = True
+        self.error = None
 
 
 def _mcp_installed() -> bool:
