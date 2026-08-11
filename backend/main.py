@@ -1949,7 +1949,8 @@ async def ws_chat(ws: WebSocket, name: str):
                 error=r.get("error") or None,
                 review=r.get("review"),
                 plan_id=r.get("plan_id") or None,
-                plan_step_id=r.get("plan_step_id") or None)
+                plan_step_id=r.get("plan_step_id") or None,
+                model=r.get("model") or None)
         else:
             rid = rt.store.add_run(
                 prompt=r.get("prompt", ""),

@@ -623,7 +623,8 @@ class ProjectStore:
                    error: str | None = None,
                    review: dict | None = None,
                    plan_id: str | None = None,
-                   plan_step_id: str | None = None) -> int:
+                   plan_step_id: str | None = None,
+                   model: str | None = None) -> int:
         """Finalize a run opened with :meth:`begin_run` (status/reply/metrics +
         integrity hash). Returns the run id, or 0 when the row is missing."""
         row = self._conn.execute(
@@ -648,16 +649,17 @@ class ProjectStore:
         }).encode()).hexdigest()
         plan_id = plan_id or row["plan_id"]
         plan_step_id = plan_step_id or row["plan_step_id"]
+        model = model or row["model"] or None
         self._conn.execute(
             "UPDATE runs SET reply=?, status=?, finished_at=?, tool_sequence=?,"
             " artifact_ids=?, metrics=?, review=?, config=?, label=?, code=?,"
             " env=?, dataset=?, integrity_hash=?, error=?, plan_id=?,"
-            " plan_step_id=? WHERE id=?",
+            " plan_step_id=?, model=? WHERE id=?",
             (reply, status, finished_at or time.time(), json.dumps(seq),
              json.dumps(art), json.dumps(met), json.dumps(review or {}),
              json.dumps(cfg), label or None, json.dumps(cod), json.dumps(envd),
              ds, integrity, error or None, plan_id or None,
-             plan_step_id or None, rid))
+             plan_step_id or None, model, rid))
         if row["experiment_id"] is not None:
             self._conn.execute(
                 "UPDATE experiments SET updated_at=? WHERE id=?",

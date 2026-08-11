@@ -14,7 +14,7 @@ import traceback
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from ..llm import LLMClient
+from ..llm import LLMClient, LLMError
 from .approval import ApprovalBroker
 from .tools import ToolContext, build_tools, get_tool_schemas
 
@@ -420,6 +420,7 @@ class Coordinator:
         except Exception:  # noqa: BLE001
             log.warning("could not pre-create run row", exc_info=True)
         await self._audit_turn_event("turn_start", audit_meta)
+        model_fallback_tried = False
         try:
             await self._emit_status(phase="starting")
             for _ in range(self.max_iters):
@@ -431,7 +432,22 @@ class Coordinator:
                 stream_kwargs = {"on_delta": self._on_delta}
                 if self._stream_supports_model():
                     stream_kwargs["model"] = model_override or None
-                full = await self.llm.stream(messages, tools, **stream_kwargs)
+                try:
+                    full = await self.llm.stream(messages, tools, **stream_kwargs)
+                except LLMError:
+                    if model_override and not model_fallback_tried:
+                        # The pinned (per-experiment) model is unavailable (e.g.
+                        # not loaded on the server). Fall back to the default
+                        # model once so the turn survives.
+                        model_fallback_tried = True
+                        self.model_name = (getattr(self.llm, "model", "")
+                                           or self.model_name)
+                        stream_kwargs["model"] = None
+                        log.warning("pinned model %r unavailable; falling back "
+                                    "to default %r", model_override, self.model_name)
+                        full = await self.llm.stream(messages, tools, **stream_kwargs)
+                    else:
+                        raise
                 # A Stop arriving mid-stream takes effect as soon as it completes
                 # (the stream itself can't be interrupted safely).
                 self._raise_if_aborted()

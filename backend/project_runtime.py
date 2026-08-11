@@ -222,7 +222,8 @@ class ProjectRuntime:
                     error=r.get("error") or None,
                     review=r.get("review"),
                     plan_id=r.get("plan_id") or None,
-                    plan_step_id=r.get("plan_step_id") or None)
+                    plan_step_id=r.get("plan_step_id") or None,
+                    model=r.get("model") or None)
             else:
                 rid = self.store.add_run(
                     prompt=r.get("prompt", ""), reply=r.get("reply", ""),
@@ -372,7 +373,8 @@ class ProjectRuntime:
                     error=r.get("error") or None,
                     review=r.get("review"),
                     plan_id=r.get("plan_id") or None,
-                    plan_step_id=r.get("plan_step_id") or None)
+                    plan_step_id=r.get("plan_step_id") or None,
+                    model=r.get("model") or None)
             else:
                 rid = self.store.add_run(
                     prompt=r.get("prompt", ""), reply=r.get("reply", ""),

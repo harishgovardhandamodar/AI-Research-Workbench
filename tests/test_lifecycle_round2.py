@@ -1127,5 +1127,67 @@ class TestCascadeCleanup(unittest.TestCase):
         self.assertFalse(Path(art.data_path).exists())
 
 
+class TestPinnedModelFallback(unittest.IsolatedAsyncioTestCase):
+    """R8: an unavailable pinned model falls back to the default once."""
+
+    def setUp(self):
+        from backend.agents.coordinator import Coordinator
+        from backend.agents.tools import ToolContext
+        from backend.artifacts.store import ArtifactStore
+        from backend.audit import make_audit
+        from backend.llm import LLMError
+        from backend.permissions import PermissionManager
+        from tests.test_round3 import FakeKernels
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = ProjectStore(self.tmp)
+        self.LLMError = LLMError
+        self.audit_store, self.emitter = make_audit(self.tmp)
+        self.emitter.start()
+        self.ctx = ToolContext(
+            kernels=FakeKernels(), artifacts=ArtifactStore(self.tmp),
+            store=self.store, permissions=PermissionManager(self.store),
+            audit=self.emitter, message_id="7")
+        self.eid = self.store.create_experiment("x", "h", "acc", 0.9, True,
+                                                model="pinned")
+        self.ctx.experiment_id = str(self.eid)
+
+        class LLM:
+            model = "default"
+            calls = 0
+
+            async def stream(self, messages, tools=None, temperature=None,
+                             on_delta=None, model=None):
+                type(self).calls += 1
+                if model == "pinned":
+                    raise LLMError("pinned model not found")
+                return {"role": "assistant", "content": "ok"}
+
+        self.LLMCls = LLM
+
+    def _record(self, r: dict):
+        if r.get("id"):
+            return self.store.finish_run(rid=int(r["id"]),
+                                         status=r.get("status", "done"),
+                                         reply=r.get("reply", ""),
+                                         model=r.get("model") or None)
+        return self.store.add_run(r.get("prompt", ""), r.get("reply", ""),
+                                  r.get("status", "done"), 0.0, 1.0,
+                                  model=r.get("model") or None)
+
+    async def test_falls_back_to_default_model(self):
+        from backend.agents.coordinator import Coordinator
+        llm = self.LLMCls()
+        coordinator = Coordinator(llm, self.ctx, emit=_noop_emit,
+                                  persist=lambda r, c, m: None,
+                                  record=self._record, max_iters=3,
+                                  mcp=None, audit=self.emitter)
+        result = await coordinator.run_turn([{"role": "user", "content": "go"}])
+        self.assertEqual(result["text"], "ok")
+        # Two attempts: the pinned model failed once, then the default succeeded.
+        self.assertEqual(self.LLMCls.calls, 2)
+        runs = self.store.list_runs()
+        self.assertEqual(runs[0]["model"], "default")
+
+
 if __name__ == "__main__":
     unittest.main()
