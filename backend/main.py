@@ -1058,6 +1058,15 @@ def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
         exp = rt.store.get_experiment(eid)
         exp_metric = (exp or {}).get("goal_metric")
     runs = rt.store.list_runs()
+    # Index prior values per metric once (O(runs)) instead of re-scanning all
+    # runs per goal (O(goals × runs)).
+    by_metric: dict[str, list[tuple[int, float]]] = {}
+    for r in runs:
+        if r["id"] == run["id"]:
+            continue
+        for k, v in (r.get("metrics") or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                by_metric.setdefault(k, []).append((r["id"], float(v)))
     notices = []
     for g in goals:
         scope = g.get("experiment_id")
@@ -1075,8 +1084,7 @@ def goal_notices(rt: ProjectRuntime, run: dict) -> list[str]:
         cur = metrics[m]
         higher = bool(g["higher_better"])
         better = (lambda a, b: a > b) if higher else (lambda a, b: a < b)
-        prior = [(r["id"], r["metrics"][m]) for r in runs
-                 if r["id"] != run["id"] and m in (r.get("metrics") or {})]
+        prior = by_metric.get(m) or []
         best = min(prior, key=lambda p: (p[1] if higher else -p[1]),
                    default=None)
         label = g.get("label") or m
