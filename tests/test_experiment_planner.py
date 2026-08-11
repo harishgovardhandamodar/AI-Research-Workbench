@@ -180,6 +180,29 @@ class TestPlanStore(unittest.TestCase):
         self.assertEqual(cc["lineage"], [plan["id"], c["id"]])
         self.assertEqual(cc["parent_id"], c["id"])
 
+    def test_ensure_runnable_dataset(self):
+        empty = Path(tempfile.mkdtemp())
+        name, synthetic = ep.ensure_runnable_dataset(empty)
+        self.assertTrue(synthetic)
+        self.assertTrue(name.endswith(".csv"))
+        df = pd.read_csv(empty / name)
+        self.assertIn("sender_bank", df.columns)
+        self.assertIn("transaction type", df.columns)
+        # deterministic: regenerating is identical
+        other = Path(tempfile.mkdtemp())
+        name2, _ = ep.ensure_runnable_dataset(other)
+        self.assertEqual(pd.read_csv(other / name2).values.tolist(),
+                         df.values.tolist())
+        # a real dataset is preferred over synthetic
+        pd.DataFrame({"sender_bank": ["HDFC"], "transaction type": ["UPI"]}) \
+            .to_csv(empty / "real_upi.csv", index=False)
+        name3, synthetic3 = ep.ensure_runnable_dataset(empty)
+        self.assertEqual(name3, "real_upi.csv")
+        self.assertFalse(synthetic3)
+        # explicit dataset is honored when it exists
+        name4, _ = ep.ensure_runnable_dataset(empty, "real_upi.csv")
+        self.assertEqual(name4, "real_upi.csv")
+
     def test_recover_interrupted(self):
         plan = self.store.create("eda", "onboarding", "d.csv")
         self.store.update(plan["id"], status="RUNNING", started_at=1.0)

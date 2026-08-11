@@ -1049,23 +1049,40 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
 </div>
 
 <!-- Approval popup -->
-<div id="approval-modal" class="modal hidden">
-  <div class="modal-box small approval-popup">
-    <div class="modal-head"><h3>⚠️ Permission required</h3></div>
-    <div class="modal-body">
-      <p id="approval-reason" class="muted"></p>
-      <pre id="approval-command" class="codeblock"></pre>
-      <label class="check approval-temp">
-        <input id="approval-temp" type="checkbox"> Temporary — only allow this once (don't remember)
-      </label>
-      <div class="modal-actions">
-        <button id="approval-deny" class="btn subtle">Deny</button>
-        <span class="spacer"></span>
-        <button id="approval-allow" class="btn primary">Allow this once</button>
-      </div>
-    </div>
-  </div>
-</div>
+ <div id="approval-modal" class="modal hidden">
+   <div class="modal-box small approval-popup">
+     <div class="modal-head"><h3>⚠️ Permission required</h3></div>
+     <div class="modal-body">
+       <p id="approval-reason" class="muted"></p>
+       <pre id="approval-command" class="codeblock"></pre>
+       <label class="check approval-temp">
+         <input id="approval-temp" type="checkbox"> Temporary — only allow this once (don't remember)
+       </label>
+       <div class="modal-actions">
+         <button id="approval-deny" class="btn subtle">Deny</button>
+         <span class="spacer"></span>
+         <button id="approval-allow" class="btn primary">Allow this once</button>
+       </div>
+     </div>
+   </div>
+ </div>
+
+ <div id="plan-approval-modal" class="modal hidden">
+   <div class="modal-box small approval-popup">
+     <div class="modal-head"><h3>🧪 Approve experiment plan?</h3></div>
+     <div class="modal-body">
+       <div id="plan-approval-name" class="plan-approval-name"></div>
+       <p id="plan-approval-meta" class="muted"></p>
+       <pre id="plan-approval-steps" class="codeblock"></pre>
+       <div class="modal-actions">
+         <button id="plan-approval-reject" class="btn subtle">✕ Reject</button>
+         <span class="spacer"></span>
+         <button id="plan-approval-approve" class="btn primary">✓ Approve &amp; run</button>
+       </div>
+     </div>
+   </div>
+ </div>
+
 
 <!-- Audit event detail overlay -->
 <div id="audit-event-overlay" class="branch-overlay hidden">
@@ -1089,7 +1106,7 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
 
 <script>
   // Cache-busting version for the static assets (bump when you change the UI).
-  window.FOX_VER = "v111";
+  window.FOX_VER = "v114";
   document.getElementById("fox-css").href =
     (window.FOX_BASE || "") + "/styles.css?" + window.FOX_VER;
 </script>

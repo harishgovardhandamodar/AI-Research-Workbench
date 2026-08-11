@@ -275,7 +275,7 @@ function handleEvent(type, p) {
       break;
     case "notice": toast(p.message, 6000); break;
     case "status": setBusyStatus(p); break;
-    case "workflow": renderWorkflow(p); loadCampaigns(); break;
+    case "workflow": renderWorkflow(p); loadCampaigns(); pushRunLog(p); break;
     case "finetune_pipeline": renderFinetunePipelineCard(p.pipeline || p); break;
     case "finetune_log": appendFinetuneLog(p); break;
     case "finetune_report": renderFinetuneReport(p); break;
@@ -1034,6 +1034,118 @@ const WF_STATES = {
   failed:           { cls: "failed",   ico: "✗", label: "failed" },
 };
 
+/* ---------- chat run-log bubble (status + logs, toggle) ---------- */
+let _runLogBubbles = {};
+
+function _runLogKey(snap) {
+  return (snap && snap.title) || "run";
+}
+
+function _runLogHtml(key, status, pct, lines, expanded) {
+  const badge = status === "done" ? "ok"
+    : (status === "failed" || status === "error" || status === "cancelled") ? "danger" : "det";
+  const ico = status === "done" ? "✅"
+    : (status === "failed" || status === "error") ? "❌"
+      : status === "cancelled" ? "✕" : "⚙️";
+  return `<div class="runlog-card">
+    <div class="runlog-head">
+      <span class="runlog-title">${ico} ${esc(key)}</span>
+      <span class="exp-badge ${badge}">${esc(status)}</span>
+      <span class="runlog-pct muted">${Math.round(pct || 0)}%</span>
+      <span class="spacer"></span>
+      <button class="btn subtle small runlog-toggle" title="Toggle the run log">${expanded ? "▾ hide logs" : "🛈 logs (" + lines.length + ")"}</button>
+    </div>
+    ${expanded ? `<div class="runlog-lines">${lines.length ? lines.map((l) => `<div class="runlog-line">${esc(l)}</div>`).join("") : '<div class="runlog-line muted">no log output yet…</div>'}</div>` : ""}
+  </div>`;
+}
+
+function _renderRunLogBubble(key, b) {
+  b.el.body.innerHTML = _runLogHtml(key, b.status, b.pct, [...b.lines], b.expanded);
+  b.el.div.querySelector(".runlog-toggle").addEventListener("click", () => {
+    b.expanded = !b.expanded;
+    _renderRunLogBubble(key, b);
+  });
+}
+
+function pushRunLog(snap) {
+  if (!snap || !snap.title) return;
+  const key = _runLogKey(snap);
+  if (!_runLogBubbles[key]) {
+    const el = ensureAssistant(["run_log"], null);
+    _runLogBubbles[key] = {
+      el, lines: new Set(), status: "running", pct: 0, expanded: false,
+      _last: "",
+    };
+  }
+  const b = _runLogBubbles[key];
+  if (snap.status) b.status = snap.status;
+  if (snap.pct != null) b.pct = Math.round(Number(snap.pct) || 0);
+  if (snap.message && snap.message !== b._last) {
+    b.lines.add(snap.message);
+    b._last = snap.message;
+  }
+  if (b.status === "done" || b.status === "failed" || b.status === "cancelled") {
+    b.expanded = true;  // show the final log
+  }
+  _renderRunLogBubble(key, b);
+  scrollBottom();
+  ensureRunLogPoll();
+}
+
+// Poll fallback: surface + close out run-log bubbles even for plan runs launched
+// from the Experiments tab (no live workflow events to the chat).
+let _runLogPoll = null;
+
+function _runKeyFromLabel(label) {
+  return "Plan " + String(label || "").replace("plan:", "");
+}
+
+function _runLogPollingNeeded() {
+  return Object.values(_runLogBubbles).some((b) => b.status === "running");
+}
+
+async function syncRunLogBubbles() {
+  try {
+    const r = await api(`/api/projects/${state.project}/runs?limit=30`);
+    const runs = (r.runs || []).filter((x) => x.kind === "experiment_plan");
+    for (const run of runs) {
+      const key = _runKeyFromLabel(run.label);
+      if (run.status === "running" && !_runLogBubbles[key]) {
+        const el = ensureAssistant(["run_log"], null);
+        _runLogBubbles[key] = {
+          el, lines: new Set(), status: "running", pct: 0, expanded: false, _last: "",
+        };
+        _renderRunLogBubble(key, _runLogBubbles[key]);
+      } else if (run.status !== "running" && _runLogBubbles[key]
+                 && _runLogBubbles[key].status === "running") {
+        const b = _runLogBubbles[key];
+        b.status = run.status === "error" ? "failed" : run.status;
+        b.expanded = true;
+        b.lines.add(run.status === "done" ? "run completed"
+                    : (run.status === "error" ? "run failed: " + ((run.reply || "")).slice(0, 200)
+                       : "run " + run.status));
+        _renderRunLogBubble(key, b);
+      }
+    }
+    if (runs.some((x) => x.status === "running")) scrollBottom();
+    if (!_runLogPollingNeeded() && _runLogPoll) {
+      clearInterval(_runLogPoll);
+      _runLogPoll = null;
+    }
+  } catch (e) { /* silent */ }
+}
+
+function ensureRunLogPoll() {
+  if (!_runLogPoll) {
+    _runLogPoll = setInterval(syncRunLogBubbles, 4000);
+    syncRunLogBubbles();  // catch a plan already running right away
+  }
+}
+
+// After a chat re-render (refreshState), re-attach run-log bubbles that were
+// persisted? Runs don't persist the bubble; on reload they're gone — the
+// plan/run appears in the Recent-runs list instead.
+
 function renderWorkflow(snap) {
   if (!snap) return;
   state.workflow = snap;
@@ -1504,6 +1616,20 @@ $("approval-deny").addEventListener("click", () => {
   state.pendingApproval = null;
   setBusyStatus("");
 });
+if ($("plan-approval-approve")) {
+  $("plan-approval-approve").addEventListener("click", () => {
+    const p = state._pendingPlan;
+    closePlanApproval();
+    if (p) send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: true });
+  });
+}
+if ($("plan-approval-reject")) {
+  $("plan-approval-reject").addEventListener("click", () => {
+    const p = state._pendingPlan;
+    closePlanApproval();
+    if (p) send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: false });
+  });
+}
 
 /* ============================ turn lifecycle ============================== */
 
@@ -8174,14 +8300,46 @@ function renderExperimentPlanProposal(p) {
   el.div.querySelector(".exp-plan-approve").addEventListener("click", () => {
     send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: true });
     el.div.querySelector(".exp-plan-actions").innerHTML = '<span class="muted">⏳ Running…</span>';
+    closePlanApproval();
   });
   el.div.querySelector(".exp-plan-reject").addEventListener("click", () => {
     send({ type: "experiment_plan_decision", plan_id: p.plan_id, decision: false });
     el.div.querySelector(".exp-plan-actions").innerHTML = '<span class="muted">Rejected.</span>';
+    closePlanApproval();
   });
   curAssistantEl = null;
   state.streaming = false;
   scrollBottom();
+  // Popup approval (same pattern as permission approvals) so the ask is never
+  // silently missed.
+  state._pendingPlan = p;
+  showPlanApproval(p);
+}
+
+function showPlanApproval(p) {
+  const modal = $("plan-approval-modal");
+  if (!modal) return;
+  $("plan-approval-name").textContent = p.name || p.experiment_id || "Experiment plan";
+  $("plan-approval-meta").textContent =
+    `dataset ${p.dataset || "—"} · seed ${p.seed ?? "—"} · plan ${p.plan_id || ""}`;
+  $("plan-approval-steps").textContent =
+    (p.steps || []).map((s, i) => `${i + 1}. ${s}`).join("\n");
+  modal.classList.remove("hidden");
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("Experiment plan awaiting approval", { body: p.name || "plan" });
+    }
+  } catch (e) { /* notifications unavailable */ }
+  toast("🧪 Plan proposed — approve or reject in the popup", 6000);
+  if (state._planApprovalPulse) clearInterval(state._planApprovalPulse);
+  state._planApprovalPulse = setInterval(() => modal.classList.toggle("pulse"), 900);
+}
+
+function closePlanApproval() {
+  state._pendingPlan = null;
+  if (state._planApprovalPulse) { clearInterval(state._planApprovalPulse); state._planApprovalPulse = null; }
+  const modal = $("plan-approval-modal");
+  if (modal) modal.classList.add("hidden");
 }
 
 // Re-attach the live pipeline card after a chat re-render (refreshState).
@@ -10292,6 +10450,7 @@ $("notebook-modal").addEventListener("click", (e) => {
   loadExperiments();
   loadCampaigns();
   loadEvals();
+  ensureRunLogPoll();
   connect();
   setupExpKeyboard();
   setTimeout(expDeepLink, 350);

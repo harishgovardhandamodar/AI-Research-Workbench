@@ -88,6 +88,58 @@ def peek_dataset(path: Path, n: int = 1):
     return pd.read_csv(path, nrows=n, low_memory=False)
 
 
+def generate_synthetic_upi(path: Path, seed: int = 42, n: int = 3000) -> Path:
+    """Deterministic synthetic UPI transaction dataset, for projects with no
+    real dataset yet. Mirrors the columns the banking / privacy / re-id
+    experiments expect so every plan can run."""
+    import numpy as np
+    import pandas as pd
+    rng = np.random.default_rng(seed)
+    banks = ["HDFC", "SBI", "ICICI", "Axis", "Kotak", "Yes"]
+    segments = ["retail", "dining", "grocery", "fuel", "travel", "bills"]
+    ptypes = ["UPI", "IMPS", "NEFT"]
+    ages = ["18-25", "26-35", "36-45", "46-60", "60+"]
+    states = ["KA", "MH", "DL", "TN", "UP", "GJ"]
+    devices = ["android", "ios", "web"]
+    networks = ["jio", "airtel", "vi", "wifi"]
+    df = pd.DataFrame({
+        "sender_bank": rng.choice(banks, n),
+        "merchant_category": rng.choice(segments, n),
+        "transaction type": rng.choice(ptypes, n, p=[0.6, 0.25, 0.15]),
+        "amount (INR)": np.round(rng.lognormal(6.5, 0.8, n), 2),
+        "sender_age_group": rng.choice(ages, n),
+        "sender_state": rng.choice(states, n),
+        "device_type": rng.choice(devices, n),
+        "network_type": rng.choice(networks, n),
+        "hour_of_day": rng.integers(0, 24, n),
+    })
+    df["email"] = [f"u{i}@mail.com" for i in range(n)]
+    df["phone"] = [f"+91{i:010d}" for i in range(n)]
+    df.to_csv(path, index=False)
+    return path
+
+
+def ensure_runnable_dataset(project_dir: Path, dataset: str = "") -> tuple[str, bool]:
+    """Pick the requested (or first real) dataset in the project — preferring
+    UPI/bank-named files; if none exists, generate a deterministic synthetic UPI
+    dataset so a plan can run. Returns (filename, is_synthetic)."""
+    if dataset:
+        cand = project_dir / dataset
+        if cand.exists():
+            return dataset, False
+    cands = sorted(p for p in project_dir.iterdir()
+                   if p.is_file() and is_dataset_file(p.name)
+                   and not p.name.lower().startswith("synthetic_"))
+    if cands:
+        upi = [p for p in cands
+               if "upi" in p.name.lower() or "bank" in p.name.lower()]
+        return (upi or cands)[0].name, False
+    out = project_dir / "synthetic_upi_transactions.csv"
+    if not out.exists():
+        generate_synthetic_upi(out)
+    return out.name, True
+
+
 def dataset_hash(path: Path) -> str:
     """SHA-256 fingerprint of a dataset file (streaming, whole file).
 

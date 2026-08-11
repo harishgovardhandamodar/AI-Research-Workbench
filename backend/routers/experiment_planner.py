@@ -136,6 +136,19 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     # and so a concurrent cancel can flip it to REJECTED (checked below).
     _store(rt).update(plan["id"], status="RUNNING", started_at=time.time())
 
+    # Record a RUNNING run immediately so the Recent-runs list shows the plan
+    # as in progress (previously the run only appeared after execution, so it
+    # looked "done" while the plan was still working).
+    experiment_id = create_or_get_experiment(rt, plan)
+    started_at = time.time()
+    run_id = rt.store.add_run(
+        prompt=f"[Plan {plan['id']}] {plan['name']} on {plan['dataset']}",
+        reply="", status="running",
+        started_at=started_at, finished_at=None,
+        kind="experiment_plan", label=f"plan:{plan['id']}",
+        model=None, dataset=plan.get("dataset"),
+        experiment_id=experiment_id)
+
     done = await asyncio.to_thread(
         execute_plan, plan, df, rt.dir, progress or _prog)
 
@@ -143,11 +156,32 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
     # respect it and don't register artifacts for a cancelled run.
     current = _store(rt).get(done["id"]) or {}
     if current.get("status") == "REJECTED":
+        rt.store.update_run(run_id, status="cancelled",
+                            reply="cancelled by user",
+                            finished_at=time.time())
+        if emit:
+            try:
+                await emit("workflow", {
+                    "status": "cancelled", "title": f"Plan {plan['id']}",
+                    "message": "Cancelled by user", "pct": 0})
+            except Exception:  # noqa: BLE001
+                pass
         return {"plan_id": plan["id"], "cancelled": True,
                 "artifact_ids": [], "report_id": "", "figures": [],
                 "metrics": None}
 
     if done["status"] != "DONE":
+        rt.store.update_run(run_id, status="error",
+                            reply=(done.get("error") or "experiment failed")[:3000],
+                            finished_at=time.time())
+        if emit:
+            try:
+                await emit("workflow", {
+                    "status": "failed", "title": f"Plan {plan['id']}",
+                    "message": done.get("error") or "experiment failed",
+                    "pct": 100})
+            except Exception:  # noqa: BLE001
+                pass
         raise RuntimeError(done.get("error") or "experiment failed")
 
     # Persist the executed plan (with result).
@@ -183,20 +217,21 @@ async def present_result(rt, plan: dict, emit=None, progress=None) -> None:
         report_id = art.id
         artifact_ids.append(art.id)
 
-    # Record a run in the project's table (Experiments tab), attached to the
-    # plan's experiment (created at proposal time).
-    experiment_id = create_or_get_experiment(rt, plan)
-    rt.store.add_run(
-        prompt=(f"[Plan {plan['id']}] {plan['name']} on {plan['dataset']}"),
-        reply=report_md[:3000], status="done",
-        started_at=time.time(), finished_at=time.time(),
-        artifact_ids=artifact_ids,
+    # Mark the running run done with the result + artifacts.
+    rt.store.update_run(
+        run_id, status="done", reply=report_md[:3000],
         metrics=done.get("metrics") or {},
-        kind="experiment_plan", label=f"plan:{plan['id']}",
-        model=None, dataset=plan.get("dataset"),
-        experiment_id=experiment_id)
+        artifact_ids=artifact_ids,
+        finished_at=time.time())
 
     if emit:
+        # Final workflow status so the chat run-log bubble closes out.
+        try:
+            await emit("workflow", {
+                "status": "done", "title": f"Plan {plan['id']}",
+                "message": f"Completed — {plan['name']}", "pct": 100})
+        except Exception:  # noqa: BLE001
+            pass
         # Post figures inline + report link + summary as an assistant message.
         fig_html = "".join(
             f"![{f['name']}](/artifacts/{f['id']})" for f in fig_refs)

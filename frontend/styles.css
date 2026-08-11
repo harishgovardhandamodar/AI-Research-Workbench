@@ -874,6 +874,14 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .approval-temp { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
 .approval-temp input { margin-right: 6px; }
 #approval-modal.pulse .modal-box { animation: approval-pulse 1s ease-in-out infinite; }
+#plan-approval-modal.pulse .modal-box { animation: approval-pulse 1s ease-in-out infinite; }
+.plan-approval-name { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.runlog-card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); padding: 8px 10px; }
+.runlog-head { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.runlog-title { font-weight: 600; }
+.runlog-pct { font-variant-numeric: tabular-nums; }
+.runlog-lines { margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; max-height: 260px; overflow: auto; font-family: var(--mono, monospace); font-size: 11px; }
+.runlog-line { padding: 1px 0; color: var(--text-dim); white-space: pre-wrap; }
 @keyframes approval-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(217,164,65,.18), 0 12px 40px rgba(0,0,0,.5); }
   50% { box-shadow: 0 0 0 14px rgba(217,164,65,.05), 0 0 0 4px rgba(217,164,65,.45), 0 12px 40px rgba(0,0,0,.6); }

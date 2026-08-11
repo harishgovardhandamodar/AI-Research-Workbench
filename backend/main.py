@@ -252,6 +252,22 @@ def _is_privacy_experiment_request(text: str) -> bool:
     return ("bank" in low or "financial" in low) and "privacy" in low
 
 
+def _is_privacy_suite_request(text: str) -> bool:
+    """Detect a request to run the WHOLE privacy exploit suite on the project's
+    datasets (e.g. "run all privacy exploits on these datasets and prepare a
+    detailed report") so it runs deterministically (all experiments + a report)
+    instead of through the LLM loop."""
+    low = (text or "").lower()
+    if not any(w in low for w in ("privacy", "re-ident", "de-anonym", "pii")):
+        return False
+    if not any(w in low for w in ("exploit", "attack", "suite", "scenario",
+                                  "adversarial")):
+        return False
+    return any(w in low for w in ("all", "every", "full", "complete",
+                                  "comprehensive", "both datasets",
+                                  "these datasets", "datasets"))
+
+
 # ------------------------------------------------------------ loop guard -----
 # Local models sometimes "loop": instead of finishing, they keep producing a
 # near-identical reply (often re-planning) turn after turn. We detect that and
@@ -1043,6 +1059,69 @@ async def _mcp_tool_listing(limit: int = 120) -> str:
     return "\n".join(lines) if lines else "No MCP servers connected."
 
 
+async def _handle_privacy_suite(rt, emit, text: str,
+                                msg_extra: dict | None = None) -> None:
+    """Deterministic privacy exploit suite: run all privacy experiments across
+    the project's datasets (background, with a live run-log bubble) and post the
+    aggregated report + figures."""
+    import asyncio as _asyncio
+    from .privacy_suite import run_privacy_suite
+    msg_extra = msg_extra or {}
+    datasets = (msg_extra.get("datasets") or "").strip().split(",") or []
+    datasets = [d.strip() for d in datasets if d.strip()]
+
+    title = "Privacy suite"
+    await emit("status", {"message": "Running the deterministic privacy exploit "
+                                     "suite across datasets…"})
+    await emit("workflow", {"status": "running", "title": title,
+                            "message": "starting", "pct": 0})
+
+    async def _progress(done, total, message):
+        try:
+            await emit("workflow", {
+                "status": "running", "title": title,
+                "message": f"{done}/{total} {message}",
+                "pct": round(done / max(total, 1) * 100)})
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _run():
+        try:
+            out = await run_privacy_suite(
+                rt, datasets=datasets or None,
+                progress=_progress)
+            await emit("workflow", {"status": "done", "title": title,
+                                    "message": "completed", "pct": 100})
+            fig_html = "".join(
+                f"![fig](/artifacts/{fid})" for fid in out["figure_ids"])
+            content = (f"**🔐 Privacy exploit suite — report**\n\n"
+                       f"- Datasets: {', '.join(out['datasets']) or '—'}\n"
+                       f"- [Report artifact](/artifacts/{out['report_id']})\n\n"
+                       f"{fig_html}\n\n{out['report']}")
+            amid = rt.store.add_message(
+                "assistant", content,
+                {"tags": ["privacy", "suite", "report"]})
+            await emit("assistant_message", {"id": amid, "content": content,
+                                             "tags": ["privacy", "suite", "report"],
+                                             "created_at": _msg_created_at(rt, amid)})
+            await emit("notice", {"message":
+                f"✅ Privacy suite done — {len(out['datasets'])} dataset(s), "
+                "report saved as an artifact."})
+        except Exception as e:  # noqa: BLE001
+            try:
+                await emit("workflow", {"status": "failed", "title": title,
+                                        "message": str(e), "pct": 100})
+                await emit("error", {"message":
+                    f"Privacy suite failed: {type(e).__name__}: {e}"})
+            except Exception:  # noqa: BLE001
+                pass
+        await emit("done", {})
+
+    _asyncio.get_running_loop().create_task(_run())
+    await emit("done", {})
+    return
+
+
 async def _handle_chart_request(rt, emit, text: str,
                                 msg_extra: dict | None = None) -> None:
     """Deterministic natural-language chart intent: load the project dataset,
@@ -1781,6 +1860,8 @@ async def ws_chat(ws: WebSocket, name: str):
                     user_tags = ["peer experiment"]
                 elif intent == "experiment_plan":
                     user_tags = ["experiment", "plan"]
+                elif intent == "privacy_suite":
+                    user_tags = ["privacy", "suite"]
                 elif intent == "chart":
                     user_tags = ["chart"]
                 else:
@@ -1804,6 +1885,9 @@ async def ws_chat(ws: WebSocket, name: str):
                     elif _is_chart_request(text):
                         intent = "chart"
                         user_tags = ["chart"]
+                    elif _is_privacy_suite_request(text):
+                        intent = "privacy_suite"
+                        user_tags = ["privacy", "suite"]
                     elif _is_privacy_experiment_request(text):
                         intent = "experiment_plan"
                         user_tags = ["experiment", "plan", "privacy"]
@@ -1819,6 +1903,9 @@ async def ws_chat(ws: WebSocket, name: str):
                                 text = target.get("prompt") or text
                 if intent == "chart":
                     await _handle_chart_request(rt, emit, text, msg_extra)
+                    return
+                if intent == "privacy_suite":
+                    await _handle_privacy_suite(rt, emit, text, msg_extra)
                     return
                 if intent == "autoresearch":
                     from .autoresearch import run_autoresearch_loop
@@ -2054,24 +2141,21 @@ async def ws_chat(ws: WebSocket, name: str):
                         await emit("done", {})
                         return
 
-                    # Resolve the dataset: explicit, or auto-pick a UPI/banking CSV.
+                    # Resolve the dataset: explicit, or auto-pick a UPI/banking
+                    # CSV, or (when the project has none) generate a
+                    # deterministic synthetic one so the plan can always run.
+                    from .experiment_planner import ensure_runnable_dataset
                     if not dataset:
-                        cands = [p for p in rt.dir.iterdir()
-                                 if p.is_file() and p.suffix.lower() == ".csv"
-                                 and not p.name.lower().startswith("synthetic_")]
-                        if cands:
-                            import pandas as pd
-                            for p in cands:
-                                try:
-                                    if "upi" in p.name.lower() or "bank" in p.name.lower():
-                                        dataset = p.name
-                                        break
-                                    head = pd.read_csv(p, nrows=1)
-                                    if "sender_bank" in head.columns:
-                                        dataset = p.name
-                                        break
-                                except Exception:  # noqa: BLE001
-                                    continue
+                        dataset, synthetic = ensure_runnable_dataset(rt.dir)
+                        if synthetic:
+                            try:
+                                await emit("notice", {"message":
+                                    f"No dataset found in the project — generated "
+                                    f"a deterministic synthetic UPI dataset "
+                                    f"(`{dataset}`) so the experiment can run. "
+                                    "Upload a real CSV to analyze your own data."})
+                            except Exception:  # noqa: BLE001
+                                pass
                     if not dataset:
                         await emit("error", {"message":
                             "No dataset in the project — upload a CSV first."})

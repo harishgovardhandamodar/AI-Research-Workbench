@@ -505,12 +505,12 @@ class ProjectStore:
     def update_run(self, rid: int, **fields) -> bool:
         """Update safe fields on a run row. Returns True when a row changed."""
         allowed = {"status", "reply", "metrics", "label", "model",
-                   "experiment_id", "finished_at", "dataset"}
+                   "experiment_id", "finished_at", "dataset", "artifact_ids"}
         sets, vals = [], []
         for k in allowed:
             if k in fields:
                 v = fields[k]
-                if k == "metrics":
+                if k in ("metrics", "artifact_ids"):
                     v = json.dumps(v) if v is not None else None
                 sets.append(f"{k}=?")
                 vals.append(v)

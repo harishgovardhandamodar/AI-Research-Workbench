@@ -457,11 +457,13 @@ class TestMcpProjectIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_update_run(self):
         rid = self.rt.store.add_run("p", "r", "done", 0.0, 1.0)
         self.assertTrue(self.rt.store.update_run(
-            rid, status="error", reply="boom", metrics={"a": 1.0}))
+            rid, status="error", reply="boom", metrics={"a": 1.0},
+            artifact_ids=["fig1"]))
         run = self.rt.store.get_run(rid)
         self.assertEqual(run["status"], "error")
         self.assertEqual(run["reply"], "boom")
         self.assertEqual(run["metrics"], {"a": 1.0})
+        self.assertEqual(run["artifact_ids"], ["fig1"])
         # unknown fields are ignored (no update attempted)
         self.assertFalse(self.rt.store.update_run(rid, bogus_field=1))
 
