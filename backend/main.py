@@ -51,12 +51,23 @@ async def lifespan(app: FastAPI):
     from .logging_config import setup_logging
     setup_logging()
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    # Recover plans a previous process left RUNNING (killed by a restart).
+    # Recover plans a previous process left RUNNING (killed by a restart) and
+    # backfill the unified experiment_plans mirror so pre-existing plans get
+    # run lineage.
     try:
         from .experiment_planner import PlanStore
+        from .state import runtimes as _rts
+        from .routers.experiment_planner import _sync_plan
         for sub in PROJECTS_DIR.iterdir():
             if sub.is_dir():
-                PlanStore(sub).recover_interrupted()
+                ps = PlanStore(sub)
+                ps.recover_interrupted()
+                try:
+                    rt = get_runtime(sub.name)
+                    for p in ps.list():
+                        _sync_plan(rt, p)
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001
         pass
     global _rkg_scheduler
