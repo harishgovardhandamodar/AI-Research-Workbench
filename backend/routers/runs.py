@@ -22,9 +22,15 @@ router = APIRouter()
 
 
 @router.get("/api/projects/{name}/runs")
-async def project_runs(name: str, limit: int = 50):
-    """Every agent turn recorded as a run (traceability)."""
-    return {"runs": get_runtime(name).store.list_runs(limit)}
+@router.get("/api/projects/{name}/runs")
+async def project_runs(name: str, limit: int = 50, kind: str = ""):
+    """Every agent turn recorded as a run (traceability). Optional `kind`
+    filters by run kind (agent_run / sweep / notebook / experiment_plan / …)."""
+    rt = get_runtime(name)
+    runs = rt.store.list_runs(limit)
+    if kind:
+        runs = [r for r in runs if (r.get("kind") or "agent_run") == kind]
+    return {"runs": runs}
 
 
 @router.get("/api/projects/{name}/runs/{rid}")
