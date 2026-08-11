@@ -210,15 +210,17 @@ class NotebookService:
     # -- execution ----------------------------------------------------------
     async def execute(self, name: str, indices: list[int] | None = None,
                       on_artifact: ArtifactFn | None = None,
-                      prelude: str = "") -> dict:
+                      prelude: str = "",
+                      cell_timeout: float = 120.0) -> dict:
         """Execute cells of a notebook.
 
         `prelude` (optional) runs once in the kernel before the cells — used to
-        inject a fresh seed for reruns.
+        inject a fresh seed for reruns. `cell_timeout` caps each code cell's
+        wall-clock so a hung cell can't stall a whole notebook run.
         """
         nb = self.load(name)
         if prelude and prelude.strip():
-            await self.kernel.run_code(prelude)
+            await self.kernel.run_code(prelude, timeout=cell_timeout)
         meta = nb["metadata"].setdefault("fox", {})
         counter = meta.get("execution_count", 0)
         cells = nb["cells"]
@@ -231,7 +233,7 @@ class NotebookService:
             if cell.get("cell_type") != "code":
                 continue
             counter += 1
-            result = await self._exec_cell(cell, counter, on_artifact)
+            result = await self._exec_cell(cell, counter, on_artifact, cell_timeout)
             report.append({
                 "index": i,
                 "ok": result["ok"],
@@ -246,7 +248,8 @@ class NotebookService:
         return {"notebook": nb, "report": report}
 
     async def _exec_cell(self, cell: dict, exec_count: int,
-                         on_artifact: ArtifactFn | None) -> dict:
+                         on_artifact: ArtifactFn | None,
+                         cell_timeout: float = 120.0) -> dict:
         source = "".join(_norm_source(cell.get("source", ""))).strip()
         outputs: list[dict] = []
         ok, error = True, ""
@@ -254,7 +257,7 @@ class NotebookService:
         if not source:
             pass
         else:
-            resp = await self.kernel.run_code(source)
+            resp = await self.kernel.run_code(source, timeout=cell_timeout)
             if resp.get("error"):
                 ok, error = False, resp["error"]
                 outputs.append(error_output(resp["error"]))
