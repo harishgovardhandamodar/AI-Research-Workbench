@@ -26,17 +26,31 @@ async def list_projects():
     if PROJECTS_DIR.exists():
         for d in sorted(PROJECTS_DIR.iterdir()):
             if d.is_dir():
-                rt = get_runtime(d.name)
-                msgs = rt.store.list_messages()
-                arts = rt.artifacts.list()
-                try:
-                    busy = rt.is_busy()
-                except Exception:  # noqa: BLE001
-                    busy = False
+                # Only reuse an already-loaded runtime; don't spawn kernels for
+                # every project on the disk just to count messages/artifacts.
+                rt = runtimes.get(d.name)
+                if rt is not None:
+                    msgs = len(rt.store.list_messages())
+                    arts = len(rt.artifacts.list())
+                    try:
+                        busy = rt.is_busy()
+                    except Exception:  # noqa: BLE001
+                        busy = False
+                else:
+                    try:
+                        from ..artifacts.store import ArtifactStore
+                        from ..store import ProjectStore
+                        store = ProjectStore(d)
+                        msgs = len(store.list_messages(limit=2000))
+                        arts = len(ArtifactStore(d).list(limit=2000))
+                        busy = False
+                    except Exception:  # noqa: BLE001
+                        msgs = arts = 0
+                        busy = False
                 out.append({
                     "name": d.name,
-                    "messages": len(msgs),
-                    "artifacts": len(arts),
+                    "messages": msgs,
+                    "artifacts": arts,
                     "busy": busy,
                     "updated": d.stat().st_mtime if hasattr(d, "stat") else 0,
                 })
