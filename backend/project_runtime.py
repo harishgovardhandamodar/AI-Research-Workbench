@@ -484,7 +484,8 @@ class ProjectRuntime:
             status = "ok"
         else:
             method, severity = "reset", "warning"
-            args = {}
+            args = {"reason": payload.get("reason") or "reset",
+                    "restarts": payload.get("restarts")}
             status = "ok"
 
         ev = {
