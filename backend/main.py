@@ -138,7 +138,8 @@ if allowed_origins():
 @app.middleware("http")
 async def _log_context_middleware(request: Request, call_next):
     """Set the log-correlation context (project id) from the request path for
-    the duration of a REST call, so router logs are greppable by project."""
+    the duration of a REST call, so router logs are greppable by project, and
+    log a one-line request summary (method, path, status, duration)."""
     from .logging_config import set_log_context, clear_log_context
     project = None
     parts = request.url.path.split("/")
@@ -146,10 +147,19 @@ async def _log_context_middleware(request: Request, call_next):
         project = parts[3]
     if project:
         set_log_context(project=project)
+    start = time.perf_counter()
+    status = 0
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        status = response.status_code
+        return response
     finally:
         clear_log_context("project")
+        # Log API calls at info; avoid the noisy static-file/asset paths.
+        if request.url.path.startswith("/api"):
+            log.info("%s %s -> %s (%.0fms)", request.method,
+                     request.url.path, status or "?",
+                     (time.perf_counter() - start) * 1000.0)
 
 app.include_router(system.router)
 app.include_router(projects.router)
