@@ -87,7 +87,11 @@ async def project_message_delete(name: str, mid: int):
 @router.get("/api/projects/{name}/experiments")
 async def project_experiments(name: str):
     """Structured experiments (families of runs) for this project."""
-    return {"experiments": get_runtime(name).store.list_experiments()}
+    store = get_runtime(name).store
+    exps = store.list_experiments()
+    for e in exps:
+        e["run_count"] = len(store.experiment_runs(e["id"]))
+    return {"experiments": exps}
 
 
 @router.get("/api/projects/{name}/experiments/history")
