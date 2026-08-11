@@ -1141,6 +1141,14 @@ async def _handle_privacy_suite(rt, emit, text: str,
             datasets = ["synthetic_upi_transactions.csv"]
     ds_label = ", ".join(datasets) if datasets else "all project datasets"
 
+    # Fresh run: when the user asks for a new/different result, use a random
+    # seed so the suite genuinely re-executes with new data draws. Default is
+    # deterministic (seed 42) so identical requests reproduce identically.
+    seed = 42
+    if any(w in low for w in ("fresh", "new seed", "rerun", "re-run",
+                              "different", "random", "again", "another")):
+        seed = int(time.time() * 1000) % (2 ** 31)
+
     suite_id = f"suite-{int(time.time())}"
     title = "Privacy exploit suite"
     payload = {
@@ -1153,7 +1161,7 @@ async def _handle_privacy_suite(rt, emit, text: str,
                         "detailed aggregate report."),
         "request": text,
         "dataset": ds_label,
-        "seed": 42,
+        "seed": seed,
         "steps": [f"Run `{e}` on `{ds_label}`" for e in SUITE_EXPERIMENTS]
                  + ["Aggregate the per-dataset metrics into a report"],
         "expected_outputs": ["cross-dataset goal-metric table",
@@ -1202,6 +1210,9 @@ async def _handle_privacy_suite(rt, emit, text: str,
 
     await emit("workflow", {"status": "running", "title": title,
                             "message": "starting", "pct": 0})
+    await emit("notice", {"message":
+        f"🔐 Privacy suite approved — executing now (seed `{seed}`) on "
+        f"{ds_label}. Results will differ from prior runs with a fresh seed."})
 
     async def _progress(done, total, message):
         try:
@@ -1216,7 +1227,7 @@ async def _handle_privacy_suite(rt, emit, text: str,
         try:
             out = await run_privacy_suite(
                 rt, datasets=datasets or None,
-                progress=_progress)
+                seed=seed, progress=_progress)
             await emit("workflow", {"status": "done", "title": title,
                                     "message": "completed", "pct": 100})
             fig_html = "".join(

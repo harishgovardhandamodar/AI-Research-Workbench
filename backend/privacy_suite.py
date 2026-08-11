@@ -86,11 +86,12 @@ def _fmt(v):
     return str(v)
 
 
-def build_suite_report(results: dict) -> str:
+def build_suite_report(results: dict, seed: int = 42) -> str:
     """Aggregate markdown report: summary table + per-dataset sections."""
     datasets = list(results)
     lines = ["# Privacy Exploit Suite — Report", "",
-             f"- **Generated:** {time.strftime('%Y-%m-%d %H:%M UTC')}",
+             f"- **Generated:** {time.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+             f"- **Seed:** `{seed}`",
              f"- **Datasets:** {', '.join(datasets) or '—'}",
              f"- **Experiments:** {', '.join(SUITE_EXPERIMENTS)}",
              "", "## Summary (goal metric per dataset)", "",
@@ -130,7 +131,7 @@ async def run_privacy_suite(rt, datasets=None, seed: int = 42,
                                f"Running {exp} on {name}")
             results[name][exp] = await asyncio.to_thread(
                 _run_one, exp, df, seed)
-    report = build_suite_report(results)
+    report = build_suite_report(results, seed=seed)
 
     try:
         env = await rt.kernels.get_env()
