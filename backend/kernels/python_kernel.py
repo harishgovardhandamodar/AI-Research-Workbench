@@ -167,11 +167,21 @@ class PythonKernel:
         try:
             if self._proc is None or self._proc.returncode is not None:
                 # The subprocess died (or never started). If it was alive before,
-                # this restart destroys kernel state — surface it.
+                # this restart destroys kernel state — surface it loudly.
                 if self._proc is not None:
                     self.restarts += 1
+                    self._last_error = (f"kernel subprocess exited "
+                                        f"({self._proc.returncode}){self._err_suffix()}")
                     self._notify("reset", {"ok": False, "reason": "restarted",
-                                           "restarts": self.restarts})
+                                           "restarts": self.restarts,
+                                           "error": self._last_error})
+                    try:
+                        import logging
+                        logging.getLogger("fox.kernel").warning(
+                            "kernel subprocess died (%s); restarting — state was lost.%s",
+                            self._proc.returncode, self._err_suffix())
+                    except Exception:  # noqa: BLE001
+                        pass
                 await self._start()
             rid = uuid4().hex
             req["id"] = rid
