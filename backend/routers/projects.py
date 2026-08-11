@@ -29,10 +29,15 @@ async def list_projects():
                 rt = get_runtime(d.name)
                 msgs = rt.store.list_messages()
                 arts = rt.artifacts.list()
+                try:
+                    busy = rt.is_busy()
+                except Exception:  # noqa: BLE001
+                    busy = False
                 out.append({
                     "name": d.name,
                     "messages": len(msgs),
                     "artifacts": len(arts),
+                    "busy": busy,
                     "updated": d.stat().st_mtime if hasattr(d, "stat") else 0,
                 })
     return {"projects": out}
