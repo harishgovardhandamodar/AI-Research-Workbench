@@ -15,7 +15,8 @@ services:
       FOX_TOOL_BASE_URL: ${FOX_TOOL_BASE_URL:-http://host.docker.internal:11435/v1}
       FOX_MODEL: ${FOX_MODEL:-qwen3.6:latest}
       # In-browser VS Code (code-server) integration.
-      FOX_EDITOR_URL: ${FOX_EDITOR_URL:-http://127.0.0.1:8787}
+      # 8787 conflicts with caveman-proxy (msgsrvr) on macOS; use 8788.
+      FOX_EDITOR_URL: ${FOX_EDITOR_URL:-http://127.0.0.1:8788}
       FOX_EDITOR_PROBE_URL: ${FOX_EDITOR_PROBE_URL:-http://code-server:8080}
       FOX_EDITOR_FOLDER: ${FOX_EDITOR_FOLDER:-/home/coder/workbench}
       # NVIDIA GPU passthrough (FOX_GPU_DEVICES=all enables it). Expose the
@@ -23,37 +24,38 @@ services:
       # app can do GPU monitoring and per-GPU Ollama scheduling.
       NVIDIA_VISIBLE_DEVICES: ${FOX_GPU_DEVICES:-void}
       NVIDIA_DRIVER_CAPABILITIES: ${FOX_GPU_CAPABILITIES:-compute,utility}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: ${FOX_GPU_COUNT:-1}
-              capabilities: [gpu]
     extra_hosts:
       # Lets "host.docker.internal" resolve to the host on Linux.
       - "host.docker.internal:host-gateway"
     volumes:
       # Persistent data: projects (SQLite + artifacts), kernels, config.
       - fox_data:/app/workbench
+      # Personal experiments repo — mounted for session import + management snapshots.
+      # Host path: /Users/harishgovardhandamodar/codebase/personal-experiments
+      # Container paths: /app/mgmt-repo (management repo) and /app/personal-experiments (direct access).
+      - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/mgmt-repo
+      - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/personal-experiments
     restart: unless-stopped
 
   # In-browser VS Code editor sharing the workbench data volume so generated
   # content (artifacts, notebooks, knowledge graphs, project files) can be
-  # edited in a full editor. UI at http://127.0.0.1:8787. No login by default;
+  # edited in a full editor. UI at http://127.0.0.1:8788 (8787 conflicts with caveman-proxy). No login by default;
   # set CODE_SERVER_AUTH=password + CODE_SERVER_PASSWORD to require one.
   code-server:
     image: codercom/code-server:latest
     container_name: fox-code-server
     user: "0"
     ports:
-      - "${CODE_SERVER_BIND:-0.0.0.0}:8787:8080"
+      - "${CODE_SERVER_BIND:-0.0.0.0}:8788:8080"
     environment:
       PASSWORD: ${CODE_SERVER_PASSWORD:-fox-workspace}
     volumes:
       # Same volume the fox service mounts at /app/workbench.
       - fox_data:/home/coder/workbench
       - code_server_config:/home/coder/.local/share/code-server
+      # Personal experiments repo — visible in code-server for session browsing.
+      - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/personal-experiments
+      - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/mgmt-repo
     command: ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "${CODE_SERVER_AUTH:-none}", "--disable-telemetry", "/home/coder/workbench"]
     restart: unless-stopped
 

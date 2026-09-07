@@ -1,0 +1,15 @@
+# GPU overlay — use on Linux hosts with NVIDIA runtime:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Base compose (docker-compose.yml) is Mac/CPU-safe with no GPU reservation.
+services:
+  fox:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${FOX_GPU_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${FOX_GPU_CAPABILITIES:-compute,utility}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${FOX_GPU_COUNT:-1}
+              capabilities: [gpu]
