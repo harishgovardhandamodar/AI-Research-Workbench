@@ -6552,6 +6552,7 @@ function switchMainView(view) {
   $("editor-panel").classList.toggle("hidden", view !== "editor");
   $("rkg-panel").classList.toggle("hidden", view !== "rkg");
   $("hive-panel").classList.toggle("hidden", view !== "hive");
+  $("journey-panel").classList.toggle("hidden", view !== "journey");
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
@@ -6577,6 +6578,7 @@ function switchMainView(view) {
   if (view === "editor") loadEditor();
   if (view === "rkg") loadRkg();
   if (view === "hive") loadHive();
+  if (view === "journey") loadJourney();
   if (view === "audit") loadAudit();
 }
 
@@ -6629,6 +6631,149 @@ async function loadHive() {
   if (refresh && !refresh._hiveWired) {
     refresh._hiveWired = true;
     refresh.onclick = () => loadHive();
+  }
+  // Auto-load timeline on first hive view
+  loadHiveTimeline();
+}
+
+async function loadHiveTimeline() {
+  const graphEl = $("hive-timeline-graph");
+  const overlay = $("hive-timeline-overlay");
+  const overlayBody = $("hive-overlay-body");
+  const overlayTitle = $("hive-overlay-title");
+  const limitEl = $("hive-timeline-limit");
+  const sessionEl = $("hive-timeline-session");
+  if (!graphEl) return;
+  const limit = parseInt(limitEl && limitEl.value || "100", 10) || 100;
+  const session = sessionEl && sessionEl.value.trim() || "";
+  graphEl.innerHTML = '<div class="muted small">Loading timeline…</div>';
+  try {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (session) qs.set("session_id", session);
+    const r = await fetch(B("/api/hive/audit/timeline?") + qs.toString());
+    const j = await r.json();
+    if (j.error) { graphEl.innerHTML = `<div class="muted small" style="color:var(--danger)">Error: ${esc(j.error)}</div>`; return; }
+    const nodes = j.nodes || [];
+    const edges = j.edges || [];
+    if (!nodes.length) { graphEl.innerHTML = '<div class="muted small">No auditable logs yet. Run a narrow AGI loop.</div>'; return; }
+    // Render timeline: vertical sequence with nodes and edges
+    let html = '<div class="hive-timeline" style="display:flex;flex-direction:column;gap:8px">';
+    // Legend
+    html += '<div class="muted small" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px">';
+    html += nodes.map(n => `<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:50%;background:var(--accent);display:inline-block"></span>${esc(n.label)} <span class="muted">(${n.id})</span></span>`).join("");
+    html += '</div>';
+    // Edges as timeline items
+    edges.forEach((e, idx) => {
+      const ts = esc(e.timestamp || "");
+      const from = esc(e.from || "");
+      const to = esc(e.to || "");
+      const label = esc(e.label || "");
+      const seq = e.seq != null ? `#${e.seq}` : `#${idx}`;
+      html += `<div class="hive-edge card" data-idx="${idx}" style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-left:4px solid var(--accent);cursor:pointer" title="Click for captures">`;
+      html += `<span class="mono small" style="min-width:56px">${seq}</span>`;
+      html += `<span class="mono small" style="min-width:160px">${ts}</span>`;
+      html += `<span style="display:flex;align-items:center;gap:6px;flex:1">`;
+      html += `<span class="badge" style="background:var(--accent);color:var(--bg);padding:2px 6px;border-radius:4px">${from}</span>`;
+      html += `<span>→</span>`;
+      html += `<span class="badge" style="background:var(--border);padding:2px 6px;border-radius:4px">${to}</span>`;
+      html += `<span style="margin-left:8px;font-weight:600">${label}</span>`;
+      html += `</span>`;
+      html += `<span class="muted small">click for captures →</span>`;
+      html += `</div>`;
+    });
+    html += '</div>';
+    graphEl.innerHTML = html;
+    // Wire clickable overlays
+    graphEl.querySelectorAll(".hive-edge").forEach(el => {
+      el.onclick = () => {
+        const idx = parseInt(el.dataset.idx, 10);
+        const ev = edges[idx];
+        if (!ev) return;
+        if (overlayTitle) overlayTitle.textContent = `${ev.from} → ${ev.to} : ${ev.label}  [${ev.timestamp}]  seq #${ev.seq}`;
+        if (overlayBody) overlayBody.textContent = JSON.stringify(ev.captures || {}, null, 2);
+        if (overlay) { overlay.classList.remove("hidden"); overlay.style.display = "flex"; }
+      };
+    });
+    // Wire overlay close
+    const closeBtn = $("hive-overlay-close");
+    if (closeBtn && !closeBtn._wired) {
+      closeBtn._wired = true;
+      closeBtn.onclick = () => { if (overlay) { overlay.classList.add("hidden"); overlay.style.display = "none"; } };
+      if (overlay) overlay.onclick = (ev) => { if (ev.target === overlay) { overlay.classList.add("hidden"); overlay.style.display = "none"; } };
+    }
+    // Wire refresh/export
+    const rBtn = $("hive-timeline-refresh");
+    if (rBtn && !rBtn._wired) { rBtn._wired = true; rBtn.onclick = () => loadHiveTimeline(); }
+    const eBtn = $("hive-timeline-export");
+    if (eBtn && !eBtn._wired) {
+      eBtn._wired = true;
+      eBtn.onclick = () => {
+        const blob = new Blob([JSON.stringify({nodes, edges}, null, 2)], {type:"application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "hive-timeline.json"; a.click();
+        URL.revokeObjectURL(url);
+      };
+    }
+  } catch (e) {
+    graphEl.innerHTML = `<div class="muted small" style="color:var(--danger)">Failed: ${esc(String(e).slice(0,200))}</div>`;
+  }
+}
+
+async function loadJourney() {
+  const progressEl = $("journey-progress");
+  const barEl = $("journey-progress-bar");
+  const statsEl = $("journey-stats");
+  const auditEl = $("journey-audit");
+  const profilesEl = $("journey-profiles");
+  const timelineEl = $("journey-timeline");
+  try {
+    const r = await fetch(B("/api/hive/journey"));
+    const j = await r.json();
+    if (j.error) {
+      if (progressEl) progressEl.textContent = "Error: " + j.error;
+      return;
+    }
+    const p = j.progress || 0;
+    const overall = j.overall || 0;
+    if (progressEl) progressEl.textContent = `Narrow AGI: ${p}%  •  Overall: ${overall}%  •  ${j.narrow_count} workbenches, ${j.fox_with_runs} with runs`;
+    if (barEl) barEl.style.width = p + "%";
+    if (statsEl) statsEl.textContent = `${j.narrow_count} narrow workbenches (Fox projects + Hive YAML) — ${j.fox_with_runs} active. Audit: ${j.audit.total_events} events, ${j.audit.actors.length} actors.`;
+    if (auditEl) auditEl.innerHTML = `<div>Events: <b>${j.audit.total_events}</b> • Actors: ${j.audit.actors.join(", ") || "—"}</div><div class="muted small">Audit health: ${j.audit_health}%</div>`;
+    if (profilesEl) {
+      if (j.profiles && j.profiles.length) {
+        profilesEl.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">' +
+          j.profiles.map(p => `<div class="card" style="padding:8px"><div style="font-weight:600">${esc(p.name)}</div><div class="muted small">${esc(p.type || "")} • ${p.experiments != null ? p.experiments + " exps" : ""} ${p.runs != null ? p.runs + " runs" : ""}</div><div class="muted small" style="font-size:10px">${esc(p.path || "")}</div></div>`).join("") +
+          '</div>';
+      } else {
+        profilesEl.textContent = "No narrow workbenches yet.";
+      }
+    }
+    // Also load timeline into journey's timeline div (reuse hive timeline data)
+    if (timelineEl) {
+      try {
+        const tr = await fetch(B("/api/hive/audit/timeline?limit=30"));
+        const tj = await tr.json();
+        const nodes = tj.nodes || [];
+        const edges = tj.edges || [];
+        let html = `<div class="muted small" style="margin-bottom:6px">${nodes.length} actors → ${edges.length} actions (seq+timestampt, clickable)</div>`;
+        html += '<div style="display:flex;flex-direction:column;gap:6px">';
+        edges.slice(0, 30).forEach((e, idx) => {
+          html += `<div class="card" style="padding:6px 8px;border-left:3px solid var(--accent);cursor:pointer" onclick="document.getElementById('hive-timeline-graph')&&document.getElementById('hive-timeline-graph').scrollIntoView({behavior:'smooth'})">`;
+          html += `<span class="mono small">#${e.seq} ${esc(e.timestamp||"")}</span> <b>${esc(e.from)}</b> → <b>${esc(e.to)}</b> : ${esc(e.label)}`;
+          html += `</div>`;
+        });
+        html += '</div>';
+        timelineEl.innerHTML = html;
+      } catch (e) { timelineEl.textContent = "Timeline failed: " + String(e).slice(0,100); }
+    }
+  } catch (e) {
+    if (progressEl) progressEl.textContent = "Failed: " + String(e).slice(0,120);
+  }
+  const refresh = $("journey-refresh");
+  if (refresh && !refresh._wired) {
+    refresh._wired = true;
+    refresh.onclick = () => loadJourney();
   }
 }
 
@@ -10169,6 +10314,7 @@ $("mainview-agent").addEventListener("click", () => switchMainView("agent"));
 $("mainview-editor").addEventListener("click", () => switchMainView("editor"));
 $("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
 $("mainview-hive").addEventListener("click", () => switchMainView("hive"));
+$("mainview-journey").addEventListener("click", () => switchMainView("journey"));
 $("mainview-audit").addEventListener("click", () => switchMainView("audit"));
 $("editor-refresh").addEventListener("click", loadEditor);
 

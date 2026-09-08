@@ -182,6 +182,54 @@ async def hive_run_narrow_loop(body: dict):
         # Best-effort: try to call the hive workbench runner if available
         spec = importlib.util.find_spec("hive_companion.workbench.profiles")
         if spec is not None:
+            # Audit the AGI loop start (tamper-evident, hash-chained)
+            try:
+                from audit.store import LocalAuditStore
+                from audit.models import AuditEvent
+                from pathlib import Path as _P
+
+                audit_db = _P.home() / ".hive" / "audit" / "audit.db"
+                audit_db.parent.mkdir(parents=True, exist_ok=True)
+                store = LocalAuditStore(audit_db.parent)
+                # Also try to use the Fox workbench's default audit if available
+                try:
+                    from backend.paths import PROJECTS_DIR
+
+                    fox_audit = PROJECTS_DIR / "default" / "audit"
+                    fox_store = LocalAuditStore(fox_audit)
+                    # Emit to both stores for cross-visibility
+                    for s in (store, fox_store):
+                        try:
+                            s.append(
+                                AuditEvent(
+                                    agent_id=profile,
+                                    source="hive-workbench",
+                                    method="run_narrow_loop",
+                                    tool_name="narrow_agi_loop",
+                                    arguments_redacted={"profile": profile, "task": task, "iterations": body.get("iterations") or 1},
+                                    result_summary={"status": "queued", "web_url": "/api/hive/workbench/loops/stream"},
+                                    severity="info",
+                                    session_id=profile,
+                                )
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    # Fallback to single store
+                    store.append(
+                        AuditEvent(
+                            agent_id=profile,
+                            source="hive-workbench",
+                            method="run_narrow_loop",
+                            tool_name="narrow_agi_loop",
+                            arguments_redacted={"profile": profile, "task": task},
+                            result_summary={"status": "queued"},
+                            severity="info",
+                            session_id=profile,
+                        )
+                    )
+            except Exception:
+                pass
             # Stub for now — full wiring would instantiate the profile and
             # run the loop via hive.machine.agent or hive.workbench
             return {
@@ -206,3 +254,286 @@ async def hive_loops_status():
         "message": "Narrow AGI Loops via Hive Workbench — select a profile (fox-fraud, quai-lora, etc.) and run.",
         "web_app": "/#hive",
     }
+
+
+@router.get("/audit/timeline")
+async def hive_audit_timeline(limit: int = 100, session_id: str | None = None):
+    """Auditable logs as timeline graph: nodes=actor, edges=action, timestamps + captures.
+
+    Returns {nodes: [{id, label, type}], edges: [{id, from, to, label, timestamp, captures}], events: [...]}
+    Clickable overlays use the full event's captures (arguments, result, filesystem, network).
+    AGI loops are tagged with session_id / run_id so the graph can be filtered per loop.
+    """
+    try:
+        from audit.store import LocalAuditStore
+        from audit.models import AuditEvent
+        from pathlib import Path as _P
+
+        # Use the Fox workbench's audit store (one per project, but hive is global;
+        # we aggregate from the default project's audit DB if available, else global)
+        # Fallback to a hive-specific DB under ~/.hive/audit
+        candidates = []
+        try:
+            from backend.paths import PROJECTS_DIR
+
+            default_audit = PROJECTS_DIR / "default" / "audit" / "audit.db"
+            if default_audit.exists():
+                candidates.append(default_audit)
+        except Exception:
+            pass
+        hive_audit = _P.home() / ".hive" / "audit" / "audit.db"
+        if hive_audit.exists():
+            candidates.append(hive_audit)
+        # Also check /app/hive-workspace audit if in container
+        container_audit = _P("/app/hive-workspace/audit/audit.db")
+        if container_audit.exists():
+            candidates.append(container_audit)
+
+        events = []
+        for db_path in candidates[:2]:  # limit to 2 to keep response small
+            try:
+                store = LocalAuditStore(db_path.parent)
+                # LocalAuditStore doesn't expose a direct list with limit, so query SQLite
+                import sqlite3
+
+                con = sqlite3.connect(str(db_path))
+                con.row_factory = sqlite3.Row
+                q = "SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT ?"
+                params: list = [limit]
+                if session_id:
+                    q = "SELECT * FROM audit_events WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?"
+                    params = [session_id, limit]
+                rows = con.execute(q, params).fetchall()
+                for r in rows:
+                    # Reconstruct captures from the row's JSON fields
+                    ev = dict(r)
+                    # Ensure timestamp is ISO format
+                    ts = ev.get("timestamp")
+                    # Use agent_id as actor, method/tool_name as action
+                    actor = ev.get("agent_id") or ev.get("source") or "unknown"
+                    action = ev.get("method") or ev.get("tool_name") or ev.get("source") or "event"
+                    events.append(
+                        {
+                            "id": ev.get("event_id"),
+                            "actor": actor,
+                            "action": action,
+                            "timestamp": str(ts),
+                            "session_id": ev.get("session_id"),
+                            "run_id": ev.get("run_id"),
+                            "severity": ev.get("severity"),
+                            "captures": {
+                                "arguments": ev.get("arguments_redacted"),
+                                "result": ev.get("result_summary"),
+                                "filesystem": ev.get("filesystem"),
+                                "network": ev.get("network"),
+                                "policy": ev.get("policy_decision"),
+                                "raw": ev,
+                            },
+                        }
+                    )
+                con.close()
+            except Exception:
+                continue
+
+        # If no events found, return a synthetic AGI loop example for demo
+        if not events:
+            now = time.time()
+            events = [
+                {
+                    "id": "demo-1",
+                    "actor": "user",
+                    "action": "start_narrow_loop",
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 300)),
+                    "session_id": session_id or "demo-session",
+                    "captures": {"arguments": {"profile": "fox-fraud", "task": "EDA on UPI peer re-identification"}, "result": {"status": "queued"}},
+                },
+                {
+                    "id": "demo-2",
+                    "actor": "hive-machine",
+                    "action": "run_code",
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 240)),
+                    "captures": {"filesystem": {"writes": ["workbench/peer_benchmark.py"]}, "result": {"exit_code": 0}},
+                },
+                {
+                    "id": "demo-3",
+                    "actor": "research-companion",
+                    "action": "synthesize",
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 180)),
+                    "captures": {"arguments": {"papers": 3}, "result": {"summary": "Peer groups: 1500 banking, 3996 UPI"}},
+                },
+                {
+                    "id": "demo-4",
+                    "actor": "ollama",
+                    "action": "chat",
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 60)),
+                    "captures": {"result": {"model": "qwen3.8:27b-mlx", "tokens": 1200}},
+                },
+            ]
+
+        # Build graph: nodes are unique actors, edges are sequential actions ordered by timestamp
+        actors = sorted({e["actor"] for e in events})
+        nodes = [{"id": a, "label": a, "type": "actor"} for a in actors]
+        # Sort events by timestamp ascending for edges
+        def _ts(e):
+            try:
+                return e["timestamp"]
+            except:
+                return ""
+
+        sorted_events = sorted(events, key=_ts)
+        edges = []
+        for idx, ev in enumerate(sorted_events):
+            # Edge from previous actor to current actor, labeled with action
+            if idx == 0:
+                # First event: self-loop or from 'start'
+                edges.append(
+                    {
+                        "id": ev["id"],
+                        "from": ev["actor"],
+                        "to": ev["actor"],
+                        "label": ev["action"],
+                        "timestamp": ev["timestamp"],
+                        "captures": ev["captures"],
+                        "seq": idx,
+                    }
+                )
+            else:
+                prev = sorted_events[idx - 1]
+                edges.append(
+                    {
+                        "id": ev["id"],
+                        "from": prev["actor"],
+                        "to": ev["actor"],
+                        "label": ev["action"],
+                        "timestamp": ev["timestamp"],
+                        "captures": ev["captures"],
+                        "seq": idx,
+                    }
+                )
+
+        return {"nodes": nodes, "edges": edges, "events": sorted_events, "count": len(events)}
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+@router.get("/journey")
+async def hive_journey():
+    """Journey to achieve AGI — dashboard that collects all metrics to build Narrow space AGI.
+
+    Aggregates per-workbench profiles, their evaluation metrics, audit timeline,
+    and overall progress. As defined in hive-research-CLI/hive/workbench/profiles.py
+    (one YAML per domain with scoped memory/tools/reward).
+    """
+    try:
+        from pathlib import Path as _P
+
+        # Collect workbench profiles
+        profiles = []
+        try:
+            from hive_companion.workbench.profiles import WORKBENCH_DIR  # type: ignore
+
+            if WORKBENCH_DIR.exists():
+                for p in sorted(WORKBENCH_DIR.glob("*.yaml")):
+                    profiles.append({"name": p.stem, "path": str(p), "type": "narrow"})
+        except Exception:
+            pass
+        # Also scan Fox projects as narrow workbenches (fallback)
+        try:
+            from backend.paths import PROJECTS_DIR
+            from backend.store import ProjectStore
+
+            fox_workbenches = []
+            if PROJECTS_DIR.exists():
+                for d in sorted(PROJECTS_DIR.iterdir()):
+                    if d.is_dir():
+                        try:
+                            store = ProjectStore(d)
+                            exps = store.list_experiments()
+                            runs = store.count_runs()
+                            # Heuristic: narrow AGI score = avg of experiment metrics + audit health
+                            # Collect latest run metrics if available
+                            latest_metric = None
+                            if exps:
+                                latest = exps[-1]
+                                runs_list = store.experiment_runs(latest["id"], limit=1)
+                                if runs_list:
+                                    latest_metric = runs_list[0].get("metrics")
+                            fox_workbenches.append(
+                                {
+                                    "name": d.name,
+                                    "type": "fox-project",
+                                    "experiments": len(exps),
+                                    "runs": runs,
+                                    "latest_metric": latest_metric,
+                                    "updated": d.stat().st_mtime,
+                                }
+                            )
+                        except Exception:
+                            continue
+            # Merge
+            for fw in fox_workbenches:
+                if fw["name"] not in {p["name"] for p in profiles}:
+                    profiles.append(fw)
+        except Exception:
+            pass
+
+        # Collect audit timeline summary for journey progress
+        audit_summary = {"total_events": 0, "actors": []}
+        try:
+            # Reuse the timeline endpoint's logic (lightweight)
+            from audit.store import LocalAuditStore
+
+            candidates = []
+            try:
+                from backend.paths import PROJECTS_DIR
+
+                cand = PROJECTS_DIR / "default" / "audit" / "audit.db"
+                if cand.exists():
+                    candidates.append(cand)
+            except Exception:
+                pass
+            hive_audit = _P.home() / ".hive" / "audit" / "audit.db"
+            if hive_audit.exists():
+                candidates.append(hive_audit)
+            total = 0
+            actors_set = set()
+            for db in candidates[:1]:
+                try:
+                    import sqlite3
+
+                    con = sqlite3.connect(str(db))
+                    cur = con.execute("SELECT COUNT(*) as c FROM audit_events")
+                    total = cur.fetchone()[0] or 0
+                    cur2 = con.execute("SELECT DISTINCT agent_id FROM audit_events LIMIT 20")
+                    actors_set.update([r[0] for r in cur2.fetchall() if r[0]])
+                    con.close()
+                except Exception:
+                    pass
+            audit_summary = {"total_events": total, "actors": sorted(actors_set)}
+        except Exception:
+            pass
+
+        # Compute narrow space AGI progress: weighted avg of workbench metrics
+        # Heuristic: each Fox project with >0 runs and experiments is a narrow AGI slice
+        narrow_count = len([p for p in profiles if p.get("type") in ("narrow", "fox-project")])
+        fox_with_runs = len([p for p in profiles if p.get("runs", 0) > 0])
+        # Progress = fox_with_runs / max(narrow_count, 1) * 100, capped at 100
+        progress = min(100.0, (fox_with_runs / max(narrow_count, 1)) * 100) if narrow_count else 0
+        # Also include audit health as part of journey
+        audit_health = min(100.0, audit_summary["total_events"] / 10)  # 10 events = 100% for demo
+
+        return {
+            "journey": "Narrow Space AGI",
+            "description": "Collects all narrow workbench metrics to build Narrow space AGI — one profile per domain with scoped memory/tools/reward (hive/workbench/profiles.py).",
+            "profiles": profiles,
+            "narrow_count": narrow_count,
+            "fox_with_runs": fox_with_runs,
+            "progress": round(progress, 1),
+            "audit": audit_summary,
+            "audit_health": round(audit_health, 1),
+            "overall": round((progress + audit_health) / 2, 1),
+            "timestamp": time.time(),
+            "web_app": "/#journey",
+        }
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
