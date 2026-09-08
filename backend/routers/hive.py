@@ -427,16 +427,30 @@ async def hive_journey():
     try:
         from pathlib import Path as _P
 
-        # Collect workbench profiles
+        # Collect workbench profiles — all AGI Workbench elements (narrow specialization)
+        # Each workbench is a YAML with: name, description, domain, datasets, allowed_tools,
+        # model_preference, prompts, evaluation, constraints, scoped memory/tools/reward
         profiles = []
         try:
-            from hive_companion.workbench.profiles import WORKBENCH_DIR  # type: ignore
+            from hive_companion.workbench.profiles import list_workbenches  # type: ignore
 
-            if WORKBENCH_DIR.exists():
-                for p in sorted(WORKBENCH_DIR.glob("*.yaml")):
-                    profiles.append({"name": p.stem, "path": str(p), "type": "narrow"})
+            for wb in list_workbenches():
+                # wb already contains all YAML fields plus name/path/source
+                wb["type"] = "narrow"
+                # Ensure all expected AGI Workbench elements are present for the Journey tab
+                for k in ("description", "domain", "datasets", "allowed_tools", "model_preference", "prompts", "evaluation", "constraints"):
+                    wb.setdefault(k, None)
+                profiles.append(wb)
         except Exception:
-            pass
+            # Fallback to direct scan if list_workbenches not available
+            try:
+                from hive_companion.workbench.profiles import WORKBENCH_DIR  # type: ignore
+
+                if WORKBENCH_DIR.exists():
+                    for p in sorted(WORKBENCH_DIR.glob("*.yaml")):
+                        profiles.append({"name": p.stem, "path": str(p), "type": "narrow"})
+            except Exception:
+                pass
         # Also scan Fox projects as narrow workbenches (fallback)
         try:
             from backend.paths import PROJECTS_DIR

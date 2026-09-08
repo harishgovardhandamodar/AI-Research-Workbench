@@ -6743,7 +6743,26 @@ async function loadJourney() {
     if (profilesEl) {
       if (j.profiles && j.profiles.length) {
         profilesEl.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">' +
-          j.profiles.map(p => `<div class="card" style="padding:8px"><div style="font-weight:600">${esc(p.name)}</div><div class="muted small">${esc(p.type || "")} • ${p.experiments != null ? p.experiments + " exps" : ""} ${p.runs != null ? p.runs + " runs" : ""}</div><div class="muted small" style="font-size:10px">${esc(p.path || "")}</div></div>`).join("") +
+          j.profiles.map(p => {
+            const ds = p.datasets ? (Array.isArray(p.datasets) ? p.datasets.join(", ") : String(p.datasets)) : "";
+            const tools = p.allowed_tools ? (Array.isArray(p.allowed_tools) ? p.allowed_tools.join(", ") : String(p.allowed_tools)) : "";
+            const evalStr = p.evaluation ? (typeof p.evaluation === "object" ? JSON.stringify(p.evaluation).slice(0,120) : String(p.evaluation).slice(0,120)) : "";
+            return `<div class="card" style="padding:10px;display:flex;flex-direction:column;gap:6px">
+              <div style="font-weight:700;font-size:13px">${esc(p.name)} <span class="muted small">(${esc(p.type || "")}${p.domain ? " • " + esc(p.domain) : ""})</span></div>
+              ${p.description ? `<div class="muted small" style="font-size:11px">${esc(p.description.slice(0,180))}</div>` : ""}
+              <div class="mono small" style="font-size:10px;word-break:break-all">${esc(p.path || "")}</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+                <div><b>Datasets:</b> <span class="muted">${esc(ds || "—")}</span></div>
+                <div><b>Tools:</b> <span class="muted">${esc(tools || "—")}</span></div>
+                <div><b>Model:</b> <span class="muted">${esc(p.model_preference || p.model || "—")}</span></div>
+                <div><b>Exps/Runs:</b> <span class="muted">${p.experiments != null ? p.experiments + " exps" : "—"} ${p.runs != null ? p.runs + " runs" : ""}</span></div>
+              </div>
+              ${p.prompts ? `<div class="muted small" style="font-size:10px"><b>Prompts:</b> ${esc(typeof p.prompts === "string" ? p.prompts.slice(0,100) : JSON.stringify(p.prompts).slice(0,100))}</div>` : ""}
+              ${evalStr ? `<div class="muted small" style="font-size:10px"><b>Eval:</b> ${esc(evalStr)}</div>` : ""}
+              ${p.constraints ? `<div class="muted small" style="font-size:10px"><b>Constraints:</b> ${esc(typeof p.constraints === "string" ? p.constraints.slice(0,100) : JSON.stringify(p.constraints).slice(0,100))}</div>` : ""}
+              <div class="muted small" style="font-size:10px">Updated: ${p.updated ? new Date(p.updated*1000).toLocaleString() : "—"} ${p.latest_metric ? "• " + esc(JSON.stringify(p.latest_metric).slice(0,80)) : ""}</div>
+            </div>`;
+          }).join("") +
           '</div>';
       } else {
         profilesEl.textContent = "No narrow workbenches yet.";
