@@ -6786,6 +6786,60 @@ async function loadJourney() {
         timelineEl.innerHTML = html;
       } catch (e) { timelineEl.textContent = "Timeline failed: " + String(e).slice(0,100); }
     }
+    // Narrow AGI run (gathers all) — charts + mermaid
+    const narrowRunsEl = $("journey-narrow-runs");
+    if (narrowRunsEl) {
+      const runs = j.narrow_runs || [];
+      const charts = j.charts || [];
+      const mermaid = j.mermaid_diagrams || [];
+      let html = `<div class="muted small" style="margin-bottom:6px">${runs.length} narrow runs • ${charts.length} charts • ${mermaid.length} mermaid diagrams (gathers all)</div>`;
+      if (runs.length) {
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">';
+        runs.slice(0, 12).forEach(r => {
+          html += `<div class="card" style="padding:8px"><div style="font-weight:600">${esc(r.workbench)} → ${esc(r.experiment)}</div><div class="muted small">run #${r.run_id} • ${esc(r.status||"")} • ${esc(r.kind||"")}</div><div class="mono small" style="font-size:10px">${esc(JSON.stringify(r.metrics||{}).slice(0,120))}</div></div>`;
+        });
+        html += '</div>';
+      } else {
+        html += '<div class="muted small">No narrow runs yet. Run a loop via Hive.</div>';
+      }
+      if (charts.length) {
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:8px">';
+        charts.slice(0, 8).forEach(c => {
+          html += `<div class="card" style="padding:6px"><div class="mono small">${esc(c.workbench)}: ${esc(c.name)}</div><a href="${esc(c.url)}" target="_blank" rel="noopener"><img src="${esc(c.url)}" alt="${esc(c.name)}" style="width:100%;border-radius:6px;margin-top:4px" loading="lazy" /></a></div>`;
+        });
+        html += '</div>';
+      }
+      if (mermaid.length) {
+        html += '<div style="margin-top:8px">' + mermaid.slice(0, 4).map(m => `<div class="card" style="padding:6px"><div class="mono small">${esc(m.workbench)}: ${esc(m.name)}</div><div class="muted small">Mermaid: <a href="${esc(m.url)}" target="_blank">${esc(m.name)}</a></div></div>`).join("") + '</div>';
+      }
+      narrowRunsEl.innerHTML = html;
+    }
+    // AGI Workbench — narrow spaced ideal experimentation (ledgers + auditable proofs)
+    const ledgersEl = $("journey-ledgers");
+    if (ledgersEl) {
+      const ledgers = j.ledgers || [];
+      const proofs = j.auditable_proofs || [];
+      let html = `<div class="muted small" style="margin-bottom:6px">${ledgers.length} ledger entries • ${proofs.length} auditable proofs (hash-chained)</div>`;
+      if (ledgers.length) {
+        html += '<div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px">';
+        html += '<table style="width:100%;font-size:11px"><thead><tr><th>Workbench</th><th>Command</th><th>Time</th></tr></thead><tbody>';
+        ledgers.slice(0, 20).forEach(l => {
+          html += `<tr><td>${esc(l.workbench||"")}</td><td class="mono">${esc((l.command||"").slice(0,40))}</td><td class="muted small">${l.timestamp ? new Date(l.timestamp*1000).toLocaleString() : ""}</td></tr>`;
+        });
+        html += '</tbody></table></div>';
+      }
+      if (proofs.length) {
+        html += '<div style="margin-top:8px;max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px">';
+        html += '<div class="muted small" style="margin-bottom:4px">Auditable proofs (click for captures):</div>';
+        proofs.slice(0, 10).forEach((p, idx) => {
+          html += `<div class="card" style="padding:6px;margin-bottom:4px;cursor:pointer" onclick="alert(JSON.stringify(${JSON.stringify(JSON.stringify(p.captures || p)).slice(0,80)}).slice(0,500))">`;
+          html += `<span class="mono small">#${idx} ${esc(p.actor||p.agent_id||"")} → ${esc(p.action||p.method||"")}</span> <span class="muted small">${esc(p.timestamp||"")}</span>`;
+          html += `</div>`;
+        });
+        html += '</div>';
+      }
+      ledgersEl.innerHTML = html;
+    }
   } catch (e) {
     if (progressEl) progressEl.textContent = "Failed: " + String(e).slice(0,120);
   }
