@@ -34,7 +34,7 @@ from .llm import LLMError
 from .paths import FRONTEND_DIR, PROJECTS_DIR, ROOT
 from .permissions import AllowAllPermissionManager
 from .project_runtime import ProjectRuntime
-from .routers import artifacts, finetune, notebooks, projects, runs, system
+from .routers import artifacts, finetune, hive, notebooks, projects, runs, system
 from .state import (CONFIG, allowed_origins, get_runtime, mcp_registry,
                     origin_allowed, runtimes)
 
@@ -51,6 +51,18 @@ async def lifespan(app: FastAPI):
     from .logging_config import setup_logging
     setup_logging()
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    # Ledger-based audit plugin — integrated all over workbench (gathering invariant)
+    try:
+        from backend.plugins import load_plugins
+
+        for mod in load_plugins():
+            try:
+                info = mod.register(app) if hasattr(mod, "register") else {}
+                print(f"[plugin] {mod.__name__} -> {info}")
+            except Exception as e:
+                print(f"[plugin] {mod.__name__} failed: {e}")
+    except Exception as e:
+        print(f"[plugin] load_plugins failed: {e}")
     # Recover plans a previous process left RUNNING (killed by a restart) and
     # backfill the unified experiment_plans mirror so pre-existing plans get
     # run lineage.
@@ -171,8 +183,20 @@ async def _log_context_middleware(request: Request, call_next):
             log.info("%s %s -> %s (%.0fms)", request.method,
                      request.url.path, status or "?",
                      (time.perf_counter() - start) * 1000.0)
+            # Ledger-based audit — integrated all over workbench (hash-chained)
+            try:
+                from backend.plugins.ledger_audit import log_ledger
+
+                # Derive workbench from path or default
+                wb = project or "workbench"
+                # Extract command from path: /api/projects/{name}/... or /api/hive/...
+                cmd = request.url.path.replace("/api/", "").replace("/", "_")[:120]
+                log_ledger(wb, f"{request.method}_{cmd}", {"path": request.url.path, "status": status}, {"source": "http_middleware", "method": request.method})
+            except Exception:
+                pass
 
 app.include_router(system.router)
+app.include_router(hive.router)
 app.include_router(projects.router)
 app.include_router(finetune.router)
 app.include_router(runs.router)

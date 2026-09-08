@@ -29,6 +29,8 @@
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent" title="Agent">🤖 Agent</button>
         <button id="mainview-editor" class="mainview-btn" data-mainview="editor" title="Editor">🖊 Editor</button>
         <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg" title="Knowledge Graphs">🕸 Graphs</button>
+        <button id="mainview-hive" class="mainview-btn" data-mainview="hive" title="Hive Research Companion">🐝 Hive</button>
+        <button id="mainview-journey" class="mainview-btn" data-mainview="journey" title="Journey to achieve AGI — Narrow Space AGI Dashboard">🌌 Journey</button>
         <button id="mainview-audit" class="mainview-btn" data-mainview="audit" title="Audit Trail">🛡 Audit</button>
       </div>
       <div id="session-ctrl" class="session-ctrl" title="Sessions">
@@ -468,6 +470,114 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
       </div>
       <div id="rkg-frame-wrap" class="rkg-frame-wrap">
         <iframe id="rkg-frame" title="Research Knowledge Graphs dashboard"></iframe>
+      </div>
+    </section>
+
+    <section id="hive-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">🐝 Hive Research Companion — Narrow AGI Loops</span>
+        <span class="muted">Feynman clone + Perplexity Computer · Local Ollama/LM Studio · Workbench profiles</span>
+        <span class="spacer"></span>
+        <button id="hive-refresh" class="btn subtle small">Refresh</button>
+        <a id="hive-docs-link" class="btn subtle small" target="_blank" rel="noopener" href="https://github.com/harishgovardhandamodar/hive-research-CLI">Docs</a>
+      </div>
+      <div class="hive-layout">
+        <div class="hive-profiles card">
+          <h4>Narrow AGI Workbenches</h4>
+          <div id="hive-profiles-list" class="muted">Loading profiles…</div>
+          <div class="hive-run">
+            <input id="hive-profile" placeholder="profile (e.g. fox-fraud)" />
+            <input id="hive-task" placeholder="task (e.g. EDA on UPI peer re-identification)" />
+            <button id="hive-run" class="btn">Run Loop</button>
+          </div>
+          <div id="hive-status" class="muted small"></div>
+        </div>
+        <div class="hive-main card">
+          <h4>Research Companion</h4>
+          <div id="hive-sessions" class="muted">No sessions yet. Run a loop or check <code>/api/hive/health</code>.</div>
+          <iframe id="hive-frame" title="Hive Machine dashboard" style="width:100%;height:480px;border:0;display:none"></iframe>
+        </div>
+      </div>
+      <div class="hive-timeline card" style="margin-top:16px">
+        <h4>🔍 Auditable Logs — Timeline Graph <span class="muted small">(nodes=actor, edges=action, seq+timestamp, clickable)</span></h4>
+        <div class="hive-timeline-controls" style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="hive-timeline-limit" type="number" min="10" max="500" value="100" style="width:80px" title="Max events" />
+          <input id="hive-timeline-session" placeholder="session filter (optional)" style="flex:1" />
+          <button id="hive-timeline-refresh" class="btn subtle small">Refresh Timeline</button>
+          <button id="hive-timeline-export" class="btn subtle small">Export JSON</button>
+        </div>
+        <div id="hive-timeline-graph" class="hive-graph" style="min-height:320px;border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;background:var(--bg-subtle)">
+          <div class="muted small">Loading timeline…</div>
+        </div>
+        <div id="hive-timeline-overlay" class="hive-overlay hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:1000;display:none">
+          <div class="card" style="max-width:720px;max-height:80vh;overflow:auto;padding:16px;background:var(--bg);border:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <h4 id="hive-overlay-title" style="margin:0">Event Detail</h4>
+              <button id="hive-overlay-close" class="btn subtle small">✕ Close</button>
+            </div>
+            <pre id="hive-overlay-body" style="white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:60vh;overflow:auto"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="journey-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">🌌 Journey to achieve AGI — Narrow Space AGI Dashboard</span>
+        <span class="muted">Collects all narrow workbench metrics to build Narrow space AGI (one profile per domain)</span>
+        <span class="spacer"></span>
+        <button id="journey-refresh" class="btn subtle small">Refresh</button>
+        <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/journey">API</a>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <h4>📐 Collection Scheme — How Narrow Space AGI is Built</h4>
+        <div class="muted small" style="line-height:1.5">
+          <b>1. Discover</b> narrow workbenches: YAMLs in <code>~/.hive/workbench/*.yaml</code> + Fox projects in <code>PROJECTS_DIR</code> (one profile per domain, e.g. <code>fox-fraud</code>, <code>quai-lora</code>, <code>UPI-Peer-identification</code>) with scoped <code>memory/tools/reward</code> (<code>hive/workbench/profiles.py:102 list_workbenches()</code>).<br/>
+          <b>2. Collect</b> per-workbench: <code>experiments</code>, <code>runs</code>, <code>latest_metric</code>, <code>artifacts</code> (via <code>ProjectStore</code>/<code>ArtifactStore</code>), and <code>audit_events</code> (hash-chained <code>LocalAuditStore</code> → timeline graph nodes=actor, edges=action).<br/>
+          <b>3. Aggregate</b> to Journey: <code>progress = fox_with_runs / narrow_count ×100</code> (78.6% now), <code>audit_health = total_events/10</code>, <code>overall = (progress+audit_health)/2</code> (39.3%).<br/>
+          <b>4. Visualize</b> as <code>#journey</code> (progress bar, workbenches grid with all AGI elements, timeline) and <code>#hive</code> (auditable timeline). All LLM stays local (Ollama/LM Studio).
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <span class="badge" style="background:var(--accent);color:var(--bg);padding:2px 6px;border-radius:4px">Discover → Collect → Aggregate → Visualize</span>
+          <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/journey">/api/hive/journey</a>
+          <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/audit/timeline?limit=30">/api/hive/audit/timeline</a>
+        </div>
+      </div>
+      <div class="journey-layout" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card">
+          <h4>Overall Progress</h4>
+          <div id="journey-progress" class="muted">Loading…</div>
+          <div style="background:var(--border);border-radius:8px;height:16px;overflow:hidden;margin-top:8px">
+            <div id="journey-progress-bar" style="height:100%;width:0;background:var(--accent);transition:width 0.5s"></div>
+          </div>
+          <div id="journey-stats" class="muted small" style="margin-top:8px"></div>
+        </div>
+        <div class="card">
+          <h4>Audit Health</h4>
+          <div id="journey-audit" class="muted">Loading…</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4>Narrow Workbenches — All AGI Workbench Elements</h4>
+        <div id="journey-profiles" class="muted">Loading profiles…</div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4>AGI Workbench — Feature by Feature (hive-research-CLI)</h4>
+        <div class="muted small" style="margin-bottom:6px">All elements from <code>hive/</code> — CLI, TUI, Hive-Machine, Papers, Research, Workbench, Learn, Ledger, LLM, Web, Derived, Config — as defined in <code>hive-research-CLI</code></div>
+        <div id="journey-agi-features" class="muted">Loading AGI features…</div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4>Experiment — Narrow AGI Run (Gathers All) + Charts & Mermaid</h4>
+        <div id="journey-narrow-runs" class="muted">Loading narrow runs…</div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4>AGI Workbench — Narrow Spaced Ideal Experimentation</h4>
+        <div class="muted small" style="margin-bottom:6px">Ledgers (hash-chained, per workbench) + Auditable Proofs (tamper-evident, captures)</div>
+        <div id="journey-ledgers" class="muted">Loading ledgers…</div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4>Timeline — Auditable Logs (nodes=actor, edges=action, seq+timestamp, clickable)</h4>
+        <div id="journey-timeline" class="muted small">Loading timeline…</div>
       </div>
     </section>
 

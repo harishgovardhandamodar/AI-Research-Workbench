@@ -35,6 +35,8 @@ services:
       # Container paths: /app/mgmt-repo (management repo) and /app/personal-experiments (direct access).
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/mgmt-repo
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/personal-experiments
+      # Hive ledger/audit — host ~/.hive for auditable proofs (hash-chained)
+      - ${HOME}/.hive:/root/.hive
     restart: unless-stopped
 
   # In-browser VS Code editor sharing the workbench data volume so generated
@@ -56,6 +58,7 @@ services:
       # Personal experiments repo — visible in code-server for session browsing.
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/personal-experiments
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/mgmt-repo
+      - ${HOME}/.hive:/home/coder/.hive
     command: ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "${CODE_SERVER_AUTH:-none}", "--disable-telemetry", "/home/coder/workbench"]
     restart: unless-stopped
 
@@ -81,7 +84,31 @@ services:
     command: TCP-LISTEN:11435,fork,reuseaddr TCP:127.0.0.1:11434
     restart: unless-stopped
 
+  # Hive Research Companion — local Feynman + Perplexity Computer (hive-machine)
+  # Shares workbench volume for paper synthesis and machine workspace.
+  hive:
+    build:
+      context: .
+      dockerfile: Dockerfile.hive
+    container_name: fox-hive
+    ports:
+      - "${HIVE_BIND:-127.0.0.1}:8000:8000"
+    environment:
+      FOX_WORKBENCH_DIR: /app/workbench
+      HIVE_WORKSPACE: /app/hive-workspace
+      OLLAMA_HOST: host.docker.internal:11434
+    volumes:
+      - fox_data:/app/workbench
+      - hive_workspace:/app/hive-workspace
+      - ./hive_companion:/app/hive_companion:ro
+      - ${HOME}/.hive:/root/.hive
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    profiles: ["hive"]
+
 volumes:
   fox_data:
   ollama_data:
   code_server_config:
+  hive_workspace:
