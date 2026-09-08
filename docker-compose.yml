@@ -35,6 +35,8 @@ services:
       # Container paths: /app/mgmt-repo (management repo) and /app/personal-experiments (direct access).
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/mgmt-repo
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/app/personal-experiments
+      # Hive ledger/audit — host ~/.hive for auditable proofs (hash-chained)
+      - ${HOME}/.hive:/root/.hive
     restart: unless-stopped
 
   # In-browser VS Code editor sharing the workbench data volume so generated
@@ -56,6 +58,7 @@ services:
       # Personal experiments repo — visible in code-server for session browsing.
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/personal-experiments
       - /Users/harishgovardhandamodar/codebase/personal-experiments:/home/coder/mgmt-repo
+      - ${HOME}/.hive:/home/coder/.hive
     command: ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "${CODE_SERVER_AUTH:-none}", "--disable-telemetry", "/home/coder/workbench"]
     restart: unless-stopped
 
@@ -98,6 +101,7 @@ services:
       - fox_data:/app/workbench
       - hive_workspace:/app/hive-workspace
       - ./hive_companion:/app/hive_companion:ro
+      - ${HOME}/.hive:/root/.hive
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

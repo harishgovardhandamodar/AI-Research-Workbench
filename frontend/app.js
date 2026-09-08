@@ -6787,6 +6787,19 @@ async function loadJourney() {
       } catch (e) { timelineEl.textContent = "Timeline failed: " + String(e).slice(0,100); }
     }
     // Narrow AGI run (gathers all) — charts + mermaid
+    const agiFeaturesEl = $("journey-agi-features");
+    if (agiFeaturesEl) {
+      const feats = j.agi_features || [];
+      if (feats.length) {
+        agiFeaturesEl.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px">' +
+          feats.map(f => `<div class="card" style="padding:8px;display:flex;flex-direction:column;gap:4px">
+            <div style="font-weight:700;font-size:12px">${esc(f.id)} <span class="muted small">(${esc(f.module)})</span> <span style="float:right">${f.available ? "✅" : "❌"} ${f.integrated ? "🔗" : ""}</span></div>
+            <div class="muted small" style="font-size:11px">${esc(f.description)}</div>
+          </div>`).join("") + '</div>';
+      } else {
+        agiFeaturesEl.innerHTML = '<span class="muted">No AGI features found.</span>';
+      }
+    }
     const narrowRunsEl = $("journey-narrow-runs");
     if (narrowRunsEl) {
       const runs = j.narrow_runs || [];

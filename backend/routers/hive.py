@@ -298,12 +298,37 @@ async def hive_audit_timeline(limit: int = 100, session_id: str | None = None):
 
                 con = sqlite3.connect(str(db_path))
                 con.row_factory = sqlite3.Row
-                q = "SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT ?"
-                params: list = [limit]
-                if session_id:
-                    q = "SELECT * FROM audit_events WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?"
-                    params = [session_id, limit]
-                rows = con.execute(q, params).fetchall()
+                rows = []
+                for tbl in ["audit_events", "audit", "executions"]:
+                    for col in ["timestamp", "ts", "created_at"]:
+                        try:
+                            if session_id:
+                                q = f"SELECT * FROM {tbl} WHERE session_id = ? ORDER BY {col} DESC LIMIT ?"
+                                rows = con.execute(q, (session_id, limit)).fetchall()
+                            else:
+                                q = f"SELECT * FROM {tbl} ORDER BY {col} DESC LIMIT ?"
+                                rows = con.execute(q, (limit,)).fetchall()
+                            if rows:
+                                break
+                        except sqlite3.OperationalError:
+                            continue
+                    if rows:
+                        break
+                if not rows:
+                    # Fallback: try any table
+                    try:
+                        for tbl in [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+                            for col in ["timestamp", "ts", "created_at", "time"]:
+                                try:
+                                    rows = con.execute(f"SELECT * FROM {tbl} ORDER BY {col} DESC LIMIT ?", (limit,)).fetchall()
+                                    if rows:
+                                        break
+                                except sqlite3.OperationalError:
+                                    continue
+                            if rows:
+                                break
+                    except Exception:
+                        rows = []
                 for r in rows:
                     # Reconstruct captures from the row's JSON fields
                     ev = dict(r)
@@ -601,8 +626,22 @@ async def hive_journey():
 
                 con = sqlite3.connect(str(ledger_db))
                 con.row_factory = sqlite3.Row
-                for r in con.execute("SELECT id, workbench, command, args, timestamp FROM ledger ORDER BY timestamp DESC LIMIT 20"):
-                    ledgers.append(dict(r))
+                # Ledger uses 'executions' table with 'ts' column (see hive/ledger/store.py)
+                try:
+                    for r in con.execute("SELECT id, workbench, command, args, ts as timestamp FROM executions ORDER BY ts DESC LIMIT 20"):
+                        ledgers.append(dict(r))
+                except sqlite3.OperationalError:
+                    for tbl in ["executions", "ledger", "feedback", "memory"]:
+                        for col in ["ts", "timestamp", "created_at"]:
+                            try:
+                                for r in con.execute(f"SELECT * FROM {tbl} ORDER BY {col} DESC LIMIT 20"):
+                                    ledgers.append(dict(r))
+                                if ledgers:
+                                    break
+                            except sqlite3.OperationalError:
+                                continue
+                        if ledgers:
+                            break
                 con.close()
             hive_audit = _P2.home() / ".hive" / "machine" / "audit.db"
             if hive_audit.exists():
@@ -610,8 +649,21 @@ async def hive_journey():
 
                 con = sqlite3.connect(str(hive_audit))
                 con.row_factory = sqlite3.Row
-                for r in con.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 20"):
-                    auditable_proofs.append(dict(r))
+                try:
+                    for r in con.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 20"):
+                        auditable_proofs.append(dict(r))
+                except sqlite3.OperationalError:
+                    for tbl in ["audit", "audit_events", "executions"]:
+                        for col in ["timestamp", "ts", "created_at"]:
+                            try:
+                                for r in con.execute(f"SELECT * FROM {tbl} ORDER BY {col} DESC LIMIT 20"):
+                                    auditable_proofs.append(dict(r))
+                                if auditable_proofs:
+                                    break
+                            except sqlite3.OperationalError:
+                                continue
+                        if auditable_proofs:
+                            break
                 con.close()
             if not auditable_proofs:
                 auditable_proofs = [{"id": "proof-demo", "actor": "hive-machine", "action": "verify", "timestamp": time.time(), "captures": {"hash": "sha256:demo"}}]
