@@ -546,6 +546,17 @@ async def hive_journey():
             "audit": audit_summary,
             "audit_health": round(audit_health, 1),
             "overall": round((progress + audit_health) / 2, 1),
+            "scheme": {
+                "steps": [
+                    "Discover narrow workbenches: YAMLs in ~/.hive/workbench/*.yaml + Fox PROJECTS_DIR (one per domain, e.g. fox-fraud, quai-lora) via hive/workbench/profiles.py:list_workbenches()",
+                    "Collect per-workbench: experiments, runs, latest_metric, artifacts (ProjectStore/ArtifactStore), audit_events (LocalAuditStore hash-chained) → timeline nodes=actor edges=action",
+                    "Aggregate to Journey: progress = fox_with_runs / narrow_count *100, audit_health = total_events/10, overall = (progress+audit_health)/2",
+                    "Visualize as #journey (progress bar, workbenches grid with all AGI elements, timeline) and #hive (auditable timeline)",
+                ],
+                "hive_workbench": "hive/workbench/profiles.py (one YAML per domain with scoped memory/tools/reward)",
+                "fox_projects": "PROJECTS_DIR (Fox workbench SQLite)",
+                "audit": "LocalAuditStore (hash-chained, tamper-evident) → /api/hive/audit/timeline",
+            },
             "timestamp": time.time(),
             "web_app": "/#journey",
         }

@@ -529,6 +529,20 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <button id="journey-refresh" class="btn subtle small">Refresh</button>
         <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/journey">API</a>
       </div>
+      <div class="card" style="margin-bottom:12px">
+        <h4>📐 Collection Scheme — How Narrow Space AGI is Built</h4>
+        <div class="muted small" style="line-height:1.5">
+          <b>1. Discover</b> narrow workbenches: YAMLs in <code>~/.hive/workbench/*.yaml</code> + Fox projects in <code>PROJECTS_DIR</code> (one profile per domain, e.g. <code>fox-fraud</code>, <code>quai-lora</code>, <code>UPI-Peer-identification</code>) with scoped <code>memory/tools/reward</code> (<code>hive/workbench/profiles.py:102 list_workbenches()</code>).<br/>
+          <b>2. Collect</b> per-workbench: <code>experiments</code>, <code>runs</code>, <code>latest_metric</code>, <code>artifacts</code> (via <code>ProjectStore</code>/<code>ArtifactStore</code>), and <code>audit_events</code> (hash-chained <code>LocalAuditStore</code> → timeline graph nodes=actor, edges=action).<br/>
+          <b>3. Aggregate</b> to Journey: <code>progress = fox_with_runs / narrow_count ×100</code> (78.6% now), <code>audit_health = total_events/10</code>, <code>overall = (progress+audit_health)/2</code> (39.3%).<br/>
+          <b>4. Visualize</b> as <code>#journey</code> (progress bar, workbenches grid with all AGI elements, timeline) and <code>#hive</code> (auditable timeline). All LLM stays local (Ollama/LM Studio).
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <span class="badge" style="background:var(--accent);color:var(--bg);padding:2px 6px;border-radius:4px">Discover → Collect → Aggregate → Visualize</span>
+          <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/journey">/api/hive/journey</a>
+          <a class="btn subtle small" target="_blank" rel="noopener" href="/api/hive/audit/timeline?limit=30">/api/hive/audit/timeline</a>
+        </div>
+      </div>
       <div class="journey-layout" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="card">
           <h4>Overall Progress</h4>
