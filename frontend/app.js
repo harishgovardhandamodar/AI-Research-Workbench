@@ -6836,10 +6836,26 @@ async function loadJourney() {
       if (ledgers.length) {
         html += '<div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px">';
         html += '<table style="width:100%;font-size:11px"><thead><tr><th>Workbench</th><th>Command</th><th>Time</th></tr></thead><tbody>';
-        ledgers.slice(0, 20).forEach(l => {
-          html += `<tr><td>${esc(l.workbench||"")}</td><td class="mono">${esc((l.command||"").slice(0,40))}</td><td class="muted small">${l.timestamp ? new Date(l.timestamp*1000).toLocaleString() : ""}</td></tr>`;
+        ledgers.slice(0, 20).forEach((l, idx) => {
+          html += `<tr class="ledger-row" data-idx="${idx}" style="cursor:pointer" title="Click for full captures"><td>${esc(l.workbench||"")}</td><td class="mono">${esc((l.command||"").slice(0,40))}</td><td class="muted small">${l.timestamp ? new Date(l.timestamp*1000).toLocaleString() : ""}</td><td><span class="muted small">👁 view</span></td></tr>`;
         });
         html += '</tbody></table></div>';
+        // Wire clickable ledger rows to overlay (all ledger entries clickable)
+        setTimeout(() => {
+          document.querySelectorAll(".ledger-row").forEach(el => {
+            el.onclick = () => {
+              const idx = parseInt(el.dataset.idx, 10);
+              const entry = ledgers[idx];
+              if (!entry) return;
+              const overlay = $("hive-timeline-overlay");
+              const title = $("hive-overlay-title");
+              const body = $("hive-overlay-body");
+              if (title) title.textContent = `Ledger #${entry.id || idx} — ${entry.workbench||""} → ${entry.command||""} [${entry.timestamp ? new Date(entry.timestamp*1000).toLocaleString() : ""}]`;
+              if (body) body.textContent = JSON.stringify(entry, null, 2);
+              if (overlay) { overlay.classList.remove("hidden"); overlay.style.display = "flex"; }
+            };
+          });
+        }, 0);
       }
       if (proofs.length) {
         html += '<div style="margin-top:8px;max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px">';

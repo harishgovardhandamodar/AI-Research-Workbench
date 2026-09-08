@@ -628,8 +628,11 @@ async def hive_journey():
                 con.row_factory = sqlite3.Row
                 # Ledger uses 'executions' table with 'ts' column (see hive/ledger/store.py)
                 try:
-                    for r in con.execute("SELECT id, workbench, command, args, ts as timestamp FROM executions ORDER BY ts DESC LIMIT 20"):
-                        ledgers.append(dict(r))
+                    for r in con.execute("SELECT * FROM executions ORDER BY ts DESC LIMIT 20"):
+                        d = dict(r)
+                        if "ts" in d and "timestamp" not in d:
+                            d["timestamp"] = d["ts"]
+                        ledgers.append(d)
                 except sqlite3.OperationalError:
                     for tbl in ["executions", "ledger", "feedback", "memory"]:
                         for col in ["ts", "timestamp", "created_at"]:
