@@ -29,6 +29,7 @@
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent" title="Agent">🤖 Agent</button>
         <button id="mainview-editor" class="mainview-btn" data-mainview="editor" title="Editor">🖊 Editor</button>
         <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg" title="Knowledge Graphs">🕸 Graphs</button>
+        <button id="mainview-hive" class="mainview-btn" data-mainview="hive" title="Hive Research Companion">🐝 Hive</button>
         <button id="mainview-audit" class="mainview-btn" data-mainview="audit" title="Audit Trail">🛡 Audit</button>
       </div>
       <div id="session-ctrl" class="session-ctrl" title="Sessions">
@@ -468,6 +469,33 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
       </div>
       <div id="rkg-frame-wrap" class="rkg-frame-wrap">
         <iframe id="rkg-frame" title="Research Knowledge Graphs dashboard"></iframe>
+      </div>
+    </section>
+
+    <section id="hive-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">🐝 Hive Research Companion — Narrow AGI Loops</span>
+        <span class="muted">Feynman clone + Perplexity Computer · Local Ollama/LM Studio · Workbench profiles</span>
+        <span class="spacer"></span>
+        <button id="hive-refresh" class="btn subtle small">Refresh</button>
+        <a id="hive-docs-link" class="btn subtle small" target="_blank" rel="noopener" href="https://github.com/harishgovardhandamodar/hive-research-CLI">Docs</a>
+      </div>
+      <div class="hive-layout">
+        <div class="hive-profiles card">
+          <h4>Narrow AGI Workbenches</h4>
+          <div id="hive-profiles-list" class="muted">Loading profiles…</div>
+          <div class="hive-run">
+            <input id="hive-profile" placeholder="profile (e.g. fox-fraud)" />
+            <input id="hive-task" placeholder="task (e.g. EDA on UPI peer re-identification)" />
+            <button id="hive-run" class="btn">Run Loop</button>
+          </div>
+          <div id="hive-status" class="muted small"></div>
+        </div>
+        <div class="hive-main card">
+          <h4>Research Companion</h4>
+          <div id="hive-sessions" class="muted">No sessions yet. Run a loop or check <code>/api/hive/health</code>.</div>
+          <iframe id="hive-frame" title="Hive Machine dashboard" style="width:100%;height:480px;border:0;display:none"></iframe>
+        </div>
       </div>
     </section>
 

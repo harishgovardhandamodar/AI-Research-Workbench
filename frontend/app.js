@@ -6551,6 +6551,7 @@ function switchMainView(view) {
   $("agent-panel").classList.toggle("hidden", view !== "agent");
   $("editor-panel").classList.toggle("hidden", view !== "editor");
   $("rkg-panel").classList.toggle("hidden", view !== "rkg");
+  $("hive-panel").classList.toggle("hidden", view !== "hive");
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
@@ -6575,6 +6576,7 @@ function switchMainView(view) {
   if (view === "agent") loadAgent();
   if (view === "editor") loadEditor();
   if (view === "rkg") loadRkg();
+  if (view === "hive") loadHive();
   if (view === "audit") loadAudit();
 }
 
@@ -6586,6 +6588,48 @@ async function loadRkg() {
   frame.src = (window.FOX_BASE || "") + "/rkg/dashboard";
   $("rkg-landscape-link").href = (window.FOX_BASE || "") + "/rkg/landscape";
   $("rkg-refresh").onclick = () => { frame.src = frame.src; };
+}
+
+async function loadHive() {
+  const list = $("hive-profiles-list");
+  const status = $("hive-status");
+  if (list) list.textContent = "Loading narrow AGI workbenches…";
+  try {
+    const r = await fetch(B("/api/hive/workbench/profiles"));
+    const j = await r.json();
+    if (list) {
+      if (j.profiles && j.profiles.length) {
+        list.innerHTML = j.profiles.map(p => `<div class="mono">${p.name} <span class="muted">${p.path}</span></div>`).join("");
+      } else {
+        list.innerHTML = '<span class="muted">No narrow workbenches yet. Create one in <code>~/.hive/workbench/*.yaml</code> or run Hive.</span>';
+      }
+    }
+    if (status) status.textContent = `Hive: ${j.count || 0} workbenches`;
+  } catch (e) {
+    if (list) list.textContent = "Hive not reachable (is hive-companion installed?)";
+    if (status) status.textContent = String(e).slice(0,120);
+  }
+  // Wire buttons once
+  const runBtn = $("hive-run");
+  if (runBtn && !runBtn._hiveWired) {
+    runBtn._hiveWired = true;
+    runBtn.onclick = async () => {
+      const profile = ($("hive-profile").value || "").trim();
+      const task = ($("hive-task").value || "").trim();
+      if (!profile || !task) { if (status) status.textContent = "Need profile + task"; return; }
+      if (status) status.textContent = "Queuing narrow AGI loop…";
+      try {
+        const r = await fetch(B("/api/hive/workbench/loops/run"), { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({profile, task}) });
+        const j = await r.json();
+        if (status) status.textContent = j.message || JSON.stringify(j).slice(0,200);
+      } catch (e) { if (status) status.textContent = String(e).slice(0,200); }
+    };
+  }
+  const refresh = $("hive-refresh");
+  if (refresh && !refresh._hiveWired) {
+    refresh._hiveWired = true;
+    refresh.onclick = () => loadHive();
+  }
 }
 
 /* ============================ editor (VS Code) ============================= */
@@ -10124,6 +10168,7 @@ $("mainview-experiments").addEventListener("click", () => switchMainView("experi
 $("mainview-agent").addEventListener("click", () => switchMainView("agent"));
 $("mainview-editor").addEventListener("click", () => switchMainView("editor"));
 $("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
+$("mainview-hive").addEventListener("click", () => switchMainView("hive"));
 $("mainview-audit").addEventListener("click", () => switchMainView("audit"));
 $("editor-refresh").addEventListener("click", loadEditor);
 

@@ -16,3 +16,6 @@ docker-compose.override.yml
 
 # Unsloth runtime compiled cache
 unsloth_compiled_cache/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/

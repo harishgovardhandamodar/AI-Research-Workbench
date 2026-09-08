@@ -1,0 +1,23 @@
+FROM ai-research-workbench-fox:latest
+
+# Hive Research Companion — extends the Fox workbench with the local
+# Feynman clone (hive-research-CLI/hive) + Hive-Machine (sandboxed
+# Perplexity Computer).  Reuses the Fox base image so kernels, RKG,
+# and workbench volumes are shared.
+
+WORKDIR /app
+
+# Hive-specific deps are already in pyproject.toml [hive]; pip install
+# them on top of the base image.
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir ".[hive]" || pip install typer httpx pydantic rich python-dotenv feedparser beautifulsoup4 textual pyyaml
+
+COPY hive_companion ./hive_companion
+COPY docs ./docs
+
+ENV HIVE_WORKSPACE=/app/hive-workspace \
+    FOX_WORKBENCH_DIR=/app/workbench
+
+EXPOSE 8000
+
+CMD ["python", "-m", "hive_companion.machine.app", "--host", "0.0.0.0", "--port", "8000"]
