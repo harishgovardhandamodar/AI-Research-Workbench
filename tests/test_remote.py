@@ -27,6 +27,15 @@ class NormalizeBaseUrlTest(unittest.TestCase):
         self.assertEqual(remote.normalize_base_url("axiom"),
                          "http://axiom")
 
+    def test_strips_userinfo(self):
+        # Credentials in the URL would echo back unredacted — drop them.
+        self.assertEqual(remote.normalize_base_url("http://fox:secret@axiom:8891/"),
+                         "http://axiom:8891")
+
+    def test_ipv6(self):
+        self.assertEqual(remote.normalize_base_url("http://[::1]:8891"),
+                         "http://[::1]:8891")
+
     def test_rejects_non_http(self):
         with self.assertRaises(ValueError):
             remote.normalize_base_url("ftp://axiom:21")
@@ -77,6 +86,13 @@ class RedactMergeTest(unittest.TestCase):
         merged = remote.merge_hosts(orig, new)
         self.assertEqual(merged[0]["token"], "live-token")
         self.assertEqual(merged[0]["base_url"], "http://axiom:8891")
+
+    def test_merge_mask_without_old_token_stays_empty(self):
+        # The mask literal must never be persisted as a token (fails closed).
+        merged = remote.merge_hosts([], [{"id": "a", "name": "axiom",
+                                          "base_url": "http://axiom:8891",
+                                          "token": _MCP_MASK}])
+        self.assertEqual(merged[0]["token"], "")
 
     def test_merge_replaces_with_new_token(self):
         orig = [{"id": "a", "name": "axiom", "base_url": "http://axiom:8891",
@@ -144,6 +160,34 @@ class HttpJsonTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIsNone(data)
         self.assertIn("non-JSON", err)
+
+
+class SeedFromEnvTest(unittest.TestCase):
+    def test_seed_ids_stable_across_calls(self):
+        import os
+
+        cfg = {"remote": {"hosts": [], "active_host": ""}}
+        env = {"REMOTE_HOSTS": "http://axiom:8891, http://192.168.1.173:8891",
+               "REMOTE_TOKEN": "t", "REMOTE_USER": "fox"}
+        with mock.patch.object(remote, "CONFIG", cfg):
+            with mock.patch.dict(os.environ, env, clear=False):
+                first, seeded = remote._seed_from_env()
+                second, _ = remote._seed_from_env()
+        self.assertTrue(seeded)
+        self.assertEqual(len(first), 2)
+        self.assertEqual([h["id"] for h in first], [h["id"] for h in second])
+        self.assertTrue(all(h["id"].startswith("seed-") for h in first))
+        self.assertEqual(first[0]["token"], "t")
+
+    def test_no_env_no_seed(self):
+        import os
+
+        cfg = {"remote": {"hosts": [], "active_host": ""}}
+        with mock.patch.object(remote, "CONFIG", cfg):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                hosts, seeded = remote._seed_from_env()
+        self.assertEqual(hosts, [])
+        self.assertFalse(seeded)
 
 
 if __name__ == "__main__":

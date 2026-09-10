@@ -18,6 +18,7 @@ Deploy on the remote machine (axiom):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import time
 import uuid
@@ -52,9 +53,15 @@ def normalize_base_url(raw: str) -> str:
     parts = urlparse(raw)
     if parts.scheme not in ("http", "https"):
         raise ValueError("base_url must be http(s)")
-    if not parts.hostname:
+    host = parts.hostname or ""
+    if not host:
         raise ValueError("base_url must include a host")
-    return f"{parts.scheme}://{parts.netloc}"
+    # Drop any userinfo (user:pass@) — credentials must never persist in
+    # base_url where they would echo back unredacted; use the token field.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{host}{port}"
 
 
 def _new_id() -> str:
@@ -97,8 +104,8 @@ def merge_hosts(orig: list, new: list) -> list:
     for entry in new or []:
         entry = validate_host_entry(entry)
         old = old_by_id.get(entry["id"], {})
-        if entry.get("token") == _MCP_MASK and old.get("token"):
-            entry["token"] = old["token"]
+        if entry.get("token") == _MCP_MASK:
+            entry["token"] = old.get("token", "")
         merged.append(entry)
     return merged
 
@@ -176,7 +183,8 @@ def _seed_from_env() -> tuple[list, bool]:
         except ValueError:
             continue
         seeded.append({
-            "id": _new_id(),
+            # Deterministic id so host_id/active_host stay valid across calls.
+            "id": "seed-" + hashlib.sha1(base_url.encode()).hexdigest()[:12],
             "name": urlparse(base_url).hostname or base_url,
             "base_url": base_url,
             "username": os.environ.get("REMOTE_USER", ""),
@@ -265,8 +273,10 @@ async def remote_upsert_host(body: dict):
     cfg = _remote_config()
     hosts = [h for h in cfg.get("hosts", []) if h.get("id") != entry["id"]]
     old = next((h for h in cfg.get("hosts", []) if h.get("id") == entry["id"]), {})
-    if entry.get("token") == _MCP_MASK and old.get("token"):
-        entry["token"] = old["token"]
+    if entry.get("token") == _MCP_MASK:
+        # Never persist the mask literal: keep the live token, or empty when
+        # there is none (e.g. saving an env-seeded host) so auth fails closed.
+        entry["token"] = old.get("token", "")
     hosts.append(entry)
     cfg["hosts"] = hosts
     CONFIG["remote"] = cfg
