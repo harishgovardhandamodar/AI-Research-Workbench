@@ -17,6 +17,9 @@ The most commonly used environment variables (Docker overrides live in
 |---|---|---|
 | `FOX_BIND` | `127.0.0.1` | HTTP bind address |
 | `FOX_KERNEL_URL` | — | Remote `fox-kernel` server (headless kernel) |
+| `REMOTE_HOSTS` | — | Comma-separated remote workbench base URLs (e.g. `http://axiom:8891`), seeded into the Remote tab on first run |
+| `REMOTE_USER` | — | Username label for seeded remote hosts (display only) |
+| `REMOTE_TOKEN` | — | Shared secret: sent as Bearer to remote `fox-kernel`, required on `POST /api/kernel/execute` when set on the host |
 | `FOX_ORCHESTRATOR` | `classic` | `langgraph` to use the LangGraph state machine |
 | `FOX_ORCHESTRATOR_RELIABILITY` | `1` | QA-gate on final answers (langgraph) |
 

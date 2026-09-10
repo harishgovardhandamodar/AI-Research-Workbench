@@ -18,6 +18,11 @@ REST:
     GET    /api/kernel/variables            -> {name: description}
     GET    /api/kernel/env                  -> environment/package versions
     POST   /api/kernel/execute              -> {code, timeout?, stream?} -> result
+    GET    /api/kernel/gpu                  -> nvidia-smi devices (GPU discovery)
+
+Remote use (LAN / Tailscale): run with REMOTE_TOKEN set to require a Bearer
+token on POST /api/kernel/execute, e.g.
+    REMOTE_TOKEN=<token> python -m backend.kernels.server --host 0.0.0.0 --port 8891
     POST   /api/kernel/reset                -> clear kernel state
 WebSocket:
     WS     /ws/kernel                       -> streaming status + output events
@@ -28,12 +33,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -45,6 +52,70 @@ class ExecuteBody(BaseModel):
     code: str
     timeout: float | None = 30.0
     stream: bool | None = False
+
+
+def _remote_token() -> str:
+    """Shared secret guarding remote code execution (empty = open, local-only)."""
+    return os.environ.get("REMOTE_TOKEN", "")
+
+
+def _require_remote_token(authorization: str | None) -> None:
+    expected = _remote_token()
+    if not expected:
+        return
+    if authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=403, detail="invalid or missing bearer token")
+
+
+def gpu_info() -> dict:
+    """Local GPU discovery via nvidia-smi (same field names as GPUDevice).
+
+    Returns {"available": bool, "devices": [...], "error": str}. Never raises;
+    machines without NVIDIA GPUs report available=false so remote workbench
+    discovery can fail fast with a clear message instead of hanging.
+    """
+    query = ("index,name,memory.total,memory.used,memory.free,"
+             "utilization.gpu,temperature.gpu")
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        return {"available": False, "devices": [], "error": "nvidia-smi not found"}
+    except subprocess.TimeoutExpired:
+        return {"available": False, "devices": [], "error": "nvidia-smi timed out"}
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "devices": [], "error": f"{type(e).__name__}: {e}"}
+    if proc.returncode != 0:
+        err = (proc.stderr or "").strip()[:200]
+        return {"available": False, "devices": [], "error": err or "nvidia-smi failed"}
+    devices = []
+    for line in (proc.stdout or "").strip().splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 7:
+            continue
+        try:
+            def _num(v: str) -> float:
+                v = v.replace("MiB", "").strip()
+                return 0.0 if v in ("N/A", "[N/A]", "") else float(v)
+
+            devices.append({
+                "index": int(float(parts[0])),
+                "name": parts[1],
+                "memory_total_mb": int(_num(parts[2])),
+                "memory_used_mb": int(_num(parts[3])),
+                "memory_free_mb": int(_num(parts[4])),
+                "utilization_percent": _num(parts[5]),
+                "temperature_c": _num(parts[6]),
+            })
+        except (ValueError, IndexError):
+            continue
+    if not devices:
+        return {"available": False, "devices": [], "error": "nvidia-smi no output"}
+    return {"available": True, "devices": devices, "error": ""}
 
 
 class KernelServer:
@@ -130,8 +201,14 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     async def env():
         return {"env": await server.kernels.get_env()}
 
+    @app.get("/api/kernel/gpu")
+    async def gpu():
+        return gpu_info()
+
     @app.post("/api/kernel/execute")
-    async def execute(body: ExecuteBody):
+    async def execute(body: ExecuteBody,
+                      authorization: str | None = Header(default=None)):
+        _require_remote_token(authorization)
         return await server.execute(body.code, timeout=body.timeout or 30.0,
                                     stream=bool(body.stream))
 

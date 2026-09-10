@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
     "editor": editor_cfg.editor_config(),
     "kaggle": {"username": "", "key": ""},
     "management": {"repo_dir": "", "github_repo": "", "auto_commit": True, "auto_push": False},
+    "remote": {"hosts": [], "active_host": ""},
 }
 
 
@@ -44,6 +45,8 @@ def load_config() -> dict:
             cfg["editor"].update(saved.get("editor", {}))
             cfg["kaggle"].update(saved.get("kaggle", {}))
             cfg["management"].update(saved.get("management", {}))
+            if isinstance(saved.get("remote"), dict):
+                cfg["remote"].update(saved.get("remote", {}))
             cfg["finetune"].update(saved.get("finetune", {}))
             if "servers" in saved.get("mcp", {}):
                 # Keep user's servers but always surface the bundled default
