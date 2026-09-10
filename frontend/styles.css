@@ -162,8 +162,12 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 #rkg-panel.hidden { display: none; }
 .rkg-frame-wrap { flex: 1 1 auto; min-height: 0; position: relative; border: 1px solid #332d44; border-radius: 10px; overflow: hidden; background: #0a0a0d; }
 /* hive + journey (narrow AGI) — same flex shell as rkg, plus grid layouts */
-#hive-panel, #journey-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 12px; min-height: 0; overflow: auto; }
-#hive-panel.hidden, #journey-panel.hidden { display: none; }
+#hive-panel, #journey-panel, #remote-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 12px; min-height: 0; overflow: auto; }
+#hive-panel.hidden, #journey-panel.hidden, #remote-panel.hidden { display: none; }
+.remote-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .remote-layout { grid-template-columns: 1fr; } }
+.remote-form { display: flex; flex-direction: column; gap: 8px; }
+.remote-form input, .remote-form select, .remote-form textarea { width: 100%; }
 .hive-layout, .journey-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 900px) { .hive-layout, .journey-layout { grid-template-columns: 1fr; } }
 .card { background: var(--bg-2, #1a1625); border: 1px solid var(--border, #332d44); border-radius: 10px; padding: 12px; }

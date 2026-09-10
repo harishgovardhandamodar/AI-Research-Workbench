@@ -31,6 +31,7 @@
         <button id="mainview-rkg" class="mainview-btn" data-mainview="rkg" title="Knowledge Graphs">🕸 Graphs</button>
         <button id="mainview-hive" class="mainview-btn" data-mainview="hive" title="Hive Research Companion">🐝 Hive</button>
         <button id="mainview-journey" class="mainview-btn" data-mainview="journey" title="Journey to achieve AGI — Narrow Space AGI Dashboard">🌌 Journey</button>
+        <button id="mainview-remote" class="mainview-btn" data-mainview="remote" title="Remote workbench — LAN/Tailscale hive-machine agents">🖥 Remote</button>
         <button id="mainview-audit" class="mainview-btn" data-mainview="audit" title="Audit Trail">🛡 Audit</button>
       </div>
       <div id="session-ctrl" class="session-ctrl" title="Sessions">
@@ -576,8 +577,57 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <div id="journey-ledgers" class="muted">Loading ledgers…</div>
       </div>
       <div class="card" style="margin-top:16px">
+        <h4>Learn Loop — Reinforcement (ledger → reward → memory)</h4>
+        <div id="journey-learn" class="muted">Loading learn status…</div>
+      </div>
+      <div class="card" style="margin-top:16px">
         <h4>Timeline — Auditable Logs (nodes=actor, edges=action, seq+timestamp, clickable)</h4>
         <div id="journey-timeline" class="muted small">Loading timeline…</div>
+      </div>
+    </section>
+
+    <section id="remote-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">🖥 Remote workbench — LAN / Tailscale agents</span>
+        <span class="muted">Offload experiments to a remote fox-kernel (e.g. axiom) · on-demand discovery only, no background polling</span>
+        <span class="spacer"></span>
+        <button id="remote-refresh" class="btn subtle small">Refresh</button>
+      </div>
+      <div class="remote-layout">
+        <div class="remote-hosts card">
+          <h4>Hosts</h4>
+          <div id="remote-hosts-list" class="muted">Loading hosts…</div>
+          <h4 style="margin-top:12px">Add / edit host</h4>
+          <div class="remote-form">
+            <input id="remote-name" placeholder="name (e.g. axiom)" autocomplete="off" />
+            <input id="remote-url" placeholder="base URL (e.g. http://axiom:8891)" autocomplete="off" />
+            <input id="remote-user" placeholder="username (optional)" autocomplete="off" />
+            <input id="remote-token" type="password" placeholder="bearer token (matches REMOTE_TOKEN on the host)" autocomplete="off" />
+            <label class="muted small"><input id="remote-use-gpu" type="checkbox" checked /> prefer GPU hosts</label>
+            <div style="display:flex;gap:8px">
+              <button id="remote-save" class="btn">Save host</button>
+              <button id="remote-discover" class="btn subtle small">Discover</button>
+            </div>
+          </div>
+          <div id="remote-status" class="muted small" style="margin-top:8px"></div>
+        </div>
+        <div class="remote-main card">
+          <h4>GPU discovery</h4>
+          <div id="remote-gpu-list" class="muted">Run Discover to probe hosts.</div>
+        </div>
+      </div>
+      <div class="remote-run card" style="margin-top:16px">
+        <h4>Offload experiment</h4>
+        <div class="remote-form">
+          <select id="remote-run-host"></select>
+          <select id="remote-run-project"></select>
+          <input id="remote-run-label" placeholder="label (optional)" />
+          <input id="remote-run-timeout" type="number" min="5" max="600" value="120" title="timeout (s)" />
+          <label class="muted small"><input id="remote-run-gpu" type="checkbox" /> require GPU</label>
+          <textarea id="remote-run-code" rows="5" placeholder="print('hello from axiom')"></textarea>
+          <button id="remote-run-btn" class="btn">Run on remote</button>
+        </div>
+        <pre id="remote-run-result" class="muted small" style="white-space:pre-wrap;margin-top:8px">No runs yet.</pre>
       </div>
     </section>
 

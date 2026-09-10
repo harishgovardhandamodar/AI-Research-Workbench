@@ -61,6 +61,10 @@ The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New — Remote workbench on LAN/Tailscale (2026-09)
+
+**🖥 Remote workbench — deployable hive-machine agents** — run `fox-kernel` on another machine (e.g. axiom, 2× RTX5080) and offload experiments from the workbench over LAN or Tailscale. No SSH: the agent exposes `GET /api/kernel/gpu` (nvidia-smi discovery) and token-guarded `POST /api/kernel/execute` (`REMOTE_TOKEN` → Bearer). The workbench **Remote tab** configures hosts (name, base URL, user, token), **Discovers** them on demand (`/health` 5s + `/gpu` 8s timeouts, no background pollers), shows per-host GPU cards (VRAM free/used, util, temp), and offloads code — results come back as `kind="remote"` runs with host/duration/GPU metrics. Hosts persist in `config.json` (tokens redacted like kaggle keys); `REMOTE_HOSTS`/`REMOTE_TOKEN` env seeds first run. Deploy on axiom: `REMOTE_TOKEN=<token> python -m backend.kernels.server --host 0.0.0.0 --port 8891`. Full passwordless tunnel setup (Tailscale + key-only SSH + systemd + firewall): [docs/REMOTE-WORKBENCH.md](docs/REMOTE-WORKBENCH.md) with deploy unit at [deploy/axiom/fox-kernel.service](deploy/axiom/fox-kernel.service).
+
 ## What's New — Hive + Journey + Auditable AGI Loops (2026-09)
 
 **🐝 Hive Research Companion — local Feynman clone + Perplexity Computer** — integrated from [`hive-research-CLI`](https://github.com/harishgovardhandamodar/hive-research-CLI) (`hive/` → `hive_companion/` + symlink `hive` → `hive_companion`, `Dockerfile.hive`, `pyproject.toml [hive]`). All LLM stays local (Ollama/LM Studio). New service `fox-hive` (`:8000`, profile `hive`) shares `fox_data` + `hive_workspace` + host `~/.hive` (ledgers). Run `docker compose --profile hive up -d --build`.

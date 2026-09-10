@@ -6553,6 +6553,7 @@ function switchMainView(view) {
   $("rkg-panel").classList.toggle("hidden", view !== "rkg");
   $("hive-panel").classList.toggle("hidden", view !== "hive");
   $("journey-panel").classList.toggle("hidden", view !== "journey");
+  $("remote-panel").classList.toggle("hidden", view !== "remote");
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
@@ -6579,6 +6580,7 @@ function switchMainView(view) {
   if (view === "rkg") loadRkg();
   if (view === "hive") loadHive();
   if (view === "journey") loadJourney();
+  if (view === "remote") loadRemote();
   if (view === "audit") loadAudit();
 }
 
@@ -6601,7 +6603,13 @@ async function loadHive() {
     const j = await r.json();
     if (list) {
       if (j.profiles && j.profiles.length) {
-        list.innerHTML = j.profiles.map(p => `<div class="mono">${p.name} <span class="muted">${p.path}</span></div>`).join("");
+        list.innerHTML = j.profiles.map(p => {
+          const ds = p.datasets ? (Array.isArray(p.datasets) ? p.datasets.join(", ") : String(p.datasets)) : "";
+          return `<div class="card" style="padding:8px;margin-bottom:6px"><div style="font-weight:600">${esc(p.name)}${p.domain ? ` <span class="muted small">(${esc(p.domain)})</span>` : ""}</div>`
+            + (p.description ? `<div class="muted small" style="font-size:11px">${esc(p.description.slice(0,160))}</div>` : "")
+            + `<div class="mono small" style="font-size:10px">${esc(p.path || "")}</div>`
+            + `<div class="muted small" style="font-size:10px">datasets: ${esc(ds || "—")} • model: ${esc(p.model_preference || "—")} • eval: ${esc(p.evaluation || "—")}</div></div>`;
+        }).join("");
       } else {
         list.innerHTML = '<span class="muted">No narrow workbenches yet. Create one in <code>~/.hive/workbench/*.yaml</code> or run Hive.</span>';
       }
@@ -6795,6 +6803,7 @@ async function loadJourney() {
           feats.map(f => `<div class="card" style="padding:8px;display:flex;flex-direction:column;gap:4px">
             <div style="font-weight:700;font-size:12px">${esc(f.id)} <span class="muted small">(${esc(f.module)})</span> <span style="float:right">${f.available ? "✅" : "❌"} ${f.integrated ? "🔗" : ""}</span></div>
             <div class="muted small" style="font-size:11px">${esc(f.description)}</div>
+            ${f.detail && !f.available ? `<div class="muted small" style="font-size:10px">${esc(f.detail)}</div>` : ""}
           </div>`).join("") + '</div>';
       } else {
         agiFeaturesEl.innerHTML = '<span class="muted">No AGI features found.</span>';
@@ -6869,6 +6878,22 @@ async function loadJourney() {
       }
       ledgersEl.innerHTML = html;
     }
+    const learnEl = $("journey-learn");
+    if (learnEl) {
+      const learn = j.learn || {};
+      if (!learn.ok) {
+        learnEl.innerHTML = `<span class="muted">Learn loop unavailable: ${esc(learn.error || "unknown")}</span>`;
+      } else {
+        const ledger = learn.ledger || {};
+        const mem = learn.memory || {};
+        const snaps = learn.snapshots || [];
+        learnEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">`
+          + `<div class="card" style="padding:8px"><b>Ledger</b><div class="muted small">executions: ${ledger.total ?? ledger.count ?? "—"} • verified: ${ledger.verified ?? "—"}</div></div>`
+          + `<div class="card" style="padding:8px"><b>Memory</b><div class="muted small">${esc(typeof mem === "object" ? JSON.stringify(mem).slice(0,140) : String(mem))}</div></div>`
+          + `<div class="card" style="padding:8px"><b>Snapshots</b><div class="muted small">${snaps.length ? snaps.map(s => esc(s.file || s)).join(", ") : "none"}</div></div>`
+          + `</div>`;
+      }
+    }
   } catch (e) {
     if (progressEl) progressEl.textContent = "Failed: " + String(e).slice(0,120);
   }
@@ -6876,6 +6901,166 @@ async function loadJourney() {
   if (refresh && !refresh._wired) {
     refresh._wired = true;
     refresh.onclick = () => loadJourney();
+  }
+}
+
+/* ============================ remote workbench (LAN/Tailscale) ============ */
+/* No background timers here by design: discovery and runs are on-demand so a
+   dead host can never wedge the UI with overlapping pollers (EMFILE class). */
+
+async function loadRemote() {
+  const list = $("remote-hosts-list");
+  const status = $("remote-status");
+  if (list) list.textContent = "Loading hosts…";
+  try {
+    const j = await api("/api/remote/hosts");
+    renderRemoteHosts(j.hosts || [], j.active_host || "");
+    if (status) status.textContent = j.seeded_from_env ? "Seeded from REMOTE_HOSTS (save to persist)." : `${(j.hosts || []).length} host(s).`;
+    await loadRemoteProjects();
+  } catch (e) {
+    if (list) list.textContent = "Remote proxy unreachable.";
+    if (status) status.textContent = String(e).slice(0, 160);
+  }
+  wireRemoteButtons();
+}
+
+function renderRemoteHosts(hosts, active) {
+  const list = $("remote-hosts-list");
+  const sel = $("remote-run-host");
+  if (!list) return;
+  if (!hosts.length) {
+    list.innerHTML = '<span class="muted">No hosts yet. Add axiom above, then Discover.</span>';
+  } else {
+    list.innerHTML = hosts.map(h => `
+      <div class="mono" style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+        <span>${h.id === active ? "●" : "○"} <b>${esc(h.name)}</b> <span class="muted">${esc(h.base_url)}</span></span>
+        <span class="spacer"></span>
+        <button class="btn subtle small" data-remote-use="${esc(h.id)}">Use</button>
+        <button class="btn subtle small" data-remote-del="${esc(h.id)}">Delete</button>
+      </div>`).join("");
+    list.querySelectorAll("[data-remote-use]").forEach(b => {
+      b.onclick = async () => {
+        await api("/api/remote/active", { method: "POST", body: JSON.stringify({ host_id: b.dataset.remoteUse }) });
+        loadRemote();
+      };
+    });
+    list.querySelectorAll("[data-remote-del]").forEach(b => {
+      b.onclick = async () => {
+        if (!confirm("Delete host " + b.dataset.remoteDel + "?")) return;
+        await api("/api/remote/hosts/" + encodeURIComponent(b.dataset.remoteDel), { method: "DELETE" });
+        loadRemote();
+      };
+    });
+  }
+  if (sel) {
+    sel.innerHTML = hosts.map(h => `<option value="${esc(h.id)}"${h.id === active ? " selected" : ""}>${esc(h.name)} — ${esc(h.base_url)}</option>`).join("");
+  }
+}
+
+async function loadRemoteProjects() {
+  const sel = $("remote-run-project");
+  if (!sel) return;
+  try {
+    const j = await api("/api/projects");
+    const names = (j.projects || []).map(p => p.name);
+    sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  } catch (e) { /* leave empty */ }
+}
+
+function wireRemoteButtons() {
+  const save = $("remote-save");
+  if (save && !save._wired) {
+    save._wired = true;
+    save.onclick = async () => {
+      const status = $("remote-status");
+      const body = {
+        name: $("remote-name").value.trim(),
+        base_url: $("remote-url").value.trim(),
+        username: $("remote-user").value.trim(),
+        token: $("remote-token").value,
+        use_gpu: $("remote-use-gpu").checked,
+      };
+      try {
+        const j = await api("/api/remote/hosts", { method: "POST", body: JSON.stringify(body) });
+        if (status) status.textContent = "Saved " + j.host.name + ".";
+        $("remote-token").value = "";
+        loadRemote();
+      } catch (e) { if (status) status.textContent = String(e).slice(0, 200); }
+    };
+  }
+  const disc = $("remote-discover");
+  if (disc && !disc._wired) {
+    disc._wired = true;
+    disc.onclick = remoteDiscover;
+  }
+  const run = $("remote-run-btn");
+  if (run && !run._wired) {
+    run._wired = true;
+    run.onclick = remoteRun;
+  }
+  const ref = $("remote-refresh");
+  if (ref && !ref._wired) {
+    ref._wired = true;
+    ref.onclick = () => loadRemote();
+  }
+}
+
+async function remoteDiscover() {
+  const status = $("remote-status");
+  const gpuEl = $("remote-gpu-list");
+  if (status) status.textContent = "Probing hosts (5s health, 8s GPU timeouts)…";
+  if (gpuEl) gpuEl.textContent = "Probing…";
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 30000);
+    const res = await fetch(B("/api/remote/discover"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}", signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+    renderRemoteHosts((j.hosts || []).map(h => ({ id: h.id, name: h.name + (h.online ? (h.compatible ? " ✓" : " ⚠") : " ✗"), base_url: h.base_url, active: false })), "");
+    if (status) status.textContent = `Discovered ${j.count} host(s). ✓=fox-kernel ⚠=other service ✗=offline.`;
+    if (gpuEl) {
+      gpuEl.innerHTML = (j.hosts || []).map(h => {
+        const g = h.gpu || {};
+        const devs = (g.devices || []).map(d => `<div class="mono small">${esc(d.name || "?")} · ${d.memory_free_mb ?? "?"}/${d.memory_total_mb ?? "?"} MiB free · ${d.utilization_percent ?? "?"}% util · ${d.temperature_c ?? "?"}°C</div>`).join("");
+        return `<div class="card" style="padding:8px;margin-bottom:8px"><b>${esc(h.name)}</b> <span class="muted small">${esc(h.base_url)} · ${h.latency_ms}ms</span>${h.error ? `<div class="muted small">${esc(h.error)}</div>` : ""}${devs || '<div class="muted small">No GPUs reported.</div>'}</div>`;
+      }).join("") || '<span class="muted">No hosts.</span>';
+    }
+  } catch (e) {
+    if (status) status.textContent = "Discover failed: " + String(e).slice(0, 200);
+    if (gpuEl) gpuEl.textContent = "Discover failed.";
+  }
+}
+
+async function remoteRun() {
+  const out = $("remote-run-result");
+  if (out) out.textContent = "Running on remote (up to timeout + 15s)…";
+  const body = {
+    host_id: ($("remote-run-host") || {}).value || "",
+    project: ($("remote-run-project") || {}).value || "default",
+    code: $("remote-run-code").value,
+    label: $("remote-run-label").value.trim(),
+    timeout: Number($("remote-run-timeout").value) || 120,
+    use_gpu: $("remote-run-gpu").checked,
+  };
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), (body.timeout + 30) * 1000);
+    const res = await fetch(B("/api/remote/run"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+    if (out) out.textContent = `run #${j.run_id} on ${j.host} (${j.metrics.duration_s}s, gpu: ${(j.metrics.gpu_used || []).join(", ") || "n/a"})\n\n${j.output || j.error || "(no output)"}`;
+  } catch (e) {
+    if (out) out.textContent = "Run failed: " + String(e).slice(0, 500);
   }
 }
 
@@ -10417,6 +10602,7 @@ $("mainview-editor").addEventListener("click", () => switchMainView("editor"));
 $("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
 $("mainview-hive").addEventListener("click", () => switchMainView("hive"));
 $("mainview-journey").addEventListener("click", () => switchMainView("journey"));
+$("mainview-remote").addEventListener("click", () => switchMainView("remote"));
 $("mainview-audit").addEventListener("click", () => switchMainView("audit"));
 $("editor-refresh").addEventListener("click", loadEditor);
 
