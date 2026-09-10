@@ -112,6 +112,14 @@ async def hive_research_sessions():
         con.row_factory = sqlite3.Row
         rows = con.execute("SELECT id, topic, created_at, updated_at FROM sessions ORDER BY updated_at DESC LIMIT 50").fetchall()
         return {"sessions": [dict(r) for r in rows]}
+    except ModuleNotFoundError as e:
+        # Optional [hive] extra (e.g. feedparser) missing in this image:
+        # degrade to empty instead of 500 (same invariant as agi_features).
+        return JSONResponse(
+            {"sessions": [],
+             "error": f"research sessions need the [hive] extra: {e}",
+             "hint": "pip install feedparser beautifulsoup4, or rebuild with the hive profile"},
+            status_code=503)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
 
