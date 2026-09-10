@@ -6603,7 +6603,13 @@ async function loadHive() {
     const j = await r.json();
     if (list) {
       if (j.profiles && j.profiles.length) {
-        list.innerHTML = j.profiles.map(p => `<div class="mono">${p.name} <span class="muted">${p.path}</span></div>`).join("");
+        list.innerHTML = j.profiles.map(p => {
+          const ds = p.datasets ? (Array.isArray(p.datasets) ? p.datasets.join(", ") : String(p.datasets)) : "";
+          return `<div class="card" style="padding:8px;margin-bottom:6px"><div style="font-weight:600">${esc(p.name)}${p.domain ? ` <span class="muted small">(${esc(p.domain)})</span>` : ""}</div>`
+            + (p.description ? `<div class="muted small" style="font-size:11px">${esc(p.description.slice(0,160))}</div>` : "")
+            + `<div class="mono small" style="font-size:10px">${esc(p.path || "")}</div>`
+            + `<div class="muted small" style="font-size:10px">datasets: ${esc(ds || "—")} • model: ${esc(p.model_preference || "—")} • eval: ${esc(p.evaluation || "—")}</div></div>`;
+        }).join("");
       } else {
         list.innerHTML = '<span class="muted">No narrow workbenches yet. Create one in <code>~/.hive/workbench/*.yaml</code> or run Hive.</span>';
       }
@@ -6871,6 +6877,22 @@ async function loadJourney() {
         html += '</div>';
       }
       ledgersEl.innerHTML = html;
+    }
+    const learnEl = $("journey-learn");
+    if (learnEl) {
+      const learn = j.learn || {};
+      if (!learn.ok) {
+        learnEl.innerHTML = `<span class="muted">Learn loop unavailable: ${esc(learn.error || "unknown")}</span>`;
+      } else {
+        const ledger = learn.ledger || {};
+        const mem = learn.memory || {};
+        const snaps = learn.snapshots || [];
+        learnEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">`
+          + `<div class="card" style="padding:8px"><b>Ledger</b><div class="muted small">executions: ${ledger.total ?? ledger.count ?? "—"} • verified: ${ledger.verified ?? "—"}</div></div>`
+          + `<div class="card" style="padding:8px"><b>Memory</b><div class="muted small">${esc(typeof mem === "object" ? JSON.stringify(mem).slice(0,140) : String(mem))}</div></div>`
+          + `<div class="card" style="padding:8px"><b>Snapshots</b><div class="muted small">${snaps.length ? snaps.map(s => esc(s.file || s)).join(", ") : "none"}</div></div>`
+          + `</div>`;
+      }
     }
   } catch (e) {
     if (progressEl) progressEl.textContent = "Failed: " + String(e).slice(0,120);

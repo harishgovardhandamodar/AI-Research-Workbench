@@ -30,6 +30,30 @@ def _hive_available() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def full_workbench_profiles() -> list:
+    """All narrow AGI workbench profiles with full YAML fields.
+
+    Single source of truth for hive_workbench_profiles and hive_journey:
+    each entry carries name, description, domain, datasets, allowed_tools,
+    model_preference, prompts, evaluation, constraints plus path/source/type.
+    """
+    profiles = []
+    try:
+        from hive_companion.workbench.profiles import list_workbenches  # type: ignore
+
+        for wb in list_workbenches():
+            # wb already contains all YAML fields plus name/path/source
+            wb["type"] = "narrow"
+            # Ensure all expected AGI Workbench elements are present
+            for k in ("description", "domain", "datasets", "allowed_tools",
+                      "model_preference", "prompts", "evaluation", "constraints"):
+                wb.setdefault(k, None)
+            profiles.append(wb)
+    except Exception:
+        pass
+    return profiles
+
+
 def probe_agi_feature(mod: str) -> tuple[bool, str]:
     """Check one hive module by really importing it (unit-tested).
 
@@ -162,20 +186,10 @@ async def hive_workbench_profiles():
     if not ok:
         return JSONResponse({"error": "hive_companion not available", "detail": msg}, status_code=503)
     try:
-        from hive_companion.workbench.profiles import WORKBENCH_DIR  # type: ignore
-
-        profiles = []
-        if WORKBENCH_DIR.exists():
-            for p in sorted(WORKBENCH_DIR.glob("*.yaml")):
-                profiles.append({"name": p.stem, "path": str(p)})
-        # Also check personal-experiments workbenches
-        from pathlib import Path as _P
-
-        alt = _P.home() / ".hive" / "workbench"
-        if alt.exists():
-            for p in sorted(alt.glob("*.yaml")):
-                if p.stem not in {x["name"] for x in profiles}:
-                    profiles.append({"name": p.stem, "path": str(p)})
+        # Same full-field helper as hive_journey (single source of truth):
+        # name, description, domain, datasets, allowed_tools, model_preference,
+        # prompts, evaluation, constraints, path, source, type.
+        profiles = full_workbench_profiles()
         return {"profiles": profiles, "count": len(profiles)}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
@@ -474,17 +488,8 @@ async def hive_journey():
         # Each workbench is a YAML with: name, description, domain, datasets, allowed_tools,
         # model_preference, prompts, evaluation, constraints, scoped memory/tools/reward
         profiles = []
-        try:
-            from hive_companion.workbench.profiles import list_workbenches  # type: ignore
-
-            for wb in list_workbenches():
-                # wb already contains all YAML fields plus name/path/source
-                wb["type"] = "narrow"
-                # Ensure all expected AGI Workbench elements are present for the Journey tab
-                for k in ("description", "domain", "datasets", "allowed_tools", "model_preference", "prompts", "evaluation", "constraints"):
-                    wb.setdefault(k, None)
-                profiles.append(wb)
-        except Exception:
+        profiles.extend(full_workbench_profiles())
+        if not profiles:
             # Fallback to direct scan if list_workbenches not available
             try:
                 from hive_companion.workbench.profiles import WORKBENCH_DIR  # type: ignore
@@ -715,6 +720,16 @@ async def hive_journey():
                                  "available": _ok, "integrated": _ok,
                                  "detail": _msg})
 
+        # Learn loop status (reinforcement signal: ledger → reward → memory).
+        # Best-effort like everything else here; a missing/broken learn module
+        # yields {"ok": False} instead of failing the whole journey response.
+        try:
+            from hive_companion.learn.loop import learn_status
+            learn_status_result = {"ok": True, **learn_status()}
+        except Exception as e:  # noqa: BLE001
+            learn_status_result = {"ok": False,
+                                   "error": f"{type(e).__name__}: {e}"[:160]}
+
         return {
             "journey": "Narrow Space AGI",
             "description": "Collects all narrow workbench metrics to build Narrow space AGI — one profile per domain with scoped memory/tools/reward (hive/workbench/profiles.py).",
@@ -742,6 +757,7 @@ async def hive_journey():
             "ledgers": ledgers,
             "auditable_proofs": auditable_proofs,
             "agi_features": agi_features,
+            "learn": learn_status_result,
             "timestamp": time.time(),
             "web_app": "/#journey",
         }
