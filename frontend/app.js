@@ -6797,6 +6797,7 @@ async function loadJourney() {
           feats.map(f => `<div class="card" style="padding:8px;display:flex;flex-direction:column;gap:4px">
             <div style="font-weight:700;font-size:12px">${esc(f.id)} <span class="muted small">(${esc(f.module)})</span> <span style="float:right">${f.available ? "✅" : "❌"} ${f.integrated ? "🔗" : ""}</span></div>
             <div class="muted small" style="font-size:11px">${esc(f.description)}</div>
+            ${f.detail && !f.available ? `<div class="muted small" style="font-size:10px">${esc(f.detail)}</div>` : ""}
           </div>`).join("") + '</div>';
       } else {
         agiFeaturesEl.innerHTML = '<span class="muted">No AGI features found.</span>';

@@ -11,6 +11,7 @@ a helpful 503 with setup instructions.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import time
 from pathlib import Path
@@ -27,6 +28,23 @@ def _hive_available() -> tuple[bool, str]:
         return True, "ok"
     except Exception as e:  # noqa: BLE001
         return False, f"{type(e).__name__}: {e}"
+
+
+def probe_agi_feature(mod: str) -> tuple[bool, str]:
+    """Check one hive module by really importing it (unit-tested).
+
+    find_spec is not enough: it locates leaf modules without executing them,
+    so a module whose __init__ needs a missing optional extra (e.g. papers →
+    feedparser) would falsely report available. A real import is truthful;
+    successes stay cached in sys.modules so repeat journey loads are free.
+    Returns (available, detail). Callers must isolate per feature so one
+    broken extra never zeroes the whole grid.
+    """
+    try:
+        importlib.import_module(mod)
+        return True, "ok"
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"[:120]
 
 
 @router.get("/health")
@@ -673,6 +691,30 @@ async def hive_journey():
         except Exception:
             pass
 
+        # AGI Workbench elements, feature by feature (hive-research-CLI hive/
+        # package). Each probe is isolated so one broken optional dependency
+        # (e.g. feedparser, only in the [hive] image extra) marks just its own
+        # feature unavailable instead of zeroing the whole grid.
+        agi_features = []
+        for _fid, _mod, _desc in [
+            ("cli", "hive_companion.cli", "CLI Reference — Typer + Rich, local Feynman clone"),
+            ("tui", "hive_companion.tui", "TUI Workbench — Textual dashboard"),
+            ("hive_machine", "hive_companion.machine.app", "Hive-Machine — Perplexity Computer (files/code/web/terminal)"),
+            ("papers", "hive_companion.papers", "Paper System — OpenAlex / arXiv / CrossRef / Europe PMC"),
+            ("research", "hive_companion.research.workflows", "Research Workflows — Feynman feature-by-feature, no cloud LLM"),
+            ("workbench", "hive_companion.workbench.profiles", "Workbench Profiles — Narrow AGI (YAML per domain, scoped memory/tools/reward)"),
+            ("learn", "hive_companion.learn.loop", "Learn Loop — Reinforcement (ledger → reward → memory/rank)"),
+            ("ledger", "hive_companion.ledger.store", "Ledger — SQLite + hash chain (gathering invariant)"),
+            ("llm", "hive_companion.llm.client", "LLM — Ollama & LM Studio (local only)"),
+            ("web", "hive_companion.web", "Web — Open WebUI integration"),
+            ("derived", "hive_companion.derived", "Derived — generators"),
+            ("config", "hive_companion.config", "Config — ~/.hive/config.toml"),
+        ]:
+            _ok, _msg = probe_agi_feature(_mod)
+            agi_features.append({"id": _fid, "module": _mod, "description": _desc,
+                                 "available": _ok, "integrated": _ok,
+                                 "detail": _msg})
+
         return {
             "journey": "Narrow Space AGI",
             "description": "Collects all narrow workbench metrics to build Narrow space AGI — one profile per domain with scoped memory/tools/reward (hive/workbench/profiles.py).",
@@ -699,6 +741,7 @@ async def hive_journey():
             "mermaid_diagrams": mermaid_diagrams,
             "ledgers": ledgers,
             "auditable_proofs": auditable_proofs,
+            "agi_features": agi_features,
             "timestamp": time.time(),
             "web_app": "/#journey",
         }

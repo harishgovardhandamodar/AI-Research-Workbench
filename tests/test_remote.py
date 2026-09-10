@@ -190,5 +190,32 @@ class SeedFromEnvTest(unittest.TestCase):
         self.assertFalse(seeded)
 
 
+class ProbeAgiFeatureTest(unittest.TestCase):
+    def test_available_module(self):
+        from backend.routers.hive import probe_agi_feature
+
+        ok, detail = probe_agi_feature("json")
+        self.assertTrue(ok)
+        self.assertEqual(detail, "ok")
+
+    def test_missing_module(self):
+        from backend.routers.hive import probe_agi_feature
+
+        ok, detail = probe_agi_feature("nonexistent_xyz_123")
+        self.assertFalse(ok)
+        self.assertIn("ModuleNotFoundError", detail)
+
+    def test_broken_parent_init_is_isolated(self):
+        # A parent __init__ needing an optional dep (e.g. feedparser) must
+        # mark just its feature unavailable, never raise to the caller.
+        from backend.routers.hive import probe_agi_feature
+
+        with mock.patch("importlib.import_module",
+                        side_effect=ModuleNotFoundError("No module named 'feedparser'")):
+            ok, detail = probe_agi_feature("hive_companion.research.workflows")
+        self.assertFalse(ok)
+        self.assertIn("ModuleNotFoundError", detail)
+
+
 if __name__ == "__main__":
     unittest.main()
