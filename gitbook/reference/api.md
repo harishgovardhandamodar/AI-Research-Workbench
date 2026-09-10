@@ -128,3 +128,39 @@ See [Finetune status](../features/finetune-status.md) for the full story.
 ## Research knowledge graphs
 
 `/api/rkg/*` — pool, graph, scenarios, jobs, scheduler, RAG (`query_rag`).
+
+## Hive companion (narrow AGI)
+
+`/api/hive/health` — companion availability + components.
+`/api/hive/research/sessions` — Feynman research sessions (503 with hint when
+the optional `[hive]` extra is missing — degraded, never 500).
+`POST /api/hive/research/run` — queue a local research run `{topic, model, depth}`.
+`/api/hive/machine/status`, `/api/hive/workbench/status` — module probes.
+`/api/hive/workbench/profiles` — narrow workbench profiles with full YAML
+fields (`description`, `domain`, `datasets`, `allowed_tools`,
+`model_preference`, `prompts`, `evaluation`, `constraints`) — same source as
+Journey (single source of truth).
+`POST /api/hive/workbench/loops/run` — run a narrow AGI loop
+`{profile, task, iterations}` (hash-chained audit event).
+`/api/hive/loops/status`, `/api/hive/audit/timeline` (`limit`, `session_id` —
+nodes=actor, edges=action, captures for overlays).
+`/api/hive/journey` — Narrow Space AGI dashboard: profiles, narrow runs,
+charts, mermaid diagrams, ledgers, auditable proofs, `agi_features[12]` with
+per-feature availability, `learn` status (ledger rewards → memory). See
+`docs/REMOTE-WORKBENCH.md` for the remote half and the Journey tab (`#journey`).
+
+## Remote workbench (LAN / Tailscale)
+
+`/api/remote/hosts` — list (tokens redacted) / add-or-update remote
+`fox-kernel` hosts `{name, base_url, username, token}`; seeded read-only from
+`REMOTE_HOSTS` when unconfigured (stable `seed-*` ids).
+`DELETE /api/remote/hosts/{id}`, `POST /api/remote/active` — remove / select.
+`POST /api/remote/discover` — on-demand probe: `/health` (5s) then
+`/api/kernel/gpu` (8s); no SSH, no background pollers. Reports
+`online/compatible/GPU devices/latency` per host.
+`POST /api/remote/run` — offload `{host_id?, project, code, timeout≤600,
+label?, experiment_id?, use_gpu?}`; records a `kind="remote"` run with
+host/duration/GPU metrics. `use_gpu:true` fails fast when the host reports no
+GPU. Remote side: `GET /api/kernel/gpu`, `POST /api/kernel/execute` (Bearer
+`REMOTE_TOKEN` when set). GUI: Remote tab (`#remote`). Tunnel guide:
+`docs/REMOTE-WORKBENCH.md`, unit: `deploy/axiom/fox-kernel.service`.

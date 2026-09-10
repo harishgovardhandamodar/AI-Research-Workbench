@@ -61,6 +61,33 @@ The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New — Remote hardening + narrow-AGI fixes (2026-09)
+
+**🖥 Remote hardening** — env-seeded hosts now have stable `seed-*` ids (host
+selection survives across requests); a masked token with no live token clears
+to empty so Bearer auth fails closed instead of sending the mask; URLs are
+normalized and any `user:pass@` userinfo is stripped (credentials belong in
+the token field, never in `base_url`). 19 unit tests in `tests/test_remote.py`.
+
+**🌌 Narrow-AGI fixes** — `GET /api/hive/journey` finally returns the
+feature-by-feature `agi_features[12]` grid (8 available, 4 honestly
+unavailable with reasons — `typer`/`feedparser` are the optional `[hive]`
+extra), probed by real import instead of `find_spec` (which over-claimed).
+New `full_workbench_profiles()` helper is the single source for both
+`/api/hive/workbench/profiles` and Journey (full YAML fields everywhere);
+Journey also surfaces Learn Loop status (ledger rewards → memory → snapshots)
+with its own card, and `GET /api/hive/research/sessions` degrades to
+503 + hint instead of 500 without the `[hive]` extra.
+
+**🔌 Passwordless axiom tunnel** — [docs/REMOTE-WORKBENCH.md](docs/REMOTE-WORKBENCH.md):
+Tailscale on both ends (MagicDNS `http://axiom:8891`), Tailscale SSH or
+key-only OpenSSH with `PasswordAuthentication no`, token generated on axiom
+(`openssl rand -hex 32` → `/etc/fox-kernel.env`, 600), tailnet-only firewall,
+hardened systemd unit at [deploy/axiom/fox-kernel.service](deploy/axiom/fox-kernel.service).
+No passwords are exchanged or stored anywhere in the repo. API reference:
+[gitbook/reference/api.md](gitbook/reference/api.md) (Hive companion, Remote
+workbench); env vars: [gitbook/reference/environment-variables.md](gitbook/reference/environment-variables.md).
+
 ## What's New — Remote workbench on LAN/Tailscale (2026-09)
 
 **🖥 Remote workbench — deployable hive-machine agents** — run `fox-kernel` on another machine (e.g. axiom, 2× RTX5080) and offload experiments from the workbench over LAN or Tailscale. No SSH: the agent exposes `GET /api/kernel/gpu` (nvidia-smi discovery) and token-guarded `POST /api/kernel/execute` (`REMOTE_TOKEN` → Bearer). The workbench **Remote tab** configures hosts (name, base URL, user, token), **Discovers** them on demand (`/health` 5s + `/gpu` 8s timeouts, no background pollers), shows per-host GPU cards (VRAM free/used, util, temp), and offloads code — results come back as `kind="remote"` runs with host/duration/GPU metrics. Hosts persist in `config.json` (tokens redacted like kaggle keys); `REMOTE_HOSTS`/`REMOTE_TOKEN` env seeds first run. Deploy on axiom: `REMOTE_TOKEN=<token> python -m backend.kernels.server --host 0.0.0.0 --port 8891`. Full passwordless tunnel setup (Tailscale + key-only SSH + systemd + firewall): [docs/REMOTE-WORKBENCH.md](docs/REMOTE-WORKBENCH.md) with deploy unit at [deploy/axiom/fox-kernel.service](deploy/axiom/fox-kernel.service).
