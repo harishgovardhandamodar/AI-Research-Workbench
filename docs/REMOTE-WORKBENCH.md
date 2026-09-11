@@ -91,6 +91,20 @@ sudo ufw allow in on tailscale0 to any port 8891 proto tcp
 
 ## 5. Run the agent on axiom (persistent)
 
+Preferred — deployable package (52K, no full clone, closed dep set):
+
+```bash
+# on the Mac: build once per release
+./bin/build-remote-agent.sh   # -> dist/fox-kernel-remote-<sha>.tar.gz
+# copy ONE file to axiom (scp / tailscale file / usb), then on axiom:
+tar xzf fox-kernel-remote-<sha>.tar.gz && cd fox-kernel-remote
+sudo ./install.sh             # venv + deps + token + systemd + smoke test
+# user-local alternative (no sudo): PREFIX=~/fox-kernel ./install.sh
+journalctl -u fox-kernel -f   # watch startup (systemd installs only)
+```
+
+Fallback — full clone (heavier, same result):
+
 ```bash
 # on axiom:
 git clone <this-repo> ~/AI-Research-Workbench   # or sync it

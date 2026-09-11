@@ -1,0 +1,4 @@
+# Minimal runtime for the deployable fox-kernel remote agent.
+# Mirrors the pins in pyproject.toml; everything else is stdlib.
+fastapi>=0.110
+uvicorn[standard]>=0.29
