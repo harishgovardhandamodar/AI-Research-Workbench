@@ -6554,6 +6554,7 @@ function switchMainView(view) {
   $("hive-panel").classList.toggle("hidden", view !== "hive");
   $("journey-panel").classList.toggle("hidden", view !== "journey");
   $("remote-panel").classList.toggle("hidden", view !== "remote");
+  $("focus-panel").classList.toggle("hidden", view !== "focus");
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
@@ -6565,7 +6566,7 @@ function switchMainView(view) {
     if (fab) fab.classList.remove("active");
   }
   const app = document.getElementById("app");
-  if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg" || view === "audit") {
+  if (view === "experiments" || view === "agent" || view === "editor" || view === "rkg" || view === "audit" || view === "focus") {
     // maximize width: collapse the side panel for the expanded views
     if (state._sideBefore == null)
       state._sideBefore = app.classList.contains("side-collapsed");
@@ -6581,6 +6582,7 @@ function switchMainView(view) {
   if (view === "hive") loadHive();
   if (view === "journey") loadJourney();
   if (view === "remote") loadRemote();
+  if (view === "focus") loadFocus();
   if (view === "audit") loadAudit();
 }
 
@@ -7069,6 +7071,268 @@ async function remoteRun() {
     if (out) out.textContent = `run #${j.run_id} on ${j.host} (${j.metrics.duration_s}s, gpu: ${(j.metrics.gpu_used || []).join(", ") || "n/a"})\n\n${j.output || j.error || "(no output)"}`;
   } catch (e) {
     if (out) out.textContent = "Run failed: " + String(e).slice(0, 500);
+  }
+}
+
+/* ============================ focus (simplified session view) =========== */
+/* Focused experimentation for one session: chat + experiment code + branch
+   history + tracking + remote execution. Reuses the same backend endpoints as
+   the full views (no new APIs) with small focused renderers. On-demand loads
+   only — no background timers. */
+
+let focusCodeText = "";
+let focusReloadTimer = null;
+
+async function loadFocus() {
+  if (!state.project) {
+    try { await loadProjects(); } catch (e) { /* leave empty states */ }
+  }
+  const sel = $("focus-project");
+  if (sel) {
+    const names = (state.projects || []).map((p) => p.name);
+    sel.innerHTML = names.map((n) => `<option value="${esc(n)}"${n === state.project ? " selected" : ""}>${esc(n)}</option>`).join("");
+  }
+  await Promise.allSettled([
+    loadFocusChat(), loadFocusRuns(), loadFocusBranches(),
+    loadFocusTracking(), loadFocusRemoteHosts(),
+  ]);
+  wireFocusButtons();
+}
+
+async function loadFocusChat() {
+  const el = $("focus-messages");
+  if (!el || !state.project) return;
+  el.innerHTML = '<div class="muted small">Loading chat…</div>';
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/messages?limit=200`);
+    const msgs = (r.messages || []).slice(-50);
+    if (!msgs.length) { el.innerHTML = '<div class="empty">No messages yet. Ask Fox something below.</div>'; return; }
+    el.innerHTML = msgs.map((m) => {
+      const role = esc(m.role || "assistant");
+      let body = "";
+      try {
+        body = (m.role === "user") ? esc(m.content || "") : renderMarkdown(m.content || "");
+      } catch (e) { body = esc(m.content || ""); }
+      return `<div class="focus-msg ${m.role === "user" ? "user" : ""}"><div class="role">${role}</div><div>${body}</div></div>`;
+    }).join("");
+    el.scrollTop = el.scrollHeight;
+  } catch (e) { el.innerHTML = `<div class="empty">Failed to load chat: ${esc(e.message)}</div>`; }
+}
+
+async function focusSend() {
+  const input = $("focus-input");
+  const text = (input.value || "").trim();
+  if (!text || state.busy) return;
+  input.value = "";
+  try {
+    await sendChat(text);
+  } catch (e) { toast("Send failed: " + e.message, 4000); }
+  await loadFocusChat();
+  if (focusReloadTimer) clearTimeout(focusReloadTimer);
+  focusReloadTimer = setTimeout(() => { loadFocusChat(); }, 8000);
+}
+
+async function loadFocusRuns() {
+  const sel = $("focus-run-select");
+  if (!sel || !state.project) return;
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/runs?limit=200`);
+    const runs = r.runs || [];
+    state._focusRuns = runs;
+    const prev = sel.value;
+    sel.innerHTML = runs.length
+      ? runs.slice().reverse().map((x) => `<option value="${x.id}">#${x.id} ${esc((x.label || x.kind || "run").slice(0, 40))} · ${esc(x.status || "")}</option>`).join("")
+      : `<option value="">(no runs yet)</option>`;
+    if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+    await loadFocusCode();
+  } catch (e) {
+    sel.innerHTML = `<option value="">(failed to load)</option>`;
+    const code = $("focus-code");
+    if (code) code.textContent = "Failed to load runs: " + e.message;
+  }
+}
+
+async function loadFocusCode() {
+  const sel = $("focus-run-select");
+  const code = $("focus-code");
+  if (!code || !state.project) return;
+  const rid = sel && sel.value;
+  if (!rid) { code.textContent = "Select a run to view its code."; focusCodeText = ""; return; }
+  code.textContent = "Loading code…";
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(state.project)}/runs/${encodeURIComponent(rid)}?include_code=true`);
+    const run = r.run || {};
+    const blocks = Array.isArray(run.code) ? run.code : (run.code ? [run.code] : []);
+    const parts = [];
+    for (const b of blocks) {
+      const name = (b && b.name) || "code";
+      const src = (b && (b.code || b.source)) || (typeof b === "string" ? b : "");
+      if (src) parts.push(`# ---- ${name} ----\n${src}`);
+    }
+    focusCodeText = parts.join("\n\n");
+    if (!focusCodeText) {
+      focusCodeText = "";
+      code.textContent = run.prompt ? ("Prompt:\n" + run.prompt) : "No code recorded for this run.";
+      return;
+    }
+    code.textContent = focusCodeText;
+  } catch (e) {
+    focusCodeText = "";
+    code.textContent = "Failed to load code: " + e.message;
+  }
+}
+
+async function loadFocusBranches() {
+  const el = $("focus-branches");
+  if (!el || !state.project) return;
+  el.innerHTML = '<div class="muted small">Loading branches…</div>';
+  try {
+    const g = await api(`/api/projects/${encodeURIComponent(state.project)}/experiments/graph`);
+    const nodes = (g.nodes || []).slice().sort((a, b) => (a.started_at || 0) - (b.started_at || 0) || (a.id - b.id));
+    if (!nodes.length) { el.innerHTML = '<div class="empty">No runs yet. Each run becomes a node.</div>'; return; }
+    const parentOf = {};
+    for (const e of (g.edges || [])) {
+      if (e && e.child != null && !(e.child in parentOf)) parentOf[e.child] = e.parent;
+    }
+    el.innerHTML = nodes.slice(-60).map((n) => {
+      const p = parentOf[n.id];
+      return `<div class="focus-msg" data-rid="${n.id}" style="cursor:pointer" title="Load this run's code">`
+        + `<span class="mono small">#${n.id}</span> <b>${esc(n.label || n.kind || "run")}</b> `
+        + `<span class="muted small">${esc(n.status || "")}${p != null ? ` · ← #${p}` : " · root"}</span></div>`;
+    }).join("");
+    el.querySelectorAll("[data-rid]").forEach((d) => {
+      d.onclick = async () => {
+        const sel = $("focus-run-select");
+        if (sel && [...sel.options].some((o) => o.value === d.dataset.rid)) {
+          sel.value = d.dataset.rid;
+          await loadFocusCode();
+        } else {
+          toast("Run #" + d.dataset.rid + " is not in the current run list.");
+        }
+      };
+    });
+  } catch (e) { el.innerHTML = `<div class="empty">Failed to load branches: ${esc(e.message)}</div>`; }
+}
+
+async function loadFocusTracking() {
+  const el = $("focus-tracking");
+  if (!el || !state.project) return;
+  el.innerHTML = '<div class="muted small">Loading runs…</div>';
+  try {
+    const [exps, runs] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(state.project)}/experiments`),
+      api(`/api/projects/${encodeURIComponent(state.project)}/runs?limit=200`),
+    ]);
+    const expById = {};
+    for (const e of (exps.experiments || [])) expById[e.id] = e;
+    const rows = (runs.runs || []).slice().reverse().slice(0, 30);
+    if (!rows.length) { el.innerHTML = '<div class="empty">No runs tracked yet.</div>'; return; }
+    let h = '<table style="width:100%;font-size:11px"><thead><tr><th>run</th><th>status</th><th>experiment</th><th>metrics</th></tr></thead><tbody>';
+    for (const r of rows) {
+      const exp = r.experiment_id != null ? expById[r.experiment_id] : null;
+      const mkeys = Object.keys(r.metrics || {});
+      const mstr = mkeys.length ? mkeys.slice(0, 3).map((k) => `${k}=${typeof r.metrics[k] === "number" ? r.metrics[k].toFixed(4) : r.metrics[k]}`).join(", ") : "—";
+      h += `<tr><td class="mono">#${r.id}</td><td>${esc(r.status || "")}</td><td>${esc(exp ? exp.name : (r.kind || ""))}</td><td class="muted">${esc(String(mstr).slice(0, 80))}</td></tr>`;
+    }
+    el.innerHTML = h + "</tbody></table>";
+  } catch (e) { el.innerHTML = `<div class="empty">Failed to load tracking: ${esc(e.message)}</div>`; }
+}
+
+async function loadFocusRemoteHosts() {
+  const sel = $("focus-remote-host");
+  if (!sel) return;
+  try {
+    const j = await api("/api/remote/hosts");
+    const hosts = j.hosts || [];
+    sel.innerHTML = hosts.length
+      ? hosts.map((h) => `<option value="${esc(h.id)}"${h.id === j.active_host ? " selected" : ""}>${esc(h.name)} — ${esc(h.base_url)}</option>`).join("")
+      : `<option value="">(no hosts — add one in the Remote tab)</option>`;
+  } catch (e) {
+    sel.innerHTML = `<option value="">(remote proxy unreachable)</option>`;
+  }
+}
+
+async function focusRemoteRun() {
+  const out = $("focus-remote-result");
+  const code = ($("focus-remote-code").value || "").trim();
+  if (!code) { if (out) out.textContent = "Enter code to run first (or Send to remote from a run)."; return; }
+  if (out) out.textContent = "Running on remote…";
+  const body = {
+    host_id: ($("focus-remote-host") || {}).value || "",
+    project: state.project || "default",
+    code,
+    label: "focus:" + (state.project || "default"),
+    timeout: 120,
+    use_gpu: ($("focus-remote-gpu") || {}).checked !== false,
+  };
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), (body.timeout + 30) * 1000);
+    const res = await fetch(B("/api/remote/run"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+    if (out) out.textContent = `run #${j.run_id} on ${j.host} (${j.metrics.duration_s}s, gpu: ${(j.metrics.gpu_used || []).join(", ") || "n/a"})\n\n${j.output || j.error || "(no output)"}`;
+    await loadFocusRuns();
+    await loadFocusTracking();
+  } catch (e) {
+    if (out) out.textContent = "Run failed: " + String(e).slice(0, 500);
+  }
+}
+
+function wireFocusButtons() {
+  const send = $("focus-send");
+  if (send && !send._wired) {
+    send._wired = true;
+    send.onclick = () => focusSend();
+  }
+  const input = $("focus-input");
+  if (input && !input._wired) {
+    input._wired = true;
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); focusSend(); }
+    });
+  }
+  const sel = $("focus-project");
+  if (sel && !sel._wired) {
+    sel._wired = true;
+    sel.onchange = async () => {
+      if (sel.value && sel.value !== state.project) {
+        await switchProject(sel.value);
+        await loadFocus();
+      }
+    };
+  }
+  const runSel = $("focus-run-select");
+  if (runSel && !runSel._wired) {
+    runSel._wired = true;
+    runSel.onchange = () => loadFocusCode();
+  }
+  const toRemote = $("focus-send-remote");
+  if (toRemote && !toRemote._wired) {
+    toRemote._wired = true;
+    toRemote.onclick = () => {
+      const dst = $("focus-remote-code");
+      if (dst) {
+        dst.value = focusCodeText || "";
+        dst.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (!focusCodeText) toast("No code loaded for the selected run.");
+      }
+    };
+  }
+  const runBtn = $("focus-remote-run");
+  if (runBtn && !runBtn._wired) {
+    runBtn._wired = true;
+    runBtn.onclick = () => focusRemoteRun();
+  }
+  const ref = $("focus-refresh");
+  if (ref && !ref._wired) {
+    ref._wired = true;
+    ref.onclick = () => loadFocus();
   }
 }
 
@@ -10611,6 +10875,7 @@ $("mainview-rkg").addEventListener("click", () => switchMainView("rkg"));
 $("mainview-hive").addEventListener("click", () => switchMainView("hive"));
 $("mainview-journey").addEventListener("click", () => switchMainView("journey"));
 $("mainview-remote").addEventListener("click", () => switchMainView("remote"));
+if ($("mainview-focus")) $("mainview-focus").addEventListener("click", () => switchMainView("focus"));
 $("mainview-audit").addEventListener("click", () => switchMainView("audit"));
 $("editor-refresh").addEventListener("click", loadEditor);
 

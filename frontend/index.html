@@ -25,6 +25,7 @@
     <div class="topbar-center">
       <div class="mainview-tabs">
         <button id="mainview-chat" class="mainview-btn active" data-mainview="chat" title="Chat">💬 Chat</button>
+        <button id="mainview-focus" class="mainview-btn" data-mainview="focus" title="Focus — simplified session experimentation">🎯 Focus</button>
         <button id="mainview-experiments" class="mainview-btn" data-mainview="experiments" title="Experiments">🧪 Experiments</button>
         <button id="mainview-agent" class="mainview-btn" data-mainview="agent" title="Agent">🤖 Agent</button>
         <button id="mainview-editor" class="mainview-btn" data-mainview="editor" title="Editor">🖊 Editor</button>
@@ -803,6 +804,53 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <textarea id="input" rows="1" placeholder="Ask Fox to run an analysis, e.g. 'Load the attached CSV and cluster the cells, then plot a UMAP.'"></textarea>
         <button id="stop-btn" class="btn danger hidden" title="Stop generating">Stop</button>
         <button id="send-btn" class="btn primary" title="Send">Send</button>
+      </div>
+    </section>
+
+    <section id="focus-panel" class="hidden">
+      <div class="exp-toolbar">
+        <span class="agent-title">🎯 Focus — session experimentation</span>
+        <select id="focus-project" title="Session"></select>
+        <span class="spacer"></span>
+        <button id="focus-refresh" class="btn subtle small">Refresh</button>
+      </div>
+      <div class="focus-layout">
+        <div class="card">
+          <h4>Chat</h4>
+          <div id="focus-messages" class="focus-messages muted">Loading chat…</div>
+          <div class="remote-form">
+            <textarea id="focus-input" rows="2" placeholder="Ask Fox to run an analysis or experiment…"></textarea>
+            <button id="focus-send" class="btn primary">Send</button>
+          </div>
+        </div>
+        <div class="card">
+          <h4>Experiment code</h4>
+          <div class="remote-form">
+            <select id="focus-run-select" title="Run"></select>
+            <div style="display:flex;gap:8px">
+              <button id="focus-send-remote" class="btn subtle small" title="Copy this run's code into the remote form">Send to remote ↓</button>
+            </div>
+          </div>
+          <pre id="focus-code" class="muted small" style="white-space:pre-wrap;margin-top:8px">Select a run to view its code.</pre>
+        </div>
+        <div class="card">
+          <h4>Branch history</h4>
+          <div id="focus-branches" class="muted">Loading branches…</div>
+        </div>
+        <div class="card">
+          <h4>Experiment tracking</h4>
+          <div id="focus-tracking" class="muted">Loading runs…</div>
+        </div>
+        <div class="card">
+          <h4>Remote execution</h4>
+          <div class="remote-form">
+            <select id="focus-remote-host" title="Remote host"></select>
+            <label class="muted small"><input id="focus-remote-gpu" type="checkbox" checked /> require GPU</label>
+            <textarea id="focus-remote-code" rows="4" placeholder="Code to run on the remote host…"></textarea>
+            <button id="focus-remote-run" class="btn">Run on remote</button>
+          </div>
+          <pre id="focus-remote-result" class="muted small" style="white-space:pre-wrap;margin-top:8px">No remote runs yet.</pre>
+        </div>
       </div>
     </section>
 
