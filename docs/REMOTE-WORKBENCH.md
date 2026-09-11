@@ -161,6 +161,46 @@ Then register `http://host.docker.internal:8892` (not the LAN IP) in the
 Remote tab. Verified live: Discover → ✓ fox-kernel, 14ms, 2× RTX5080; GPU
 offload (`nvidia-smi` via execute) recorded as a `kind="remote"` run.
 
+## 7. Multi-GPU findings (2× RTX5080, project `axiom-gpu-sweep`)
+
+All runs below executed on axiom via the Remote tab (`use_gpu:true`) and are
+recorded as `kind="remote"` runs with host/duration/GPU metrics.
+
+**Single GPU**: fp16 matmul plateaus at **~119.7 TFLOPS** (8K–12K,
+compute-bound); MLP training 256K×512, 5 epochs: loss 2.00→0.80 at
+**~300K samples/s**. Requires torch with CUDA ≥12.8 for Blackwell (sm_120);
+the `fox-kernel:cuda` image bakes torch + numpy in for this reason.
+
+**DataParallel crossover** (same data/seed, single vs DP head-to-head):
+
+| Hidden | Batch | Single | DP | Speedup |
+|---|---|---|---|---|
+| 1024 | 16K | 216,846 | 221,146 | 1.02× |
+| 4096 | 16K | 139,242 | 137,765 | 0.99× |
+| 4096 | 32K | 126,482 | 139,284 | **1.10× ← crossover** |
+| 8192 | 16K | 61,741 | 59,496 | 0.96× |
+| 16384 | 8K | — | replica OOM | capacity wall |
+| 8192 | 32K | fits | replica OOM | capacity wall |
+
+**Readings**:
+- **Batch size beats width.** H=8192/B=16K (0.96×) vs H=4096/B=32K (1.10×)
+  process identical element counts — wider models mean more parameters, i.e.
+  more all-reduce bytes per step. DP wins when compute-per-sync-byte is high.
+- **DataParallel cannot escape the capacity wall.** Replicas duplicate
+  weights + Adam states per GPU, so per-GPU footprint ≈ single-GPU:
+  single fits H=8192/B=32K while DP OOMs on it. Past single-GPU capacity
+  needs sharding (FSDP), not replication.
+- **Dual-matmul control**: 8K fp16 on both GPUs concurrently → 120.1 +
+  122.3 = **242.4 combined TFLOPS** at single-GPU wall time (near-perfect 2×
+  concurrency — the hardware and path are fine; DP overhead is the variable).
+
+**Bugs fixed while measuring** (both verified fixed live):
+- Long runs died at ~60s: `run_code` forwarded the timeout to the worker
+  payload but not to the manager→worker wait (`_send` default 60s), which
+  killed/restated the worker ("state lost"). Now forwarded.
+- The Mac relay severed silent runs at 30s socket timeout; now 600s
+  (endpoints own their timeouts).
+
 ## Troubleshooting
 
 | Symptom | Cause → fix |

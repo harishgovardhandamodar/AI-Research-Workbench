@@ -61,6 +61,27 @@ The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New — Multi-GPU findings on axiom 2× RTX5080 (2026-09)
+
+**🖥 Remote agent deployables** — `bin/build-remote-agent.sh` builds a 44–52K
+tarball (kernel sources only, closed dep set: stdlib + fastapi/uvicorn);
+`deploy/remote-agent/` adds a GPU `Dockerfile` (269MB), a torch-baked
+`Dockerfile.cuda` (9GB, survives recreates), `docker-compose.yml` (NVIDIA
+reservation, fail-fast `REMOTE_TOKEN`), `.cpu` override, `install.sh`
+(venv + host-generated token + smoke test incl. 403 check) and a hardened
+systemd unit. Axiom runs `fox-kernel:cuda` (torch 2.14+cu130) — paired in the
+Remote tab via a Mac-host relay (`bin/axiom-relay.py` + LaunchAgent) because
+Docker Desktop blocks container→LAN egress.
+
+**📊 DataParallel crossover (project `axiom-gpu-sweep`, all `kind="remote"`)** —
+single-GPU fp16 plateaus at ~119.7 TFLOPS; DP crosses over at **1.10×** for
+H=4096/B=32K, loses at smaller configs (0.96–1.02×), and OOMs where single
+fits: **batch size beats width** (same element counts, different outcomes —
+all-reduce bytes dominate), and **replication can't escape the capacity wall**
+(FSDP needed past it). Dual-matmul control: **242.4 combined TFLOPS** at
+single-GPU wall time. Full table + bugfixes (60s worker-timeout kill, 30s
+relay sever): [docs/REMOTE-WORKBENCH.md](docs/REMOTE-WORKBENCH.md) §7.
+
 ## What's New — Remote hardening + narrow-AGI fixes (2026-09)
 
 **🖥 Remote hardening** — env-seeded hosts now have stable `seed-*` ids (host
