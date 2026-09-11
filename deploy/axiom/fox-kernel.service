@@ -1,7 +1,10 @@
 # systemd unit for the deployable hive-machine workbench agent on axiom.
-# Install on axiom (no passwords exchanged — see docs/REMOTE-WORKBENCH.md):
+# Preferred: unpack the tarball from bin/build-remote-agent.sh and run
+# install.sh there (does venv + token + this unit + smoke test).
+# Manual install (no passwords exchanged — see docs/REMOTE-WORKBENCH.md):
 #   sudo cp fox-kernel.service /etc/systemd/system/
-#   echo 'REMOTE_TOKEN=<token-from-openssl-rand>' | sudo tee /etc/fox-kernel.env
+#   openssl rand -hex 32  # token; then:
+#   echo 'REMOTE_TOKEN=<token>' | sudo tee /etc/fox-kernel.env
 #   sudo chmod 600 /etc/fox-kernel.env
 #   sudo systemctl daemon-reload && sudo systemctl enable --now fox-kernel
 # Logs: journalctl -u fox-kernel -f
@@ -14,9 +17,9 @@ Wants=network-online.target
 Type=simple
 User=fox
 Group=fox
-WorkingDirectory=/home/fox/AI-Research-Workbench
+WorkingDirectory=/opt/fox-kernel
 EnvironmentFile=/etc/fox-kernel.env
-ExecStart=/home/fox/AI-Research-Workbench/.venv/bin/python -m backend.kernels.server --host 0.0.0.0 --port 8891 --cwd /home/fox/axiom-workspace
+ExecStart=/opt/fox-kernel/.venv/bin/python -m backend.kernels.server --host 0.0.0.0 --port 8891 --cwd /home/fox/axiom-workspace
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

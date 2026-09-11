@@ -1,0 +1,5 @@
+# CUDA variant extras: torch (bundles its own CUDA runtime libs) + numpy
+# (silences torch's "Failed to initialize NumPy" warning). Baked into the
+# fox-kernel:cuda image so GPU experiments survive container recreates.
+torch
+numpy

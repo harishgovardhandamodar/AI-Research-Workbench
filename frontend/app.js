@@ -6917,6 +6917,12 @@ async function loadRemote() {
     renderRemoteHosts(j.hosts || [], j.active_host || "");
     if (status) status.textContent = j.seeded_from_env ? "Seeded from REMOTE_HOSTS (save to persist)." : `${(j.hosts || []).length} host(s).`;
     await loadRemoteProjects();
+    // Pick up live connection state on first open (one-shot Discover, still
+    // no background timers): users expect the tab itself to show axiom live.
+    if (!window._remoteAutoDiscovered && (j.hosts || []).length) {
+      window._remoteAutoDiscovered = true;
+      remoteDiscover();
+    }
   } catch (e) {
     if (list) list.textContent = "Remote proxy unreachable.";
     if (status) status.textContent = String(e).slice(0, 160);
@@ -6983,7 +6989,9 @@ function wireRemoteButtons() {
       try {
         const j = await api("/api/remote/hosts", { method: "POST", body: JSON.stringify(body) });
         if (status) status.textContent = "Saved " + j.host.name + ".";
-        $("remote-token").value = "";
+        // Keep the masked token in the field so re-saving without touching it
+        // preserves the live token server-side (empty would clear it).
+        $("remote-token").value = j.host.token || "";
         loadRemote();
       } catch (e) { if (status) status.textContent = String(e).slice(0, 200); }
     };

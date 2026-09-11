@@ -1,0 +1,40 @@
+# fox-kernel remote agent for a GPU server (e.g. axiom).
+# Run ON THE GPU HOST (not on the workbench machine):
+#   cd deploy/remote-agent
+#   REMOTE_TOKEN=<token-from-openssl-rand> docker compose up -d --build
+# Then add http://axiom:8891 (+ token) in the workbench Remote tab → Discover.
+#
+# GPU passthrough needs the NVIDIA Container Toolkit on the host
+# (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+# Without it the agent still runs — /api/kernel/gpu reports available:false.
+
+services:
+  fox-kernel:
+    build:
+      context: ../..
+      dockerfile: deploy/remote-agent/Dockerfile
+    image: fox-kernel:remote
+    container_name: fox-kernel
+    ports:
+      - "${FOX_KERNEL_PORT:-8891}:8891"
+    environment:
+      # Fail fast if the shared secret is missing (compose interpolation).
+      REMOTE_TOKEN: ${REMOTE_TOKEN:?Set REMOTE_TOKEN to a long random token (openssl rand -hex 32)}
+      FOX_KERNEL_PORT: ${FOX_KERNEL_PORT:-8891}
+      # Visible to executed code; the workbench also records GPU devices per run.
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+    volumes:
+      # Persistent workspace for executed code and its outputs.
+      - fox-kernel-workspace:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT:-all}
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  fox-kernel-workspace:

@@ -91,6 +91,36 @@ sudo ufw allow in on tailscale0 to any port 8891 proto tcp
 
 ## 5. Run the agent on axiom (persistent)
 
+Preferred — deployable package (52K, no full clone, closed dep set):
+
+```bash
+# on the Mac: build once per release
+./bin/build-remote-agent.sh   # -> dist/fox-kernel-remote-<sha>.tar.gz
+# copy ONE file to axiom (scp / tailscale file / usb), then on axiom:
+tar xzf fox-kernel-remote-<sha>.tar.gz && cd fox-kernel-remote
+sudo ./install.sh             # venv + deps + token + systemd + smoke test
+# user-local alternative (no sudo): PREFIX=~/fox-kernel ./install.sh
+journalctl -u fox-kernel -f   # watch startup (systemd installs only)
+```
+
+Docker — for GPU servers that are docker-first (needs NVIDIA Container Toolkit
+on the host for GPU visibility; without it the agent runs CPU-only):
+
+```bash
+# on axiom, from the unpacked tarball (or the repo's deploy/remote-agent/):
+cd fox-kernel-remote
+REMOTE_TOKEN=<token> docker compose up -d --build
+# CPU-only hosts / Mac test:
+# REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+# CUDA variant — torch + numpy baked in so GPU experiments survive recreates
+# (the base image is slim; pip-installed torch is ephemeral):
+# REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cuda.yml up -d --build
+# (.cpu and .cuda overlays are mutually exclusive.)
+docker inspect fox-kernel --format '{{.State.Health.Status}}'  # healthy
+```
+
+Fallback — full clone (heavier, same result):
+
 ```bash
 # on axiom:
 git clone <this-repo> ~/AI-Research-Workbench   # or sync it
@@ -111,6 +141,25 @@ curl -s http://axiom:8891/api/kernel/gpu   # expect 2× RTX5080 devices
 Then in the workbench **Remote tab**: add host `axiom` → `http://axiom:8891`
 (+ token) → **Discover** (expect ✓ fox-kernel + 2 GPUs) → offload with
 **require GPU** checked. Results return as `kind="remote"` runs.
+
+## 6. Mac relay (Docker Desktop containers cannot reach LAN)
+
+Docker Desktop for Mac blocks container → LAN egress (`192.168.x.x` times out
+from inside containers, while `host.docker.internal` works). The workbench
+therefore cannot call axiom directly — run this stdlib-only TCP relay **on the
+Mac host** (no passwords, no SSH; Bearer auth stays end-to-end):
+
+```bash
+python3 bin/axiom-relay.py   # 127.0.0.1:8892 -> axiom:8891, logs to stderr
+# persist across reboots:
+cp deploy/remote-agent/axiom-relay.plist ~/Library/LaunchAgents/com.fox.axiom-relay.plist
+# (edit the checkout path inside first)
+launchctl load ~/Library/LaunchAgents/com.fox.axiom-relay.plist
+```
+
+Then register `http://host.docker.internal:8892` (not the LAN IP) in the
+Remote tab. Verified live: Discover → ✓ fox-kernel, 14ms, 2× RTX5080; GPU
+offload (`nvidia-smi` via execute) recorded as a `kind="remote"` run.
 
 ## Troubleshooting
 

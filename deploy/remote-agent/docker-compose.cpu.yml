@@ -1,0 +1,10 @@
+# CPU-only override for the fox-kernel remote agent (test hosts, Mac, or
+# GPU-less remotes). Drops the NVIDIA reservation from docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+# The agent still runs; /api/kernel/gpu reports available:false.
+services:
+  fox-kernel:
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

@@ -1,0 +1,35 @@
+# fox-kernel remote agent — CUDA variant for GPU servers (e.g. axiom).
+# Same agent as Dockerfile, plus torch + numpy baked in so GPU experiments
+# (training, matmuls, CUDA checks) survive container recreates. torch wheels
+# bundle their own CUDA runtime libraries; the host only needs the NVIDIA
+# driver (>= recent, axiom: 595.84) + Container Toolkit + --gpus all.
+# Build on the GPU host (torch is ~2.5GB — don't build this on Mac):
+#   docker compose -f docker-compose.yml -f docker-compose.cuda.yml up -d --build
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    FOX_KERNEL_PORT=8891
+
+WORKDIR /opt/fox-kernel
+
+COPY backend/__init__.py ./backend/__init__.py
+COPY backend/paths.py ./backend/paths.py
+COPY backend/kernels/__init__.py backend/kernels/server.py \
+     backend/kernels/manager.py backend/kernels/python_kernel.py \
+     backend/kernels/r_kernel.py backend/kernels/worker.py \
+     ./backend/kernels/
+COPY deploy/remote-agent/requirements.txt deploy/remote-agent/requirements-cuda.txt ./
+
+RUN pip install -r requirements.txt -r requirements-cuda.txt
+
+RUN mkdir -p /workspace
+VOLUME /workspace
+
+EXPOSE 8891
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8891/health', timeout=4)"
+
+CMD ["sh", "-c", "python -m backend.kernels.server --host 0.0.0.0 --port ${FOX_KERNEL_PORT:-8891} --cwd /workspace"]
