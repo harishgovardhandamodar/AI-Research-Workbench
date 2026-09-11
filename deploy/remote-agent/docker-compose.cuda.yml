@@ -1,0 +1,9 @@
+# CUDA overlay: swap the fox-kernel image for the torch-baked variant.
+#   REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cuda.yml up -d --build
+# (Add -f docker-compose.cpu.yml instead on hosts without NVIDIA runtime —
+# the .cpu and .cuda overlays are mutually exclusive.)
+services:
+  fox-kernel:
+    build:
+      dockerfile: deploy/remote-agent/Dockerfile.cuda
+    image: fox-kernel:cuda

@@ -29,10 +29,13 @@ cp backend/kernels/__init__.py backend/kernels/server.py \
    backend/kernels/manager.py backend/kernels/python_kernel.py \
    backend/kernels/r_kernel.py backend/kernels/worker.py \
    "$PKG/backend/kernels"/
-cp deploy/remote-agent/requirements.txt deploy/remote-agent/install.sh \
+cp deploy/remote-agent/requirements.txt deploy/remote-agent/requirements-cuda.txt \
+   deploy/remote-agent/install.sh \
    deploy/remote-agent/README.md deploy/remote-agent/Dockerfile \
+   deploy/remote-agent/Dockerfile.cuda \
    deploy/remote-agent/docker-compose.yml \
-   deploy/remote-agent/docker-compose.cpu.yml "$PKG/deploy/remote-agent"/
+   deploy/remote-agent/docker-compose.cpu.yml \
+   deploy/remote-agent/docker-compose.cuda.yml "$PKG/deploy/remote-agent"/
 cp deploy/axiom/fox-kernel.service "$PKG/deploy/axiom"/
 chmod +x "$PKG/deploy/remote-agent/install.sh"
 

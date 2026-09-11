@@ -112,6 +112,10 @@ cd fox-kernel-remote
 REMOTE_TOKEN=<token> docker compose up -d --build
 # CPU-only hosts / Mac test:
 # REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+# CUDA variant — torch + numpy baked in so GPU experiments survive recreates
+# (the base image is slim; pip-installed torch is ephemeral):
+# REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cuda.yml up -d --build
+# (.cpu and .cuda overlays are mutually exclusive.)
 docker inspect fox-kernel --format '{{.State.Health.Status}}'  # healthy
 ```
 
