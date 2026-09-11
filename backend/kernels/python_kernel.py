@@ -225,7 +225,8 @@ class PythonKernel:
         self._notify("busy", {"code": code, "pid": self._proc.pid if self._proc else None})
         try:
             resp = await self._send({"op": "run_code", "code": code,
-                                     "timeout": timeout, "stream": bool(stream)})
+                                     "timeout": timeout, "stream": bool(stream)},
+                                    timeout=timeout)
             self._last_ok = bool(resp.get("ok"))
             self._last_error = resp.get("error")
             self._exec_count += 1

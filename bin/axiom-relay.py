@@ -22,7 +22,11 @@ import threading
 import time
 
 BUF = 65536
-IDLE_TIMEOUT = 300.0
+# Generous: the relay is a dumb pipe — endpoints enforce their own timeouts
+# (proxy ≤600s, kernel per-request). Must exceed the longest supported run or
+# long silent executions get severed mid-flight (observed as ~60s deaths).
+SOCK_TIMEOUT = 600.0
+IDLE_TIMEOUT = 660.0
 
 log = logging.getLogger("axiom-relay")
 
@@ -49,8 +53,8 @@ def _pump(src: socket.socket, dst: socket.socket, deadline: float) -> None:
 
 def _handle(client: socket.socket, target: tuple[str, int]) -> None:
     upstairs = socket.create_connection(target, timeout=10.0)
-    upstairs.settimeout(30.0)
-    client.settimeout(30.0)
+    upstairs.settimeout(SOCK_TIMEOUT)
+    client.settimeout(SOCK_TIMEOUT)
     deadline = time.time() + IDLE_TIMEOUT
     t = threading.Thread(target=_pump, args=(upstairs, client, deadline), daemon=True)
     t.start()
