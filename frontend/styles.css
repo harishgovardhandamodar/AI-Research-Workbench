@@ -30,8 +30,8 @@ html, body {
 
 /* ---------- topbar ---------- */
 #topbar {
-  display: flex; align-items: center; gap: 16px;
-  padding: 8px 14px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
@@ -39,7 +39,7 @@ html, body {
 .brand { display: flex; align-items: baseline; gap: 8px; font-weight: 700; letter-spacing: .3px; cursor: pointer; }
 .brand:hover { color: var(--accent); }
 .brand-sub { color: var(--text-dim); font-weight: 400; font-size: 12px; }
-.topbar-center { display: flex; gap: 8px; align-items: center; margin: 0 auto; }
+.topbar-center { display: flex; gap: 8px; align-items: center; margin: 0; flex: 1 1 auto; min-width: 0; }
 .topbar-right { display: flex; gap: 10px; align-items: center; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); display: inline-block; }
 .status-dot.ok { background: var(--ok); }
@@ -137,9 +137,23 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 #app:not(.side-collapsed) #side-toggle::before { content: "❯"; }
 
 /* main view switcher (Chat / Experiments) */
-.mainview-tabs { display: flex; gap: 4px; margin-right: 8px; }
-.mainview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 12px; padding: 4px 12px; cursor: pointer; }
+.mainview-tabs { display: flex; gap: 3px; margin-right: 8px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.mainview-tabs::-webkit-scrollbar { display: none; }
+.mainview-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 12px; padding: 4px 9px; cursor: pointer; flex: 0 0 auto; white-space: nowrap; }
 .mainview-btn.active { color: var(--text); border-color: var(--accent); background: rgba(53,196,182,.1); }
+/* 1512px MacBook: drop the brand subtitle + shrink model picker so tabs fit */
+@media (max-width: 1500px) {
+  #topbar .brand-sub { display: none; }
+  #model-select { min-width: 140px; }
+}
+/* Narrower windows: icon-only tabs keep every view reachable */
+@media (max-width: 1100px) {
+  .mainview-btn .tab-label { display: none; }
+  .mainview-btn { padding: 4px 8px; }
+}
+@media (max-width: 900px) {
+  .brand span { display: none; }
+}
 
 /* expanded experiments panel (main view) */
 #exp-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
