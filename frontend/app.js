@@ -6558,6 +6558,11 @@ function switchMainView(view) {
   $("audit-panel").classList.toggle("hidden", view !== "audit");
   document.querySelectorAll(".mainview-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.mainview === view));
+  const activeBtn = document.querySelector(".mainview-btn.active");
+  if (activeBtn && activeBtn.scrollIntoView) {
+    try { activeBtn.scrollIntoView({ inline: "nearest", block: "nearest" }); } catch (e) {}
+  }
+  syncTabScroll();
   const fab = $("branch-toggle");
   if (fab) fab.classList.toggle("hidden", view !== "chat" && view !== "experiments");
   const ov = $("branch-overlay");
@@ -10892,6 +10897,21 @@ $("mainview-journey").addEventListener("click", () => switchMainView("journey"))
 $("mainview-remote").addEventListener("click", () => switchMainView("remote"));
 if ($("mainview-focus")) $("mainview-focus").addEventListener("click", () => switchMainView("focus"));
 $("mainview-audit").addEventListener("click", () => switchMainView("audit"));
+function syncTabScroll() {
+  const tabs = document.querySelector(".mainview-tabs");
+  if (!tabs) return;
+  const max = tabs.scrollWidth - tabs.clientWidth;
+  tabs.dataset.scrolled = tabs.scrollLeft > 4 ? "1" : "";
+  tabs.dataset.canscroll = max > 4 && tabs.scrollLeft < max - 4 ? "1" : "";
+  if (!tabs._scrollWired) {
+    tabs._scrollWired = true;
+    tabs.addEventListener("scroll", () => syncTabScroll(), { passive: true });
+  }
+}
+if (!window._tabScrollWired) {
+  window._tabScrollWired = true;
+  window.addEventListener("resize", () => syncTabScroll());
+}
 $("editor-refresh").addEventListener("click", loadEditor);
 
 /* ============================ notebooks =================================== */
