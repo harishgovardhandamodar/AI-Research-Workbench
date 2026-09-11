@@ -14,14 +14,14 @@ On the remote host — pick one:
 ```bash
 tar xzf fox-kernel-remote-<sha>.tar.gz
 cd fox-kernel-remote
-sudo ./install.sh            # or: PREFIX=~/fox-kernel ./install.sh (no sudo: skips systemd/ufw)
+sudo ./deploy/remote-agent/install.sh            # or: PREFIX=~/fox-kernel ./deploy/remote-agent/install.sh (no sudo: skips systemd/ufw)
 ```
 
 Docker (GPU servers that are docker-first; needs NVIDIA Container Toolkit
 for GPU visibility, else the agent runs CPU-only):
 
 ```bash
-cd fox-kernel-remote
+cd fox-kernel-remote/deploy/remote-agent
 REMOTE_TOKEN=<token> docker compose up -d --build          # GPU passthrough
 REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build   # CPU-only
 ```

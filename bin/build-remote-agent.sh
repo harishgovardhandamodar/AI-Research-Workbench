@@ -18,9 +18,12 @@ trap 'rm -rf "$STAGE"' EXIT
 PKG="$STAGE/$NAME"
 mkdir -p "$PKG/backend/kernels" "$PKG"
 
+# Repo-relative layout is preserved so docker compose (context: ../..) and
+# install.sh work identically from a repo checkout or the unpacked tarball.
 # Kernel sources only (verified: stdlib + fastapi/uvicorn/pydantic).
 # remote.py is the workbench-side CLIENT — excluded on purpose (it would pull
 # httpx/websockets and is never imported by the agent).
+mkdir -p "$PKG/backend/kernels" "$PKG/deploy/remote-agent" "$PKG/deploy/axiom"
 cp backend/__init__.py backend/paths.py "$PKG/backend"/
 cp backend/kernels/__init__.py backend/kernels/server.py \
    backend/kernels/manager.py backend/kernels/python_kernel.py \
@@ -29,9 +32,9 @@ cp backend/kernels/__init__.py backend/kernels/server.py \
 cp deploy/remote-agent/requirements.txt deploy/remote-agent/install.sh \
    deploy/remote-agent/README.md deploy/remote-agent/Dockerfile \
    deploy/remote-agent/docker-compose.yml \
-   deploy/remote-agent/docker-compose.cpu.yml "$PKG"/
-cp deploy/axiom/fox-kernel.service "$PKG"/
-chmod +x "$PKG/install.sh"
+   deploy/remote-agent/docker-compose.cpu.yml "$PKG/deploy/remote-agent"/
+cp deploy/axiom/fox-kernel.service "$PKG/deploy/axiom"/
+chmod +x "$PKG/deploy/remote-agent/install.sh"
 
 # Safety: the tarball must never contain secrets.
 if grep -rniE "password1|sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}" "$PKG" 2>/dev/null; then
