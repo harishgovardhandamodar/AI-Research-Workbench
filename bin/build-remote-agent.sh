@@ -27,7 +27,9 @@ cp backend/kernels/__init__.py backend/kernels/server.py \
    backend/kernels/r_kernel.py backend/kernels/worker.py \
    "$PKG/backend/kernels"/
 cp deploy/remote-agent/requirements.txt deploy/remote-agent/install.sh \
-   deploy/remote-agent/README.md "$PKG"/
+   deploy/remote-agent/README.md deploy/remote-agent/Dockerfile \
+   deploy/remote-agent/docker-compose.yml \
+   deploy/remote-agent/docker-compose.cpu.yml "$PKG"/
 cp deploy/axiom/fox-kernel.service "$PKG"/
 chmod +x "$PKG/install.sh"
 

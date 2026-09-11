@@ -9,12 +9,21 @@ hosts (e.g. axiom, 2× RTX5080). Contents of the tarball built by
 - `install.sh` — venv + deps + token + systemd + verify (run on the host)
 - `fox-kernel.service` — hardened systemd unit (also at `deploy/axiom/`)
 
-On the remote host:
+On the remote host — pick one:
 
 ```bash
 tar xzf fox-kernel-remote-<sha>.tar.gz
 cd fox-kernel-remote
 sudo ./install.sh            # or: PREFIX=~/fox-kernel ./install.sh (no sudo: skips systemd/ufw)
+```
+
+Docker (GPU servers that are docker-first; needs NVIDIA Container Toolkit
+for GPU visibility, else the agent runs CPU-only):
+
+```bash
+cd fox-kernel-remote
+REMOTE_TOKEN=<token> docker compose up -d --build          # GPU passthrough
+REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build   # CPU-only
 ```
 
 `install.sh` prints the token once (generated on the host, never transmitted).

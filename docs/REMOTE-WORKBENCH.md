@@ -103,6 +103,18 @@ sudo ./install.sh             # venv + deps + token + systemd + smoke test
 journalctl -u fox-kernel -f   # watch startup (systemd installs only)
 ```
 
+Docker — for GPU servers that are docker-first (needs NVIDIA Container Toolkit
+on the host for GPU visibility; without it the agent runs CPU-only):
+
+```bash
+# on axiom, from the unpacked tarball (or the repo's deploy/remote-agent/):
+cd fox-kernel-remote
+REMOTE_TOKEN=<token> docker compose up -d --build
+# CPU-only hosts / Mac test:
+# REMOTE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+docker inspect fox-kernel --format '{{.State.Health.Status}}'  # healthy
+```
+
 Fallback — full clone (heavier, same result):
 
 ```bash
