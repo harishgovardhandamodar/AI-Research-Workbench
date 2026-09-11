@@ -12,6 +12,7 @@
 
 * [Chat with Fox](user-guide/chat.md)
 * [Experiments tab](user-guide/experiments.md)
+* [Focus view](user-guide/focus-view.md)
 * [Goals, focus & learnings](user-guide/goals-focus-learnings.md)
 * [Campaigns](user-guide/campaigns.md)
 * [Model benchmarks](user-guide/benchmarks.md)

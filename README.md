@@ -61,6 +61,22 @@ The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New — Focus view + responsive shell (2026-09)
+
+**🎯 Focus view — simplified session experimentation** — new optional main
+view beside Chat: one screen per session with five tabs (Chat, Experiment
+code, Branch history, Experiment tracking, Remote execution) sharing the
+existing backend endpoints (no new APIs). Branch nodes jump to Code, Code
+jumps to Remote, remote runs land back in Tracking; the toolbar session
+selector follows the active session. See [Focus view](gitbook/user-guide/focus-view.md).
+
+**Top bar + shell redesign (1512px MacBook-tuned)** — horizontally scrolling
+tab strip with edge fades and active-tab auto-scroll (icon-only below
+1100px); model and session pickers as compact overlay controls; uniform 12px
+topbar type; side rail becomes an overlay drawer below 1100px; chat capped at
+~1000px centered; consistent card headers; antialiased type, button states,
+quiet scrollbars, and always-visible keyboard focus.
+
 ## What's New — Multi-GPU findings on axiom 2× RTX5080 (2026-09)
 
 **🖥 Remote agent deployables** — `bin/build-remote-agent.sh` builds a 44–52K
