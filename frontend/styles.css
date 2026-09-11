@@ -66,6 +66,12 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 
 /* ---------- unified session control (single top-bar widget) ---------- */
 .session-ctrl { position: relative; }
+/* Model picker mirrors the session control: compact button, overlay menu. */
+.model-ctrl { position: relative; }
+#model-switch { max-width: 170px; }
+.session-switch { max-width: 150px; }
+.model-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#model-list .session-item { font-size: 12px; }
 .session-switch {
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--bg-3); color: var(--text);

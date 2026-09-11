@@ -52,7 +52,20 @@
           <div id="session-list" class="session-list"></div>
         </div>
       </div>
-      <select id="model-select" title="Model"></select>
+      <div class="model-ctrl">
+        <button id="model-switch" class="session-switch" title="Switch model">
+          <span class="session-ico">🧠</span>
+          <span id="model-current" class="model-current">—</span>
+          <span class="session-caret">▾</span>
+        </button>
+        <div id="model-menu" class="session-menu hidden">
+          <div class="session-head">
+            <span class="session-title">Model</span>
+          </div>
+          <div id="model-list" class="session-list"></div>
+        </div>
+      </div>
+      <select id="model-select" title="Model" class="hidden"></select>
     </div>
     <div class="topbar-right">
       <span id="conn-status" class="status-dot" title="Connection status"></span>

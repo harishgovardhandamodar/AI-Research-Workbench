@@ -3176,13 +3176,9 @@ function isCurrentModel(id) {
   catch (e) { return false; }
 }
 
-function renderModelSelect() {
-  const sel = $("model-select");
-  if (!sel) return;
-  const models = state.models || [];
-  if (!models.length) { sel.innerHTML = ""; return; }
+function groupModels() {
   const groups = {};
-  for (const m of models) {
+  for (const m of (state.models || [])) {
     const meta = modelMeta(m);
     const key = meta.recommended ? "★ Current" : meta.family;
     (groups[key] = groups[key] || []).push({ m, meta });
@@ -3192,6 +3188,15 @@ function renderModelSelect() {
     if (b === "★ Current") return 1;
     return a.localeCompare(b);
   });
+  return { groups, keys };
+}
+
+function renderModelSelect() {
+  const sel = $("model-select");
+  if (!sel) return;
+  const models = state.models || [];
+  if (!models.length) { sel.innerHTML = ""; return; }
+  const { groups, keys } = groupModels();
   sel.innerHTML = keys.map((k) => {
     const opts = groups[k].map(({ m, meta }) => {
       const label = meta.hint ? `${m.id} · ${meta.hint}` : m.id;
@@ -3202,7 +3207,55 @@ function renderModelSelect() {
   if (state.config?.llm?.model && models.some((m) => m.id === state.config.llm.model)) {
     sel.value = state.config.llm.model;
   }
+  renderModelButton();
 }
+
+async function setModel(id) {
+  const cfg = JSON.parse(JSON.stringify(state.config || {}));
+  cfg.llm = cfg.llm || {};
+  cfg.llm.model = id;
+  const r = await api("/api/config", { method: "POST", body: JSON.stringify({ config: cfg }) });
+  state.config = r.config;
+  renderModelButton();
+  const sel = $("model-select");
+  if (sel) sel.value = id;
+}
+
+function renderModelButton() {
+  const cur = $("model-current");
+  if (cur) cur.textContent = state.config?.llm?.model || "—";
+}
+
+function renderModelMenu() {
+  const list = $("model-list");
+  if (!list) return;
+  const { groups, keys } = groupModels();
+  if (!keys.length) { list.innerHTML = '<div class="empty">No models found.</div>'; return; }
+  const cur = state.config?.llm?.model;
+  list.innerHTML = keys.map((k) =>
+    `<div class="muted small" style="padding:4px 10px 2px">${esc(k)}</div>` +
+    groups[k].map(({ m, meta }) => {
+      const label = meta.hint ? `${m.id} · ${meta.hint}` : m.id;
+      return `<div class="session-item${m.id === cur ? " active" : ""}" data-model="${esc(m.id)}" title="${esc(label)}"><span class="session-current">${esc(m.id)}</span>${m.id === cur ? '<span class="muted"> ✓</span>' : ""}</div>`;
+    }).join("")
+  ).join("");
+  list.querySelectorAll("[data-model]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      closeModelMenu();
+      try { await setModel(el.dataset.model); toast("Model: " + el.dataset.model); }
+      catch (e) { toast("Model switch failed: " + e.message, 4000); }
+    }));
+}
+
+function toggleModelMenu(force) {
+  const menu = $("model-menu");
+  if (!menu) return;
+  const open = force !== undefined ? force : menu.classList.contains("hidden");
+  menu.classList.toggle("hidden", !open);
+  if (open) renderModelMenu();
+}
+
+function closeModelMenu() { toggleModelMenu(false); }
 
 async function refreshModels() {
   const sel = $("model-select");
@@ -3434,6 +3487,7 @@ function applyTagFilter() {
   });
 }
 $("session-switch").addEventListener("click", (e) => { e.stopPropagation(); toggleSessionMenu(); });
+$("model-switch").addEventListener("click", (e) => { e.stopPropagation(); toggleModelMenu(); });
 $("session-new").addEventListener("click", async () => {
   closeSessionMenu();
   openSessionPlanner();
