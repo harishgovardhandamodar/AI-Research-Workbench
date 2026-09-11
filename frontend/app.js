@@ -6983,7 +6983,9 @@ function wireRemoteButtons() {
       try {
         const j = await api("/api/remote/hosts", { method: "POST", body: JSON.stringify(body) });
         if (status) status.textContent = "Saved " + j.host.name + ".";
-        $("remote-token").value = "";
+        // Keep the masked token in the field so re-saving without touching it
+        // preserves the live token server-side (empty would clear it).
+        $("remote-token").value = j.host.token || "";
         loadRemote();
       } catch (e) { if (status) status.textContent = String(e).slice(0, 200); }
     };

@@ -138,6 +138,25 @@ Then in the workbench **Remote tab**: add host `axiom` → `http://axiom:8891`
 (+ token) → **Discover** (expect ✓ fox-kernel + 2 GPUs) → offload with
 **require GPU** checked. Results return as `kind="remote"` runs.
 
+## 6. Mac relay (Docker Desktop containers cannot reach LAN)
+
+Docker Desktop for Mac blocks container → LAN egress (`192.168.x.x` times out
+from inside containers, while `host.docker.internal` works). The workbench
+therefore cannot call axiom directly — run this stdlib-only TCP relay **on the
+Mac host** (no passwords, no SSH; Bearer auth stays end-to-end):
+
+```bash
+python3 bin/axiom-relay.py   # 127.0.0.1:8892 -> axiom:8891, logs to stderr
+# persist across reboots:
+cp deploy/remote-agent/axiom-relay.plist ~/Library/LaunchAgents/com.fox.axiom-relay.plist
+# (edit the checkout path inside first)
+launchctl load ~/Library/LaunchAgents/com.fox.axiom-relay.plist
+```
+
+Then register `http://host.docker.internal:8892` (not the LAN IP) in the
+Remote tab. Verified live: Discover → ✓ fox-kernel, 14ms, 2× RTX5080; GPU
+offload (`nvidia-smi` via execute) recorded as a `kind="remote"` run.
+
 ## Troubleshooting
 
 | Symptom | Cause → fix |

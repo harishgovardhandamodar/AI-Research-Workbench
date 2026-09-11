@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # install.sh — install the fox-kernel remote agent on a LAN/Tailscale host.
-# Run from the extracted tarball directory ON THE REMOTE HOST (e.g. axiom).
-# No passwords exchanged: the API token is generated here and shown once.
+# Works from a repo checkout (this file's dir is deploy/remote-agent/) or from
+# the unpacked tarball (same relative layout). No passwords exchanged: the API
+# token is generated here and shown once.
 #
-#   sudo ./install.sh                      # full install: /opt/fox-kernel + systemd + ufw hint
-#   PREFIX=~/fox-kernel PORT=8891 ./install.sh   # user-local, no sudo (skips systemd/ufw)
+#   sudo ./install.sh    # from deploy/remote-agent/ or tarball root narration below
+#
+# Canonical use (tarball on the remote host):
+#   tar xzf fox-kernel-remote-<sha>.tar.gz && cd fox-kernel-remote
+#   sudo ./deploy/remote-agent/install.sh
+# User-local, no sudo (skips systemd/ufw):
+#   PREFIX=~/fox-kernel ./deploy/remote-agent/install.sh
 #
 # Env overrides: PREFIX (default /opt/fox-kernel), PORT (default 8891),
 # WORKSPACE_DIR (default $HOME/axiom-workspace), REMOTE_TOKEN (else generated).
 set -euo pipefail
 
+SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 PREFIX="${PREFIX:-/opt/fox-kernel}"
 PORT="${PORT:-8891}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/axiom-workspace}"
-SERVICE_SRC="${SERVICE_SRC:-fox-kernel.service}"
+SERVICE_SRC="${SERVICE_SRC:-$SRC/deploy/axiom/fox-kernel.service}"
 
 have_sudo=false
 if [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
@@ -23,10 +30,10 @@ fi
 echo "==> [1/5] Installing files to $PREFIX ..."
 if [ -w "$(dirname "$PREFIX")" ]; then
   mkdir -p "$PREFIX"
-  cp -r backend requirements.txt README.md "$PREFIX"/
+  cp -r "$SRC/backend" "$SRC/deploy" "$PREFIX"/
 else
   sudo mkdir -p "$PREFIX"
-  sudo cp -r backend requirements.txt README.md "$PREFIX"/
+  sudo cp -r "$SRC/backend" "$SRC/deploy" "$PREFIX"/
   sudo chown -R "$(id -u):$(id -g)" "$PREFIX"
 fi
 mkdir -p "$WORKSPACE_DIR"
@@ -34,7 +41,7 @@ mkdir -p "$WORKSPACE_DIR"
 echo "==> [2/5] Creating venv + installing deps (fastapi, uvicorn) ..."
 python3 -m venv "$PREFIX/.venv"
 "$PREFIX/.venv/bin/pip" install --quiet --upgrade pip
-"$PREFIX/.venv/bin/pip" install --quiet -r "$PREFIX/requirements.txt"
+"$PREFIX/.venv/bin/pip" install --quiet -r "$PREFIX/deploy/remote-agent/requirements.txt"
 
 echo "==> [3/5] API token (generated on this host, shown once, never logged) ..."
 if [ -n "${REMOTE_TOKEN:-}" ]; then
