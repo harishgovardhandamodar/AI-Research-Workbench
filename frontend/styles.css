@@ -178,9 +178,14 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 /* hive + journey (narrow AGI) — same flex shell as rkg, plus grid layouts */
 #hive-panel, #journey-panel, #remote-panel, #focus-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; padding: 14px 18px; gap: 12px; min-height: 0; overflow: auto; }
 #hive-panel.hidden, #journey-panel.hidden, #remote-panel.hidden, #focus-panel.hidden { display: none; }
-.focus-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 900px) { .focus-layout { grid-template-columns: 1fr; } }
-.focus-messages { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.focus-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin: 2px 0 0; overflow-x: auto; scrollbar-width: none; }
+.focus-tabs::-webkit-scrollbar { display: none; }
+.focus-tab { background: transparent; border: 1px solid transparent; color: var(--text-dim); padding: 6px 14px; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; white-space: nowrap; flex: 0 0 auto; }
+.focus-tab:hover { color: var(--text); }
+.focus-tab.active { color: var(--accent); border-color: var(--border); border-bottom-color: var(--bg); background: var(--bg); }
+.focus-single { display: flex; flex-direction: column; gap: 12px; max-width: 960px; width: 100%; margin: 0 auto; }
+.focus-single .card h4 { margin: 0 0 8px; font-size: 13px; }
+.focus-messages { max-height: 420px; overflow: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .focus-msg { border-left: 3px solid var(--border); padding: 4px 8px; }
 .focus-msg.user { border-color: var(--accent); }
 .focus-msg .role { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; opacity: .7; }
@@ -191,6 +196,7 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); bo
 .hive-layout, .journey-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 900px) { .hive-layout, .journey-layout { grid-template-columns: 1fr; } }
 .card { background: var(--bg-2, #1a1625); border: 1px solid var(--border, #332d44); border-radius: 10px; padding: 12px; }
+.card > h4:first-child { margin: 0 0 8px; font-size: 13px; }
 .hive-graph, .hive-timeline, .journey-layout .card { min-width: 0; }
 #rkg-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
 .editor-fallback {

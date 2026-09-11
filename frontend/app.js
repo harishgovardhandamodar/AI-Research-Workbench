@@ -7206,6 +7206,7 @@ async function loadFocusBranches() {
         if (sel && [...sel.options].some((o) => o.value === d.dataset.rid)) {
           sel.value = d.dataset.rid;
           await loadFocusCode();
+          switchFocusTab("code");
         } else {
           toast("Run #" + d.dataset.rid + " is not in the current run list.");
         }
@@ -7284,7 +7285,21 @@ async function focusRemoteRun() {
   }
 }
 
+function switchFocusTab(view) {
+  document.querySelectorAll(".focus-tab").forEach((b) =>
+    b.classList.toggle("active", b.dataset.focustab === view));
+  ["chat", "code", "branches", "tracking", "remote"].forEach((v) => {
+    const el = $("focus-tab-" + v);
+    if (el) el.classList.toggle("hidden", v !== view);
+  });
+}
+
 function wireFocusButtons() {
+  document.querySelectorAll(".focus-tab").forEach((b) => {
+    if (b._wired) return;
+    b._wired = true;
+    b.addEventListener("click", () => switchFocusTab(b.dataset.focustab));
+  });
   const send = $("focus-send");
   if (send && !send._wired) {
     send._wired = true;
@@ -7319,7 +7334,7 @@ function wireFocusButtons() {
       const dst = $("focus-remote-code");
       if (dst) {
         dst.value = focusCodeText || "";
-        dst.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        switchFocusTab("remote");
         if (!focusCodeText) toast("No code loaded for the selected run.");
       }
     };

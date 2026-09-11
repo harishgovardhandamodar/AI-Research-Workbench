@@ -814,8 +814,15 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
         <span class="spacer"></span>
         <button id="focus-refresh" class="btn subtle small">Refresh</button>
       </div>
-      <div class="focus-layout">
-        <div class="card">
+      <div class="focus-tabs">
+        <button class="focus-tab active" data-focustab="chat">💬 Chat</button>
+        <button class="focus-tab" data-focustab="code">🧪 Code</button>
+        <button class="focus-tab" data-focustab="branches">🌲 Branches</button>
+        <button class="focus-tab" data-focustab="tracking">📊 Tracking</button>
+        <button class="focus-tab" data-focustab="remote">🖥 Remote</button>
+      </div>
+      <div class="focus-single">
+        <div class="card" id="focus-tab-chat">
           <h4>Chat</h4>
           <div id="focus-messages" class="focus-messages muted">Loading chat…</div>
           <div class="remote-form">
@@ -823,7 +830,7 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
             <button id="focus-send" class="btn primary">Send</button>
           </div>
         </div>
-        <div class="card">
+        <div class="card hidden" id="focus-tab-code">
           <h4>Experiment code</h4>
           <div class="remote-form">
             <select id="focus-run-select" title="Run"></select>
@@ -833,15 +840,15 @@ report_metric('accuracy', clf.score(X_test, y_test))"></textarea>
           </div>
           <pre id="focus-code" class="muted small" style="white-space:pre-wrap;margin-top:8px">Select a run to view its code.</pre>
         </div>
-        <div class="card">
+        <div class="card hidden" id="focus-tab-branches">
           <h4>Branch history</h4>
           <div id="focus-branches" class="muted">Loading branches…</div>
         </div>
-        <div class="card">
+        <div class="card hidden" id="focus-tab-tracking">
           <h4>Experiment tracking</h4>
           <div id="focus-tracking" class="muted">Loading runs…</div>
         </div>
-        <div class="card">
+        <div class="card hidden" id="focus-tab-remote">
           <h4>Remote execution</h4>
           <div class="remote-form">
             <select id="focus-remote-host" title="Remote host"></select>
