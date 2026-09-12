@@ -116,7 +116,7 @@ class RunObfuscationEndpointTests(unittest.TestCase):
                 cls._patched.append((mod, attr, getattr(mod, attr)))
                 setattr(mod, attr, (tmp if attr == "WORKBENCH_DIR"
                                     else tmp / "projects"))
-        backend_state.runtimes.clear()
+        backend_state.discard_all_runtimes()
         from backend.main import app
 
         cls.client = TestClient(app)
@@ -125,9 +125,12 @@ class RunObfuscationEndpointTests(unittest.TestCase):
     def tearDownClass(cls):
         from backend import state as backend_state
 
+        # /state lazily starts each runtime's kernel and the bare
+        # TestClient never runs lifespan shutdown — discard (stops kernels
+        # first) so no subprocess outlives the suite.
+        backend_state.discard_all_runtimes()
         for mod, attr, old in cls._patched:
             setattr(mod, attr, old)
-        backend_state.runtimes.clear()
         cls._tmp.cleanup()
 
     def test_run_obfuscation_records_runs_and_artifacts(self):

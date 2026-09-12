@@ -131,9 +131,9 @@ class TestChartIntent(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("chartintent", None)
+        discard_runtime("chartintent")
         await self.rt.stop()
 
     def _chart_msgs(self):
@@ -182,10 +182,10 @@ class TestChartEndpoints(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         self._gr.stop()
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("flproj", None)
+        discard_runtime("flproj")
         await self.rt.stop()
 
     def _exp(self):

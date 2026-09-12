@@ -41,6 +41,15 @@ def connect_project_db(project_dir: Path) -> sqlite3.Connection:
         if per_thread is None:
             project_dir.mkdir(parents=True, exist_ok=True)
             per_thread = _PROJECT_DB_CACHE[key] = {}
+        if tid not in per_thread:
+            # Reap connections of dead threads so an OS-recycled ident can
+            # never inherit a stale connection object.
+            live = {t.ident for t in threading.enumerate()}
+            for dead in [t for t in per_thread if t not in live]:
+                try:
+                    per_thread.pop(dead).close()
+                except sqlite3.Error:
+                    pass
         conn = per_thread.get(tid)
         if conn is None:
             conn = sqlite3.connect(project_dir / "workbench.db",

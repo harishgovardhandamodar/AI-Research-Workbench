@@ -268,11 +268,15 @@ class PythonKernel:
     async def stop(self):
         if self._reader_task:
             self._reader_task.cancel()
+        # _kill() clears self._proc — hold a ref so the wait below actually
+        # runs. Without the wait the child is never reaped (Popen.returncode
+        # stays None → "subprocess still running" ResourceWarning at GC).
+        proc = self._proc
         self._kill()
         self._state = "stopped"
         self._notify("stopped", {"pid": None})
-        if self._proc:
+        if proc is not None:
             try:
-                await self._proc.wait()
+                await proc.wait()
             except ProcessLookupError:
                 pass

@@ -31,10 +31,10 @@ class TestReportsHub(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         self._gr.stop()
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("repproj", None)
+        discard_runtime("repproj")
         await self.rt.stop()
 
     def _add_artifact(self, name, kind, data_type="text", data=b"", created_at=None):
