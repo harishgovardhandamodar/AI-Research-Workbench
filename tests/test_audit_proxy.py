@@ -16,9 +16,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
+import unittest
 
-mcp = pytest.importorskip("mcp")
+try:
+    import mcp  # noqa: F401  (runtime dependency of the workbench)
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
 
 SERVER_SCRIPT = '''
 from mcp.server.mcpserver import MCPServer
@@ -43,9 +47,12 @@ if __name__ == "__main__":
 '''
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="requires 3.11+")
-def test_proxy_forwards_and_audits(tmp_path):
-    asyncio.run(_run_proxy_test(tmp_path))
+@unittest.skipUnless(HAS_MCP, "requires mcp package")
+@unittest.skipIf(sys.version_info < (3, 11), "requires 3.11+")
+class AuditProxyTests(unittest.TestCase):
+    def test_proxy_forwards_and_audits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asyncio.run(_run_proxy_test(Path(tmp)))
 
 
 async def _run_proxy_test(tmp_path):

@@ -10,6 +10,20 @@ import uuid
 from fastapi.testclient import TestClient
 
 
+def _delete_test_project(app, name: str) -> None:
+    """Best-effort cleanup so tests never leave projects in the workbench dir.
+
+    backend.paths is frozen at import, so the FOX_WORKBENCH_DIR set below only
+    affects late importers — the created project lands in the real volume and
+    must be removed explicitly (stops kernels, drops the runtime, rmtree).
+    """
+    try:
+        with TestClient(app) as client:
+            client.delete(f"/api/projects/{name}")
+    except Exception:  # noqa: BLE001 - cleanup must not fail the test
+        pass
+
+
 class TestKernelStatusRouter(unittest.TestCase):
     def test_status_snapshot_and_audit_wiring(self):
         os.environ["FOX_WORKBENCH_DIR"] = f"/tmp/fox-test-{uuid.uuid4().hex[:8]}"
@@ -17,6 +31,7 @@ class TestKernelStatusRouter(unittest.TestCase):
         from backend.state import get_runtime
 
         name = f"proj-{uuid.uuid4().hex[:8]}"
+        self.addCleanup(_delete_test_project, app, name)
         with TestClient(app) as client:
             client.post("/api/projects", json={"name": name})
             rt = get_runtime(name)

@@ -58,8 +58,19 @@ class Config:
 
     @property
     def root_dir(self) -> Path:
-        root = Path(self._get("directories", "root", default=str(_DEFAULT_DATA_ROOT)))
-        return root
+        # Explicit yaml pin wins — but __init__ backfills the default into
+        # data, so compare against it: only a genuinely pinned (different)
+        # path counts as explicit. Otherwise honor the live FOX_WORKBENCH_DIR
+        # (read per access, not frozen at import) so runtime repointing and
+        # test isolation actually take effect. Falls back to the import-time
+        # default, which matches production (env already points there).
+        raw = (self.data.get("directories", {}) or {}).get("root", "")
+        if raw and str(Path(raw)) != str(_DEFAULT_DATA_ROOT):
+            return Path(raw)
+        live = os.environ.get("FOX_WORKBENCH_DIR", "").strip()
+        if live:
+            return Path(live) / "research_knowledge_graphs"
+        return _DEFAULT_DATA_ROOT
 
     @property
     def papers_dir(self) -> Path:
