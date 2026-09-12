@@ -9,6 +9,13 @@ The project has a substantial pytest suite that grew with each feature round.
 .venv/bin/python -m pytest tests/test_round9.py -q   # one file
 ```
 
+Container run is source of truth — the image holds a COPY of the repo, not a
+live mount, so testing without rebuilding validates stale code:
+
+```bash
+sh scripts/test-in-container.sh   # rebuild fox image, wait for health, run full suite (787 tests)
+```
+
 Frontend syntax check:
 
 ```bash
@@ -48,5 +55,9 @@ node --check vscode/extension.js && node --check vscode/media/tracking.js
 ## Conventions
 
 - Add a `tests/test_roundN.py` for each feature round.
-- Keep store reads on the event loop in tests (as in production) to avoid
-  SQLite cross-thread errors.
+- Store access from any thread is safe (one SQLite connection per thread) —
+  no need to confine reads to the event loop.
+- Never `runtimes.pop()` / `runtimes.clear()` in tests: use
+  `discard_runtime(name)` / `discard_all_runtimes()` from `backend.state`,
+  which stop each runtime's kernels before dropping it. Bare removal orphans
+  kernel subprocesses (`ResourceWarning` noise + leaked procs).
