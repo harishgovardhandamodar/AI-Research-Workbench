@@ -76,8 +76,17 @@ event bus.
 
 ## Concurrency & thread-safety
 
-- The SQLite connection is used only on the event-loop thread (report/export run
-  there too).
+- SQLite uses one connection per (database, thread) (`backend/store.py`): the
+  event loop and `asyncio.to_thread` workers each hold their own connection to
+  the same file, opened in WAL mode with a 30 s busy timeout so concurrent
+  writers serialize instead of failing. Connections of dead threads are reaped
+  on the next connect, so a recycled thread ident never inherits a stale object.
+- Kernel subprocesses must be reaped, not dropped: `PythonKernel.stop()` kills
+  the child and `await`s it (the wait is what clears the zombie). Request paths
+  (`delete_project`, idle eviction, lifespan shutdown) all `await rt.stop()`;
+  tests removing runtimes from the registry use the sync `discard_runtime()` /
+  `discard_all_runtimes()` helpers in `backend/state.py`, which stop kernels
+  first — a bare `runtimes.pop()` orphans the subprocess.
 - `LLMClient` retries transient failures with backoff (round 12).
 - Background tasks (campaigns/evals) are `asyncio.Task`s — one per project —
   serialized under the project lock; resume reconstructs from persisted state

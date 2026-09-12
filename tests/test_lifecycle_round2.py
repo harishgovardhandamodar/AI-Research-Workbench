@@ -656,8 +656,8 @@ class TestVerifyEndpoints(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
-        runtimes.pop("verifyproj", None)
+        from backend.state import discard_runtime
+        discard_runtime("verifyproj")
         pr.PROJECTS_DIR = self._orig
         await self.rt.stop()
 
@@ -703,8 +703,8 @@ class TestCompactionAudit(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
-        runtimes.pop("compactproj", None)
+        from backend.state import discard_runtime
+        discard_runtime("compactproj")
         pr.PROJECTS_DIR = self._orig
         await self.rt.stop()
 
@@ -788,8 +788,8 @@ class TestCampaignKernelIsolation(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
-        runtimes.pop("isocamp", None)
+        from backend.state import discard_runtime
+        discard_runtime("isocamp")
         pr.PROJECTS_DIR = self._orig
         await self.rt.stop()
 
@@ -835,8 +835,8 @@ class TestProjectStatus(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
-        runtimes.pop("statusproj", None)
+        from backend.state import discard_runtime
+        discard_runtime("statusproj")
         pr.PROJECTS_DIR = self._orig
         await self.rt.stop()
 

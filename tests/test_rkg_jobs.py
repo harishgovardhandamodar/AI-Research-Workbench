@@ -54,8 +54,8 @@ class JobPersistenceTests(unittest.TestCase):
         path.write_text(json.dumps(data, default=str))
 
     def test_job_persisted_and_restored_as_interrupted(self):
-        with mock.patch.object(rkg_router, "_JOBS_PATH",
-                               Path(self.tmp.name) / "jobs.json"):
+        with mock.patch.object(rkg_router, "_jobs_path",
+                               lambda: Path(self.tmp.name) / "jobs.json"):
             with mock.patch("backend.research_knowledge_graphs.router._persist_jobs"):
                 job = rkg_router._new_job("scenario_loop", "loop", FakeTarget(0.05),
                                           "autonomous-agents-security")
@@ -67,8 +67,8 @@ class JobPersistenceTests(unittest.TestCase):
             # Fresh module state = a restart.
             with rkg_router._jobs_lock:
                 rkg_router._jobs.clear()
-            with mock.patch.object(rkg_router, "_JOBS_PATH",
-                                   Path(self.tmp.name) / "jobs.json"):
+            with mock.patch.object(rkg_router, "_jobs_path",
+                               lambda: Path(self.tmp.name) / "jobs.json"):
                 rkg_router._restore_jobs()
             with rkg_router._jobs_lock:
                 restored = rkg_router._jobs[job["id"]]
@@ -79,8 +79,8 @@ class JobPersistenceTests(unittest.TestCase):
                 rkg_router._jobs.clear()
 
     def test_scenario_submit_persists_and_guard_refuses_second(self):
-        with mock.patch.object(rkg_router, "_JOBS_PATH",
-                               Path(self.tmp.name) / "jobs.json"):
+        with mock.patch.object(rkg_router, "_jobs_path",
+                               lambda: Path(self.tmp.name) / "jobs.json"):
             with mock.patch.object(rkg_router, "_persist_jobs") as pj:
                 first = rkg_router._submit_scenario(
                     "scenario_build", "build", "enterprise-ai-security",
@@ -105,8 +105,8 @@ class JobPersistenceTests(unittest.TestCase):
                 rkg_router._jobs.clear()
 
     def test_scenario_busy_only_counts_running(self):
-        with mock.patch.object(rkg_router, "_JOBS_PATH",
-                               Path(self.tmp.name) / "jobs.json"):
+        with mock.patch.object(rkg_router, "_jobs_path",
+                               lambda: Path(self.tmp.name) / "jobs.json"):
             with mock.patch.object(rkg_router, "_persist_jobs"):
                 job = rkg_router._new_job("scenario_loop", "loop",
                                           FakeTarget(0.2), "autonomous-agents-security")

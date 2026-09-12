@@ -44,9 +44,9 @@ class TestAgentLooping(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("loopguard", None)
+        discard_runtime("loopguard")
         await self.rt.stop()
 
     async def test_near_duplicate_replies_flagged(self):

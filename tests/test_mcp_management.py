@@ -314,9 +314,9 @@ class TestMcpChatCommand(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("mcpchat", None)
+        discard_runtime("mcpchat")
         await self.rt.stop()
 
     async def test_background_command(self):
@@ -371,9 +371,9 @@ class TestMcpProjectIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("mpcproj", None)
+        discard_runtime("mpcproj")
         await self.rt.stop()
 
     async def test_call_records_run(self):

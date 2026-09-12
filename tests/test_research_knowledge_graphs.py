@@ -21,6 +21,7 @@ class RkgRouterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
+        cls._prev_wb = os.environ.get("FOX_WORKBENCH_DIR")
         os.environ["FOX_WORKBENCH_DIR"] = cls._tmp.name
         from backend.main import app
 
@@ -28,6 +29,10 @@ class RkgRouterTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        if cls._prev_wb is None:
+            os.environ.pop("FOX_WORKBENCH_DIR", None)
+        else:
+            os.environ["FOX_WORKBENCH_DIR"] = cls._prev_wb
         cls._tmp.cleanup()
 
     def test_dashboard_view_served(self):

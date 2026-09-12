@@ -7,6 +7,7 @@ source of truth without circular imports.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import os
@@ -127,6 +128,32 @@ def get_runtime(name: str):
     except Exception:  # noqa: BLE001
         pass
     return rt
+
+
+def discard_runtime(name: str) -> None:
+    """Drop one runtime from the registry, stopping its kernels first.
+
+    Bare ``runtimes.pop()`` orphans kernel subprocesses (their event loop
+    is gone by GC time → ResourceWarning noise + leaked procs). Sync-only
+    teardown helper for tests; async request paths keep using
+    ``await rt.stop()`` (project delete, eviction, lifespan already do).
+    """
+    rt = runtimes.pop(name, None)
+    if rt is None:
+        return
+    stop = getattr(getattr(rt, "kernels", None), "stop", None)
+    if stop is None:
+        return
+    try:
+        asyncio.run(stop())
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def discard_all_runtimes() -> None:
+    """discard_runtime() for every registered runtime."""
+    while runtimes:
+        discard_runtime(next(iter(runtimes)))
 
 
 def get_llm() -> LLMClient:

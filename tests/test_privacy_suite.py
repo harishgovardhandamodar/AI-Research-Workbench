@@ -57,9 +57,9 @@ class TestPrivacySuiteRun(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         import backend.project_runtime as pr
-        from backend.state import runtimes
+        from backend.state import discard_runtime
         pr.PROJECTS_DIR = self._orig
-        runtimes.pop("suite", None)
+        discard_runtime("suite")
         await self.rt.stop()
 
     async def test_runs_all_experiments_and_builds_report(self):

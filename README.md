@@ -61,6 +61,23 @@ The assistant persona is **Fox** (🦊).
 
 Following the plan in `plan.md`, it provides the core Phase 0–3 stack:
 
+## What's New — Core hardening: SQLite, kernels, turn recording (2026-09)
+
+**🔧 Thread-safe SQLite** — one connection per (database, thread) instead of one
+shared connection, so parallel agent turns and background workers never share a
+cursor (`WAL` + 30 s busy timeout; dead-thread connections reaped).
+
+**🔧 Kernel subprocesses always reaped** — `PythonKernel.stop()` now holds the
+proc handle across kill and awaits it (previously the wait never ran → zombie
+`ResourceWarning` noise); new `discard_runtime()` test helper stops kernels
+before dropping a runtime.
+
+**🔧 Turn recording can't mask replies** — transcript persist + run record
+failures are logged, never raised into the turn result.
+
+Suite: 787 tests green. See [Architecture](gitbook/development/architecture.md)
+(Concurrency) and [Testing](gitbook/development/testing.md).
+
 ## What's New — Focus view + responsive shell (2026-09)
 
 **🎯 Focus view — simplified session experimentation** — new optional main

@@ -141,15 +141,16 @@ def _utcnow() -> str:
 class ResearchWorkbench:
     """Owns scenario persistence + the chained autoresearch loop phases."""
 
-    # In-memory live progress per scenario (fast polling for the dashboard).
-    _live: dict[str, dict[str, Any]] = {}
-
     def __init__(self, org) -> None:
         self.org = org
         self.config = org.config
         self.pool = org.pool
         self.kg = org.kg
         self.llm = org.llm
+        # In-memory live progress per scenario (fast polling for the dashboard).
+        # Instance state (not class state) so workbenches bound to different
+        # roots never bleed live phases into each other.
+        self._live: dict[str, dict[str, Any]] = {}
         self._dir = Path(self.config.root_dir) / "scenarios"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._seed()

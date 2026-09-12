@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 _org: Organizer | None = None
 _gpu_mgr: GPUManager | None = None
 _wb: Any = None
+_wb_dir: str | None = None
+
+
+def _current_root() -> str:
+    return str(Path(Config().root_dir).resolve())
 _scheduler: Any = None
 _VIEWS = Path(__file__).parent / "views"
 
@@ -54,16 +59,19 @@ def set_scheduler(scheduler: Any) -> None:
 # the jobs list: jobs that were running get marked "interrupted".
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
-_JOBS_PATH = Path(Config().root_dir) / "jobs.json"
+def _jobs_path() -> Path:
+    # Resolved per call (never frozen at import) so a repointed
+    # FOX_WORKBENCH_DIR is honored and tests stay isolated.
+    return Path(Config().root_dir) / "jobs.json"
 
 
 def _persist_jobs() -> None:
     try:
-        _JOBS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _jobs_path().parent.mkdir(parents=True, exist_ok=True)
         with _jobs_lock:
-            tmp = _JOBS_PATH.with_suffix(".json.tmp")
+            tmp = _jobs_path().with_suffix(".json.tmp")
             tmp.write_text(json.dumps(_jobs, indent=2, default=str))
-            tmp.replace(_JOBS_PATH)
+            tmp.replace(_jobs_path())
     except OSError as exc:  # noqa: BLE001
         logger.warning("persist jobs failed: %s", exc)
 
@@ -71,10 +79,10 @@ def _persist_jobs() -> None:
 def _restore_jobs() -> None:
     """Reload the persisted job registry; mark leftover ``running`` jobs as
     ``interrupted`` so the dashboard shows them instead of losing them."""
-    if not _JOBS_PATH.exists():
+    if not _jobs_path().exists():
         return
     try:
-        data = json.loads(_JOBS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(_jobs_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     logger.info("restoring %d persisted jobs", len(data))
@@ -174,12 +182,21 @@ def get_org() -> Organizer:
 
 
 def get_workbench():
-    """Lazily build the Research Workbench (scenario autoresearch loops)."""
-    global _wb
-    if _wb is None:
-        from .research_loop import ResearchWorkbench
+    """Lazily build the Research Workbench (scenario autoresearch loops).
 
-        _wb = ResearchWorkbench(get_org())
+    Rebuilt when the configured root dir changes, so requests are never
+    served from a workbench bound to a stale directory (and tests that
+    repoint FOX_WORKBENCH_DIR stay isolated).
+    """
+    global _wb, _wb_dir
+    from .research_loop import ResearchWorkbench
+
+    want = _current_root()
+    if _wb is None or _wb_dir != want:
+        config = Config()
+        gpu_mgr = GPUManager(config)
+        _wb = ResearchWorkbench(Organizer(config, gpu_mgr))
+        _wb_dir = want
     return _wb
 
 
