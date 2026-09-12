@@ -271,14 +271,10 @@ async def remote_upsert_host(body: dict):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     cfg = _remote_config()
-    hosts = [h for h in cfg.get("hosts", []) if h.get("id") != entry["id"]]
-    old = next((h for h in cfg.get("hosts", []) if h.get("id") == entry["id"]), {})
-    if entry.get("token") == _MCP_MASK:
-        # Never persist the mask literal: keep the live token, or empty when
-        # there is none (e.g. saving an env-seeded host) so auth fails closed.
-        entry["token"] = old.get("token", "")
-    hosts.append(entry)
-    cfg["hosts"] = hosts
+    # Single merge implementation (mask-preserving, fail-closed): re-validate
+    # is idempotent, so passing the already-validated entry is safe.
+    others = [h for h in cfg.get("hosts", []) if h.get("id") != entry["id"]]
+    cfg["hosts"] = merge_hosts(cfg.get("hosts", []), others + [entry])
     CONFIG["remote"] = cfg
     save_config(CONFIG)
     return {"host": redact_hosts([entry])[0]}
