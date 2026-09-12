@@ -743,7 +743,11 @@ class Coordinator:
         # LLM request fidelity: persist the exact assembled messages + params as
         # a transcript artifact so the run is reproducible even after compaction
         # summarizes (not deletes) the conversation. Immune to context_cutoff.
-        transcript_id = self._persist_transcript(messages)
+        try:
+            transcript_id = self._persist_transcript(messages)
+        except Exception:  # noqa: BLE001
+            log.exception("agent turn transcript persist failed; recording run anyway")
+            transcript_id = ""
         if transcript_id and transcript_id not in self._run_artifacts:
             self._run_artifacts.append(transcript_id)
         # The run's identity: the most recently finished variant wins, otherwise a
@@ -780,7 +784,11 @@ class Coordinator:
             record["id"] = self._pre_run_id
         if self._run_error:
             record["error"] = self._run_error[:10000]
-        run_id = self.record(record)
+        try:
+            run_id = self.record(record)
+        except Exception:  # noqa: BLE001
+            log.exception("agent turn record failed; reply still delivered")
+            run_id = 0
         if run_id and self._run_artifacts:
             self.ctx.run_id = str(run_id)
             try:

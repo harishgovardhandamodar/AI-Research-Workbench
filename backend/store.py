@@ -15,39 +15,49 @@ ROLES = {"user", "assistant", "tool", "system"}
 # plan) — None means "leave unchanged", _UNSET clears the column.
 _UNSET = object()
 
-# A single connection per project database, shared by ProjectStore and
-# ArtifactStore. SQLite is opened in WAL mode so reads don't block the writer
-# and the connection survives both store instances for the process lifetime.
-_PROJECT_DB_CACHE: dict[str, sqlite3.Connection] = {}
+# One connection per (project database, thread), shared by ProjectStore and
+# ArtifactStore on that thread. The event loop and asyncio.to_thread workers
+# must never share a connection object (pysqlite raises "Recursive use of
+# cursors" on concurrent cursor use). SQLite is opened in WAL mode with a
+# generous busy timeout so writers serialize instead of failing, and
+# connections survive for the process lifetime.
+_PROJECT_DB_CACHE: dict[str, dict[int, sqlite3.Connection]] = {}
+_DB_BUSY_TIMEOUT = 30.0
 _DB_CACHE_LOCK = threading.Lock()
 
 
 def connect_project_db(project_dir: Path) -> sqlite3.Connection:
     """Open (or return the cached) connection for a project's workbench.db.
 
-    ``check_same_thread=False``: the connection may be used from the event-loop
-    thread AND from ``asyncio.to_thread`` workers (e.g. experiment execution /
-    git auto-commit), which is safe here because every transaction is completed
-    synchronously inside a single call (no cross-thread transactions)."""
+    ``check_same_thread=False`` plus one connection per thread: the event loop
+    and ``asyncio.to_thread`` workers (e.g. experiment execution / git
+    auto-commit) each get their own connection to the same file, which is safe
+    here because every transaction is completed synchronously inside a single
+    call (no cross-thread transactions)."""
     key = str(Path(project_dir).resolve())
+    tid = threading.get_ident()
     with _DB_CACHE_LOCK:
-        conn = _PROJECT_DB_CACHE.get(key)
-        if conn is None:
+        per_thread = _PROJECT_DB_CACHE.get(key)
+        if per_thread is None:
             project_dir.mkdir(parents=True, exist_ok=True)
+            per_thread = _PROJECT_DB_CACHE[key] = {}
+        conn = per_thread.get(tid)
+        if conn is None:
             conn = sqlite3.connect(project_dir / "workbench.db",
-                                   check_same_thread=False)
+                                   check_same_thread=False,
+                                   timeout=_DB_BUSY_TIMEOUT)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
-            _PROJECT_DB_CACHE[key] = conn
+            per_thread[tid] = conn
         return conn
 
 
 def close_project_db(project_dir: Path) -> None:
-    """Close and drop the cached connection for a project db (e.g. on delete)."""
+    """Close and drop the cached connections for a project db (e.g. on delete)."""
     key = str(Path(project_dir).resolve())
     with _DB_CACHE_LOCK:
-        conn = _PROJECT_DB_CACHE.pop(key, None)
-    if conn is not None:
+        per_thread = _PROJECT_DB_CACHE.pop(key, None) or {}
+    for conn in per_thread.values():
         try:
             conn.close()
         except sqlite3.Error:
